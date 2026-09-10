@@ -882,8 +882,15 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private static boolean isRangedThreat(LivingEntity entity) {
-		return entity instanceof RangedAttackMob || entity instanceof CrossbowUser
-			|| switch (Registries.ENTITY_TYPE.getId(entity.getType()).toString()) {
+		return isRangedThreat(Registries.ENTITY_TYPE.getId(entity.getType()).toString(),
+			Registries.ITEM.getId(entity.getMainHandStack().getItem()).toString(),
+			entity instanceof RangedAttackMob || entity instanceof CrossbowUser);
+	}
+
+	static boolean isRangedThreat(String entityTypeId, String mainHandItemId, boolean rangedInterface) {
+		// Drowned implement RangedAttackMob even when their trident attack goal cannot start.
+		if (entityTypeId.equals("minecraft:drowned")) return mainHandItemId.equals("minecraft:trident");
+		return rangedInterface || switch (entityTypeId) {
 				case "minecraft:blaze", "minecraft:breeze", "minecraft:ghast", "minecraft:guardian",
 					"minecraft:elder_guardian", "minecraft:shulker", "minecraft:evoker",
 					"minecraft:warden", "minecraft:ender_dragon" -> true;

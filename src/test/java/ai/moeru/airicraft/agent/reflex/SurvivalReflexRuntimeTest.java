@@ -78,6 +78,17 @@ class SurvivalReflexRuntimeTest {
 	}
 
 	@Test
+	void drownedNeedsAHeldTridentToBeARangedThreat() {
+		assertFalse(SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:air", true));
+		assertFalse(SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:fishing_rod", true));
+		assertTrue(SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:trident", true));
+		assertTrue(SurvivalReflexRuntime.isRangedThreat("minecraft:skeleton", "minecraft:bow", true));
+		assertTrue(SurvivalReflexRuntime.isRangedThreat("minecraft:guardian", "minecraft:air", false));
+		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(
+			SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:air", true), 33.93D));
+	}
+
+	@Test
 	void distantMeleeMobsDoNotOwnCombatButCloseAndRangedThreatsStillDo() {
 		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(false, 3.0D));
 		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(false, 6.0D));
