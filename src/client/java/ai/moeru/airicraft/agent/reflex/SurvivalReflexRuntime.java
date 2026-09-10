@@ -14,6 +14,8 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.ai.pathing.Path;
+import net.minecraft.entity.ai.RangedAttackMob;
+import net.minecraft.entity.CrossbowUser;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.Registries;
@@ -33,6 +35,7 @@ public final class SurvivalReflexRuntime {
 	static final int BREATHABLE_STABLE_TICKS = 12;
 	private static final float ATTACK_READY_THRESHOLD = 0.92F;
 	private static final double MELEE_ATTACK_DISTANCE = 3.0D;
+	static final double MELEE_THREAT_DISTANCE = 6.0D;
 	private static final int SHELTER_CONFIRM_TICKS = 200;
 	private static final int MOB_ROUTE_REFRESH_TICKS = 10;
 
@@ -804,7 +807,8 @@ public final class SurvivalReflexRuntime {
 			// Remote clients may not receive AI targets; damage observations remain authoritative there.
 			boolean targetsUs = targetingPlayer.contains(mob.getUuidAsString())
 				|| mob.getTarget() != null && player.getUuid().equals(mob.getTarget().getUuid());
-			if (!shouldDetectProactiveThreat(targetsUs, mob.isAlive())) {
+			if (!shouldDetectProactiveThreat(targetsUs, mob.isAlive())
+				|| !shouldTrackMobThreat(isRangedThreat(mob), player.distanceTo(mob))) {
 				continue;
 			}
 			if (classifyThreatSecurity(computeMobRoute(player, mob).status(), player.canSee(mob)) == SecurityKind.SEALED) {
@@ -873,6 +877,20 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
+	static boolean shouldTrackMobThreat(boolean ranged, double distance) {
+		return ranged || distance <= MELEE_THREAT_DISTANCE;
+	}
+
+	private static boolean isRangedThreat(LivingEntity entity) {
+		return entity instanceof RangedAttackMob || entity instanceof CrossbowUser
+			|| switch (Registries.ENTITY_TYPE.getId(entity.getType()).toString()) {
+				case "minecraft:blaze", "minecraft:breeze", "minecraft:ghast", "minecraft:guardian",
+					"minecraft:elder_guardian", "minecraft:shulker", "minecraft:evoker",
+					"minecraft:warden", "minecraft:ender_dragon" -> true;
+				default -> false;
+			};
+	}
+
 	private List<ResolvedThreat> resolveThreats(MinecraftClient client, ClientPlayerEntity player) {
 		if (client == null || client.world == null || player == null || observedThreats.isEmpty()) {
 			return List.of();
@@ -887,6 +905,9 @@ public final class SurvivalReflexRuntime {
 				continue;
 			}
 			double distance = player.distanceTo(entity);
+			if (!shouldTrackMobThreat(isRangedThreat(living), distance)) {
+				continue;
+			}
 			resolved.add(new ResolvedThreat(observed, living, distance, player.canSee(entity)));
 		}
 		return List.copyOf(resolved);

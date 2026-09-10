@@ -109,6 +109,16 @@ Stopped with the player alive and the game paused for diagnosis. This is a pract
 
 Evidence: `/tmp/place-playtest-combat-{1,2}.txt`, `/tmp/place-playtest-combat-1.png`, `/tmp/place-playtest-combat-stall-pause.txt`, `/tmp/place-playtest-combat-stall.png`, `/tmp/place-playtest-combat-stall.jsonl`, `/tmp/place-playtest-combat-final-events.txt`, `/tmp/place-playtest-combat-navigation-detail.txt`. Recorder truncation persists, so event-buffer and direct runtime reads supplement the short exported history. The verbose state dump is `/tmp/place-playtest-combat-stall-state.txt`; do not mistake its cancelled task execution snapshot for the reflex-owned Baritone process.
 
+### 2026-09-10: ignore distant melee threats; hot-reload verified
+
+At the user's direction, non-ranged mobs only participate in the combat reflex within six blocks (3D distance). Apply the same predicate both to proactive admission and to already-tracked mobs, so a distant previously aggressive melee mob cannot retain combat ownership. Ranged capability retains the existing policy, including Minecraft ranged/crossbow interfaces and innate projectile, beam and spell attackers. Classification is conservative by capability, not current equipment. The recent-damage cooldown still applies, and nearby melee threats remain eligible. No generic pathfinding retry policy was added.
+
+Full build and focused reflex tests passed. Hot-swapped the changed reflex classes without resetting the client. From the exact stalled encounter at tick 10858, one debug step emitted `reflex.resolved / threats_clear / nextState=IDLE` at tick 10859. The distant Creeper, Zombie and Cave Spider no longer retained ownership. Recalled `wood tree approach` and submitted its exact coordinates `(284,64,-141)`; navigation was accepted where it had previously been rejected as `reflex_active`.
+
+Ran a short monitored navigation interval through tick 11211. The player left the ledge and travelled through `(186,34,34)` to `(184.50,28.25,37.81)`. The reflex stayed IDLE, no new attack/damage/reflex events appeared, and health remained 20. Navigation is still RUNNING; this verifies released control and actual movement, not arrival or a completed cave escape. Paused after the validation interval: session `fe19383a-1c2b-42e3-8c9d-5e8ae8e348c2`, epoch 1. The original stalled-combat reproduction is resolved for these distant melee threats; ranged approach failures remain outside this fix.
+
+Evidence: `/tmp/melee-range-before.jsonl`, `/tmp/melee-range-hotswap.log`, `/tmp/melee-range-step.txt`, `/tmp/melee-range-verification-events.txt`, `/tmp/melee-range-nav-{0,1,2}.txt`, `/tmp/melee-range-nav-final.txt`, `/tmp/melee-range-nav.png`, `/tmp/melee-range-after.jsonl`, `/tmp/melee-range-build.log`. Recorder truncation still limits the retained history.
+
 ### Launch
 
 - Client launch started with an isolated bridge-state file at `/private/tmp/airicraft-codex-driver-01a05cde.json`.

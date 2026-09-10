@@ -78,6 +78,19 @@ class SurvivalReflexRuntimeTest {
 	}
 
 	@Test
+	void distantMeleeMobsDoNotOwnCombatButCloseAndRangedThreatsStillDo() {
+		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(false, 3.0D));
+		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(false, 6.0D));
+		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 6.01D));
+		// The three tracked mobs in the ravine reproduction.
+		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 16.04D));
+		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 19.16D));
+		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 27.97D));
+		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(true, 16.04D));
+		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(true, 32.0D));
+	}
+
+	@Test
 	void threatResolutionHonorsDamageCooldown() {
 		assertFalse(SurvivalReflexRuntime.mobThreatsResolved(1, 200, 100, 60));
 		assertFalse(SurvivalReflexRuntime.mobThreatsResolved(0, 159, 100, 60));
