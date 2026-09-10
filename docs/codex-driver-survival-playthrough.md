@@ -34,6 +34,30 @@ Additional observations and bypasses:
 
 **Recorder retention defect confirmed under real navigation load.** At server tick `1208`, only 22 records covering ticks `1128..1208` survived: about four seconds, despite no age expiry. Each full snapshot serialized approximately 1 MB of `missionExecution` twice (top-level and nested under `agent`). The 64 MiB cap evicted all earlier debug, decision and semantic evidence, including the interruption onset. Final export was also truncated. The earlier ten-minute peaceful idle validation did not cover this payload growth. Selective event-buffer reads and immediate exports preserved partial evidence, but they do not restore the advertised diagnostic window. Fix payload duplication/size and repeat retention validation with an active task before relying on ten-minute history.
 
+### 2026-09-10: resumed after pause fix; stopped at flee confirmation cycle
+
+Pause fix committed as `f3c7dfba`. Continuing the same Husk encounter completed combat: `reflex.resolved / threats_clear` at agent tick `469`, the Husk disappeared, experience orbs remained, and player health stayed 20. Pause, one-step, continued combat and a later pause all worked. The later repeated-read check held server tick `3947`, agent tick `4129` and event sequence `113`.
+
+**Reproduced progression blocker: flee stops at marginal separation, lets pursuit close the gap, and restarts indefinitely over the observed interval.** Navigation toward the known wood position `(284,64,-141)` (job `job-32977e9c-d220-454e-9cca-fa1eb26cdd64`) was interrupted at tick `1543` by a Creeper, then a Husk and Skeleton. The same safety epoch `2` remained ACTIVE/FLEE through tick `4196`, more than 2,650 ticks (about 133 simulation seconds). By tick `3412` only Husk `c83c432e-5407-4d2d-bbf4-496e5589f027` remained. The player was healthy, dry, and carrying eight sand with food level six. Attempts to navigate were rejected: `reflex_active. Only read and cancel/clear controls are allowed during an active survival reflex.` No wood or tools were obtained.
+
+The short final recorder interval captures the repeated failure directly:
+
+| Agent tick | Husk route nodes | Security ticks | Flee navigation owned | Completed escape legs |
+| --- | --- | --- | --- | --- |
+| 4123 | 15 | 0 | true | 22 |
+| 4128 | 16 | 2 | false | 22 |
+| 4135 | 16 | 9 | false | 22 |
+| 4140 | 15 | 0 | true | 22 |
+| 4155 | 15 | 0 | true | 23 |
+| 4170 | 16 | 4 | false | 23 |
+| 4175 | 16 | 9 | false | 23 |
+| 4180 | 15 | 0 | true | 23 |
+| 4195 | 16 | 9 | false | 23 |
+
+All listed routes are REACHABLE. `SurvivalReflexRuntime.tickMobAttack` stops movement immediately when `classifyThreatSecurity` labels a route of at least 16 nodes `DISTANT_PATH`, then requires 60 stable ticks before resolving. The pursuing Husk closes the gap while the player waits. Escape escalation requires a reachable path of at most eight nodes (or repeated close contacts), so the observed 15/16-node cycle neither resolves nor escalates even after 23 completed legs. Cancel/clear removes interrupted work but source confirms it preserves an ACTIVE reflex; it is not a movement override. This is a practical progression blocker in the observed encounter, not a proof that every possible terrain or future despawn can never resolve it. It is distinct from the earlier unconfirmed zero-leg target-selection hypothesis.
+
+Stopped with the encounter paused, preserving the player alive and the current control hold `3fa8855f-0cfe-4aac-a633-0a460e18fdec`. Main evidence: `/tmp/playtest-flee-cycle.jsonl` (includes frames and the table above), `/tmp/playtest-flee-cycle-pause.txt`, `/tmp/playtest-flee-cycle.png`. Longer partial context: `/tmp/playtest-mixed-flee.jsonl`, `/tmp/playtest-flee-water.jsonl` (filename was a suspicion; snapshot proved dry ground), `/tmp/playtest-flee-final.jsonl`, `/tmp/playtest-flee-monitor-{0..5}.txt`, `/tmp/playtest-flee-final-events.txt`. Exports report truncation from the separate payload-size defect; the short cycle itself is retained. No reflex fix was attempted after reproducing this blocker.
+
 ### Launch
 
 - Client launch started with an isolated bridge-state file at `/private/tmp/airicraft-codex-driver-01a05cde.json`.
