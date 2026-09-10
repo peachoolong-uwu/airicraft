@@ -9,6 +9,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import static ai.moeru.airicraft.agent.tasks.CropTendingTaskExecutor.Cell;
 
 class CropTendingTaskExecutorTest {
+	@Test void waitsForPickupDelayWithoutStartingAPathAtTheCurrentGoal() {
+		Fixture f = new Fixture();
+		f.env.cells.put(pos(0), Cell.MATURE);
+		f.env.drop = pos(0);
+		f.nav.goalReached = true;
+		f.tick(30);
+		assertTrue(f.nav.goals.isEmpty(), "An already-reached pickup goal needs no path");
+		assertTrue(f.planting.planted.isEmpty());
+		f.env.drop = null;
+		f.tick(10);
+		assertEquals(TaskExecutionState.COMPLETED, f.events.getFirst().terminalState());
+	}
+
 	@Test void nearbyCropIsNotProofThatItsScatteredDropsWereCollected() {
 		Fixture f = new Fixture();
 		f.env.cells.put(pos(0), Cell.MATURE);

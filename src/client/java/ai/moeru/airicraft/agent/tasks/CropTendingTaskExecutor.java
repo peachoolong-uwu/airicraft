@@ -113,7 +113,10 @@ public final class CropTendingTaskExecutor implements WorldTaskExecutor {
 					release(session);
 					work = pickup.get();
 				}
-				if (BaritoneReleaseBarrier.released(navigation) || navigationOwned) {
+				if (navigation.navigationGoalReached(work)) {
+					release(session);
+				}
+				else if (BaritoneReleaseBarrier.released(navigation) || navigationOwned) {
 					if (!navigate(work)) return finish(session, false, "crop_pickup_approach_failed");
 				}
 			}
@@ -193,7 +196,8 @@ public final class CropTendingTaskExecutor implements WorldTaskExecutor {
 	private void setSnapshot(TaskExecutionState state, String message) {
 		snapshot = new TaskExecutionSnapshot(state, request.taskId(), null, "CropTending",
 			message + " phase=" + phase + " cursor=" + cursor + "/" + positions.size()
-				+ (cursor < positions.size() ? " target=" + target() : "") + " harvested=" + harvested + " planted=" + planted,
+				+ (cursor < positions.size() ? " target=" + target() : "") + " workPosition=" + work
+				+ " harvested=" + harvested + " planted=" + planted,
 			null, null);
 	}
 

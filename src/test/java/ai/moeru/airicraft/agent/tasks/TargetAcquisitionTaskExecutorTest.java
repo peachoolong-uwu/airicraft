@@ -170,6 +170,7 @@ class TargetAcquisitionTaskExecutorTest {
 	}
 	static final class FakeNavigation implements BaritoneFacade {
 		boolean active;
+		boolean goalReached;
 		List<GoalPosition> goals = new ArrayList<>();
 		public boolean isLoaded() { return true; }
 		public void applySettings() {}
@@ -185,6 +186,6 @@ class TargetAcquisitionTaskExecutorTest {
 		public Optional<String> activeProcessName() { return Optional.empty(); }
 		public Optional<Double> estimatedTicksToGoal() { return Optional.empty(); }
 		public Optional<String> pollPathEvent() { return Optional.empty(); }
-		public boolean navigationGoalReached(GoalPosition p) { return false; }
+		public boolean navigationGoalReached(GoalPosition p) { return goalReached; }
 	}
 }
