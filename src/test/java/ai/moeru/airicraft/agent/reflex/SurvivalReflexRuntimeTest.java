@@ -71,21 +71,10 @@ class SurvivalReflexRuntimeTest {
 	}
 
 	@Test
-	void defendRequiresHighHealthOneCloseVisibleThreat() {
-		assertTrue(SurvivalReflexRuntime.shouldDefend(0.75D, 1, 4.5D, true, 0.5D));
-		assertFalse(SurvivalReflexRuntime.shouldDefend(0.5D, 1, 4.0D, true, 0.5D));
-		assertFalse(SurvivalReflexRuntime.shouldDefend(0.75D, 2, 4.0D, true, 0.5D));
-		assertFalse(SurvivalReflexRuntime.shouldDefend(0.75D, 1, 4.6D, true, 0.5D));
-		assertFalse(SurvivalReflexRuntime.shouldDefend(0.75D, 1, 4.0D, false, 0.5D));
-	}
-
-	@Test
-	void proactiveDetectionRequiresCloseVisibleLivingHostile() {
-		assertTrue(SurvivalReflexRuntime.shouldDetectProactiveThreat(true, true, 8.0D, true));
-		assertFalse(SurvivalReflexRuntime.shouldDetectProactiveThreat(true, true, 8.01D, true));
-		assertFalse(SurvivalReflexRuntime.shouldDetectProactiveThreat(true, true, 4.0D, false));
-		assertFalse(SurvivalReflexRuntime.shouldDetectProactiveThreat(false, true, 4.0D, true));
-		assertFalse(SurvivalReflexRuntime.shouldDetectProactiveThreat(true, false, 4.0D, true));
+	void threatAdmissionRequiresAggroRatherThanProximity() {
+		assertFalse(SurvivalReflexRuntime.shouldDetectProactiveThreat(false, true));
+		assertTrue(SurvivalReflexRuntime.shouldDetectProactiveThreat(true, true));
+		assertFalse(SurvivalReflexRuntime.shouldDetectProactiveThreat(true, false));
 	}
 
 	@Test
@@ -93,27 +82,6 @@ class SurvivalReflexRuntimeTest {
 		assertFalse(SurvivalReflexRuntime.mobThreatsResolved(1, 200, 100, 60));
 		assertFalse(SurvivalReflexRuntime.mobThreatsResolved(0, 159, 100, 60));
 		assertTrue(SurvivalReflexRuntime.mobThreatsResolved(0, 160, 100, 60));
-	}
-
-	@Test
-	void fleeRaisesButNeverLowersWaterTraversalPenalty() {
-		assertEquals(48.0D, SurvivalReflexRuntime.fleeWaterPenalty(3.0D));
-		assertEquals(64.0D, SurvivalReflexRuntime.fleeWaterPenalty(64.0D));
-	}
-
-	@Test
-	void staleTerminalPathEventCannotRejectAnActiveReplacementFleePath() {
-		assertFalse(SurvivalReflexRuntime.shouldRejectFleeTarget(Optional.of("CANCELED"), true));
-		assertFalse(SurvivalReflexRuntime.shouldRejectFleeTarget(Optional.of("CALC_FAILED"), true));
-		assertTrue(SurvivalReflexRuntime.shouldRejectFleeTarget(Optional.of("CALC_FAILED"), false));
-		assertFalse(SurvivalReflexRuntime.shouldRejectFleeTarget(Optional.of("CALC_FINISHED_NOW_EXECUTING"), false));
-	}
-
-	@Test
-	void mobFleeUsesWaterAwareRecoveryWheneverWaterIsAlreadyMovingThePlayer() {
-		assertTrue(SurvivalReflexRuntime.shouldUseWaterAwareFlee(true, false));
-		assertTrue(SurvivalReflexRuntime.shouldUseWaterAwareFlee(false, true));
-		assertFalse(SurvivalReflexRuntime.shouldUseWaterAwareFlee(false, false));
 	}
 
 	@Test
@@ -134,42 +102,14 @@ class SurvivalReflexRuntimeTest {
 	}
 
 	@Test
-	void repeatedFailedEscapeLegsEventuallyEscalateToDefence() {
-		assertFalse(SurvivalReflexRuntime.shouldEscalateFleeToDefend(3, 2, 8.0D));
-		assertTrue(SurvivalReflexRuntime.shouldEscalateFleeToDefend(4, 2, 8.0D));
-		assertFalse(SurvivalReflexRuntime.shouldEscalateFleeToDefend(4, 2, 8.01D));
-		assertTrue(SurvivalReflexRuntime.shouldEscalateFleeToDefend(1, 3, 12.0D));
-	}
-
-	@Test
-	void securityUsesMobRouteAndRangedLineOfSightRatherThanL2Distance() {
-		assertEquals(SurvivalReflexRuntime.SecurityKind.SEALED,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.BLOCKED, -1, false, true));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.SEALED,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.BLOCKED, -1, true, false));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.UNSAFE,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.BLOCKED, -1, true, true));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.POTENTIAL_SHELTER,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.PARTIAL, 8, false, true));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.POTENTIAL_SHELTER,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.PARTIAL, 8, true, false));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.UNSAFE,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.PARTIAL, 8, true, true));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.UNSAFE,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.REACHABLE, 15, false, false));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.DISTANT_PATH,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.REACHABLE, 16, false, true));
-		assertEquals(SurvivalReflexRuntime.SecurityKind.UNSAFE,
-			SurvivalReflexRuntime.classifyThreatSecurity(
-				SurvivalReflexRuntime.RouteStatus.UNKNOWN, -1, false, false));
+	void onlyBlockedOccludedPursuitCountsAsShelter() {
+		for (var route : SurvivalReflexRuntime.RouteStatus.values()) {
+			for (boolean visible : new boolean[]{false, true}) {
+				assertEquals(route == SurvivalReflexRuntime.RouteStatus.BLOCKED && !visible
+					? SurvivalReflexRuntime.SecurityKind.SEALED : SurvivalReflexRuntime.SecurityKind.UNSAFE,
+					SurvivalReflexRuntime.classifyThreatSecurity(route, visible));
+			}
+		}
 	}
 
 	@Test

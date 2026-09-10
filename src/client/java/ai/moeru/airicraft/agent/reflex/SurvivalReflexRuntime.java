@@ -9,54 +9,32 @@ import ai.moeru.airicraft.agent.tasks.MinecraftUnderwaterEscapeController;
 import ai.moeru.airicraft.agent.tasks.UnderwaterEscapeNavigator;
 import ai.moeru.airicraft.agent.tasks.UnderwaterEscapeSearch;
 import ai.moeru.airicraft.agent.tasks.UnderwaterHarvestPolicy;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.RangedAttackMob;
 import net.minecraft.entity.ai.pathing.Path;
-import net.minecraft.entity.mob.BlazeEntity;
-import net.minecraft.entity.mob.CreeperEntity;
-import net.minecraft.entity.mob.GhastEntity;
-import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Hand;
-import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.LinkedHashSet;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 public final class SurvivalReflexRuntime {
 	static final int BREATHABLE_STABLE_TICKS = 12;
-	static final double DEFEND_DISTANCE = 4.5D;
-	static final double PROACTIVE_THREAT_DISTANCE = 8.0D;
 	private static final float ATTACK_READY_THRESHOLD = 0.92F;
-	private static final int FLEE_SCAN_RADIUS = 16;
-	private static final int FLEE_SCAN_VERTICAL_RADIUS = 4;
-	private static final int MIN_ESCAPE_DIRECTIONS = 2;
-	private static final double FLEE_WATER_PENALTY = 48.0D;
-	private static final double FLEE_KNOCKBACK_DISTANCE = 3.0D;
-	private static final int SECURE_ESCAPE_PATH_DISTANCE = 16;
+	private static final double MELEE_ATTACK_DISTANCE = 3.0D;
 	private static final int SHELTER_CONFIRM_TICKS = 200;
-	private static final int DISTANT_PATH_TICKS = 60;
 	private static final int MOB_ROUTE_REFRESH_TICKS = 10;
-	private static final int MAX_FLEE_LEGS_BEFORE_DEFEND = 4;
-	private static final int MAX_FLEE_CLOSE_CONTACTS = 3;
 
 	private final AgentConfig.ReflexConfig config;
 	private final MovementController movementController;
@@ -70,16 +48,12 @@ public final class SurvivalReflexRuntime {
 	private boolean drowningDamageObserved;
 	private long lastMobDamageTick = Long.MIN_VALUE;
 	private boolean safetyHoldActuating;
-	private GoalPosition fleeTarget;
-	private boolean fleeNavigationOwned;
-	private Double fleeWaterPenaltyBase;
-	private final Set<GoalPosition> failedFleeTargets = new LinkedHashSet<>();
-	private int completedFleeLegs;
-	private int fleeCloseContacts;
 	private int secureEscapeTicks;
-	private boolean fleeEscalatedToDefend;
 	private long mobRoutesTick = Long.MIN_VALUE;
 	private Map<String, MobRoute> mobRoutes = Map.of();
+	private CompletableFuture<Set<String>> aggroQuery;
+	private GoalPosition combatTarget;
+	private long combatRouteTick;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
 		this(config, new MovementController(), new CameraController(), null);
@@ -121,13 +95,8 @@ public final class SurvivalReflexRuntime {
 	public Map<String, Object> decisionEvidence() {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("snapshot", snapshot);
-		evidence.put("fleeTarget", fleeTarget);
-		evidence.put("failedFleeTargets", List.copyOf(failedFleeTargets));
-		evidence.put("completedFleeLegs", completedFleeLegs);
-		evidence.put("fleeCloseContacts", fleeCloseContacts);
+		evidence.put("combatTarget", combatTarget);
 		evidence.put("secureEscapeTicks", secureEscapeTicks);
-		evidence.put("fleeEscalatedToDefend", fleeEscalatedToDefend);
-		evidence.put("fleeNavigationOwned", fleeNavigationOwned);
 		evidence.put("mobRoutesTick", mobRoutesTick);
 		evidence.put("mobRoutes", Map.copyOf(mobRoutes));
 		return evidence;
@@ -249,8 +218,9 @@ public final class SurvivalReflexRuntime {
 		drowningDamageObserved = false;
 		lastMobDamageTick = Long.MIN_VALUE;
 		safetyHoldActuating = false;
-		stopFleeNavigation();
-		resetFleeProgress();
+		stopCombatNavigation();
+		aggroQuery = null;
+		resetSecurityProgress();
 		underwaterEscape.reset(client);
 		long epoch = snapshot.safetyEpoch();
 		snapshot = new SurvivalReflexSnapshot(
@@ -278,9 +248,7 @@ public final class SurvivalReflexRuntime {
 		Runnable releaseNormalActuators
 	) {
 		long nextEpoch = snapshot.safetyEpoch() + 1L;
-		stopFleeNavigation();
-		failedFleeTargets.clear();
-		resetFleeProgress();
+		resetSecurityProgress();
 		InterruptedWork work = interruptedWork == null ? InterruptedWork.none() : interruptedWork;
 		String holdId = work.hasInterruptedWork() ? UUID.randomUUID().toString() : null;
 		snapshot = new SurvivalReflexSnapshot(
@@ -398,53 +366,27 @@ public final class SurvivalReflexRuntime {
 			resolve(client, player, threats, tick, "threats_clear", false);
 			return;
 		}
+		if (snapshot.action() != SurvivalReflexAction.DEFEND) {
+			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
+		}
 		equipBestCombatHotbarItem(player);
 		attemptCloseQuarterAttack(client, player, threats, tick);
-		MobSecurity security = assessMobSecurity(player, threats, tick);
-		if (snapshot.action() == SurvivalReflexAction.FLEE && security.kind() != SecurityKind.UNSAFE) {
+		SecurityKind security = assessMobSecurity(player, threats, tick);
+		if (security == SecurityKind.SEALED) {
 			secureEscapeTicks++;
-			stopFleeNavigation();
+			stopCombatNavigation();
 			movementController.stop(client);
-			int requiredTicks = security.kind() == SecurityKind.DISTANT_PATH
-				? DISTANT_PATH_TICKS
-				: SHELTER_CONFIRM_TICKS;
-			if (secureEscapeTicks >= requiredTicks) {
-				resolve(
-					client,
-					player,
-					threats,
-					tick,
-					security.kind() == SecurityKind.DISTANT_PATH ? "secure_path_separation" : "sealed_shelter",
-					false
-				);
+			if (secureEscapeTicks >= SHELTER_CONFIRM_TICKS) {
+				resolve(client, player, threats, tick, "sealed_shelter", false);
 				return;
 			}
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
 			return;
 		}
 		secureEscapeTicks = 0;
-		if (!fleeEscalatedToDefend && snapshot.action() == SurvivalReflexAction.FLEE && !threats.isEmpty()
-			&& shouldEscalateFleeToDefend(completedFleeLegs, fleeCloseContacts, security.closestReachablePathLength())) {
-			fleeEscalatedToDefend = true;
-			pendingEvents.add(new SurvivalReflexEvent("reflex.flee_escalated", mapOfNullable(
-				"reason", fleeCloseContacts >= MAX_FLEE_CLOSE_CONTACTS ? "repeated_close_contact" : "no_secure_escape",
-				"completedLegs", completedFleeLegs,
-				"closeContacts", fleeCloseContacts,
-				"tick", tick
-			)));
-		}
-		SurvivalReflexAction nextAction = fleeEscalatedToDefend
-			? SurvivalReflexAction.DEFEND
-			: chooseMobAction(player, threats);
-		if (snapshot.action() != nextAction || snapshot.cause() != SurvivalReflexCause.MOB_ATTACK) {
-			changeAction(SurvivalReflexCause.MOB_ATTACK, nextAction, tick);
-		}
 		try {
-			if (nextAction == SurvivalReflexAction.DEFEND && !threats.isEmpty()) {
+			if (!threats.isEmpty()) {
 				defend(client, player, closestVisibleThreat(threats), tick);
-			}
-			else if (!threats.isEmpty()) {
-				flee(client, player, threats, tick);
 			}
 			else {
 				movementController.stop(client);
@@ -452,15 +394,30 @@ public final class SurvivalReflexRuntime {
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
 		}
 		catch (RuntimeException exception) {
-			recordActuatorFailure(nextAction.name().toLowerCase(java.util.Locale.ROOT), exception, tick);
+			recordActuatorFailure("defend", exception, tick);
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, failureText(exception));
 		}
 	}
 
 	private void defend(MinecraftClient client, ClientPlayerEntity player, ResolvedThreat threat, long tick) {
-		stopFleeNavigation();
 		cameraController.lookAtNow(client, threat.entity().getBoundingBox().getCenter());
-		if (threat.distance() > 3.0D) {
+		if (threat.distance() <= 3.0D && threat.lineOfSight()) {
+			stopCombatNavigation();
+			movementController.stop(client);
+			return;
+		}
+		if (baritone != null && baritone.isLoaded()) {
+			movementController.stop(client);
+			GoalPosition target = goal(threat.entity().getBlockPos());
+			if (combatTarget == null || tick - combatRouteTick >= 20L
+				&& (!target.equals(combatTarget) || !baritone.processActive())) {
+				baritone.applySettings();
+				baritone.startNavigateNear(target, 2);
+				combatTarget = target;
+				combatRouteTick = tick;
+			}
+		}
+		else if (threat.lineOfSight()) {
 			movementController.moveDirectional(client, true, false, false, false, true, false, tick);
 		}
 		else {
@@ -468,77 +425,11 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
-	private void flee(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
-		movementController.stop(client);
-		if (shouldUseWaterAwareFlee(player.isTouchingWater(), player.isSubmergedInWater())) {
-			stopFleeNavigation();
-			underwaterEscape.tick(
-				client,
-				UnderwaterEscapeSearch.SearchMode.SAFE_STANDING,
-				player.getAir(),
-				tick,
-				MinecraftUnderwaterEscapeController.isSafeStandingPosition(client, player.getBlockPos())
-			);
-			return;
+	private void stopCombatNavigation() {
+		if (combatTarget != null && baritone != null) {
+			baritone.cancel();
 		}
-		underwaterEscape.reset(client);
-		if (baritone == null || !baritone.isLoaded()) {
-			throw new IllegalStateException("safe_flee_pathfinder_unavailable");
-		}
-		if (fleeTarget != null && baritone.navigationGoalReached(fleeTarget)) {
-			completedFleeLegs++;
-			fleeTarget = null;
-			fleeNavigationOwned = false;
-		}
-		Optional<String> pathEvent = baritone.pollPathEvent();
-		if (fleeTarget != null && shouldRejectFleeTarget(pathEvent, baritone.processActive())) {
-			pendingEvents.add(new SurvivalReflexEvent("reflex.flee_path_failed", mapOfNullable(
-				"event", pathEvent.orElse(null),
-				"processActive", baritone.processActive(),
-				"x", fleeTarget == null ? null : fleeTarget.x(),
-				"y", fleeTarget == null ? null : fleeTarget.y(),
-				"z", fleeTarget == null ? null : fleeTarget.z(),
-				"tick", tick
-			)));
-			if (fleeTarget != null) {
-				failedFleeTargets.add(fleeTarget);
-			}
-			fleeTarget = null;
-			fleeNavigationOwned = false;
-		}
-		if (fleeTarget != null) {
-			return;
-		}
-		FleeSelection selection = selectFleeTarget(client, player, threats).orElse(null);
-		fleeTarget = selection == null ? null : selection.goal();
-		if (selection == null) {
-			if (completedFleeLegs > 0) {
-				fleeEscalatedToDefend = true;
-				pendingEvents.add(new SurvivalReflexEvent("reflex.flee_escalated", mapOfNullable(
-					"reason", "safe_path_exhausted",
-					"completedLegs", completedFleeLegs,
-					"closeContacts", fleeCloseContacts,
-					"tick", tick
-				)));
-				return;
-			}
-			throw new IllegalStateException("safe_flee_target_unavailable");
-		}
-		baritone.applySettings();
-		if (fleeWaterPenaltyBase == null) {
-			fleeWaterPenaltyBase = baritone.walkOnWaterPenalty();
-		}
-		baritone.setWalkOnWaterPenalty(fleeWaterPenalty(fleeWaterPenaltyBase));
-		baritone.startNavigate(fleeTarget);
-		fleeNavigationOwned = true;
-		pendingEvents.add(new SurvivalReflexEvent("reflex.flee_target_selected", mapOfNullable(
-			"x", fleeTarget.x(),
-			"y", fleeTarget.y(),
-			"z", fleeTarget.z(),
-			"sheltered", selection.sheltered(),
-			"pathfinder", "baritone",
-			"tick", tick
-		)));
+		combatTarget = null;
 	}
 
 	private void resolve(
@@ -550,7 +441,7 @@ public final class SurvivalReflexRuntime {
 		boolean keepSafetyHold
 	) {
 		underwaterEscape.reset(client);
-		stopFleeNavigation();
+		stopCombatNavigation();
 		movementController.stop(client);
 		SurvivalReflexState nextState = keepSafetyHold || snapshot.holdId() != null
 			? SurvivalReflexState.AWAITING_PLANNER
@@ -572,8 +463,7 @@ public final class SurvivalReflexRuntime {
 		);
 		observedThreats.clear();
 		lastMobDamageTick = Long.MIN_VALUE;
-		failedFleeTargets.clear();
-		resetFleeProgress();
+		resetSecurityProgress();
 	}
 
 	static String safetyHoldId(String existingHoldId, boolean holdRequired) {
@@ -602,16 +492,11 @@ public final class SurvivalReflexRuntime {
 		cameraController.lookAtNow(client, threat.entity().getBoundingBox().getCenter());
 		client.interactionManager.attackEntity(player, threat.entity());
 		player.swingHand(Hand.MAIN_HAND);
-		boolean fleeing = snapshot.action() == SurvivalReflexAction.FLEE;
-		if (fleeing) {
-			fleeCloseContacts++;
-		}
-		pendingEvents.add(new SurvivalReflexEvent(fleeing ? "reflex.flee_knockback" : "reflex.close_quarter_attack", mapOfNullable(
+		pendingEvents.add(new SurvivalReflexEvent("reflex.close_quarter_attack", mapOfNullable(
 			"threatUuid", threat.observed().uuid(),
 			"entityTypeId", threat.observed().entityTypeId(),
 			"distance", threat.distance(),
 			"action", snapshot.action() == null ? null : snapshot.action().name(),
-			"closeContacts", fleeing ? fleeCloseContacts : null,
 			"tick", tick
 		)));
 	}
@@ -660,8 +545,8 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void changeAction(SurvivalReflexCause cause, SurvivalReflexAction action, long tick) {
-		if (action != SurvivalReflexAction.FLEE) {
-			stopFleeNavigation();
+		if (action != SurvivalReflexAction.DEFEND) {
+			stopCombatNavigation();
 		}
 		pendingEvents.add(new SurvivalReflexEvent("reflex.action_changed", mapOfNullable(
 			"safetyEpoch", snapshot.safetyEpoch(),
@@ -786,54 +671,32 @@ public final class SurvivalReflexRuntime {
 		return current.holdId().equals(holdId) ? ResumeResult.RESUMED : ResumeResult.STALE_SAFETY_HOLD;
 	}
 
-	public static boolean shouldDefend(double healthRatio, int threatCount, double distance, boolean lineOfSight, double minHealthRatio) {
-		return healthRatio > minHealthRatio && threatCount == 1 && distance <= DEFEND_DISTANCE && lineOfSight;
-	}
-
-	static boolean shouldDetectProactiveThreat(boolean hostile, boolean alive, double distance, boolean lineOfSight) {
-		return hostile && alive && distance <= PROACTIVE_THREAT_DISTANCE && lineOfSight;
+	static boolean shouldDetectProactiveThreat(boolean targetingPlayer, boolean alive) {
+		return targetingPlayer && alive;
 	}
 
 	public static boolean recentlyDamagedByMob(long tick, long lastDamageTick, int cooldownTicks) {
 		return lastDamageTick != Long.MIN_VALUE && tick - lastDamageTick < Math.max(0, cooldownTicks);
 	}
 
-	static double fleeWaterPenalty(double currentPenalty) {
-		return Math.max(FLEE_WATER_PENALTY, currentPenalty);
-	}
-
 	static boolean shouldAttackCloseThreat(double distance, boolean lineOfSight, float attackCooldown) {
-		return distance <= FLEE_KNOCKBACK_DISTANCE
+		return distance <= MELEE_ATTACK_DISTANCE
 			&& lineOfSight
 			&& attackCooldown >= ATTACK_READY_THRESHOLD;
 	}
 
-	static boolean shouldEscalateFleeToDefend(int completedLegs, int closeContacts, double closestPathDistance) {
-		return closeContacts >= MAX_FLEE_CLOSE_CONTACTS
-			|| (completedLegs >= MAX_FLEE_LEGS_BEFORE_DEFEND && closestPathDistance <= PROACTIVE_THREAT_DISTANCE);
-	}
-
 	static SecurityKind classifyThreatSecurity(
 		RouteStatus routeStatus,
-		int pathLength,
-		boolean ranged,
 		boolean lineOfSight
 	) {
-		if (routeStatus == RouteStatus.UNKNOWN) {
-			return SecurityKind.UNSAFE;
-		}
-		if (routeStatus == RouteStatus.BLOCKED) {
-			return ranged && lineOfSight ? SecurityKind.UNSAFE : SecurityKind.SEALED;
-		}
-		if (routeStatus == RouteStatus.PARTIAL) {
-			return ranged && lineOfSight ? SecurityKind.UNSAFE : SecurityKind.POTENTIAL_SHELTER;
-		}
-		return pathLength >= SECURE_ESCAPE_PATH_DISTANCE ? SecurityKind.DISTANT_PATH : SecurityKind.UNSAFE;
+		// A long or incomplete route is not shelter: pursuit can resume as soon as we stop.
+		return routeStatus == RouteStatus.BLOCKED && !lineOfSight
+			? SecurityKind.SEALED : SecurityKind.UNSAFE;
 	}
 
-	private MobSecurity assessMobSecurity(ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+	private SecurityKind assessMobSecurity(ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
 		if (player == null || threats == null || threats.isEmpty()) {
-			return new MobSecurity(SecurityKind.UNSAFE, Double.POSITIVE_INFINITY);
+			return SecurityKind.UNSAFE;
 		}
 		Set<String> threatIds = threats.stream().map(threat -> threat.observed().uuid()).collect(java.util.stream.Collectors.toSet());
 		if (mobRoutesTick == Long.MIN_VALUE
@@ -847,29 +710,18 @@ public final class SurvivalReflexRuntime {
 			mobRoutesTick = tick;
 		}
 		SecurityKind combined = SecurityKind.SEALED;
-		double closestReachable = Double.POSITIVE_INFINITY;
 		for (ResolvedThreat threat : threats) {
 			MobRoute route = mobRoutes.getOrDefault(threat.observed().uuid(), MobRoute.unknown());
 			SecurityKind threatSecurity = classifyThreatSecurity(
 				route.status(),
-				route.pathLength(),
-				threat.entity() instanceof RangedAttackMob,
 				threat.lineOfSight()
 			);
 			if (threatSecurity == SecurityKind.UNSAFE) {
 				combined = SecurityKind.UNSAFE;
 			}
-			else if (threatSecurity == SecurityKind.POTENTIAL_SHELTER) {
-				combined = SecurityKind.POTENTIAL_SHELTER;
-			}
-			else if (threatSecurity == SecurityKind.DISTANT_PATH && combined == SecurityKind.SEALED) {
-				combined = SecurityKind.DISTANT_PATH;
-			}
-			if (route.status() == RouteStatus.REACHABLE) {
-				closestReachable = Math.min(closestReachable, route.pathLength());
-			}
+
 		}
-		return new MobSecurity(combined, closestReachable);
+		return combined;
 	}
 
 	private static MobRoute computeMobRoute(ClientPlayerEntity player, LivingEntity threat) {
@@ -892,158 +744,12 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private SurvivalReflexAction chooseMobAction(ClientPlayerEntity player, List<ResolvedThreat> threats) {
-		if (player == null || threats == null || threats.isEmpty()) {
-			return SurvivalReflexAction.FLEE;
-		}
-		ResolvedThreat closest = closestVisibleThreat(threats);
-		boolean safeThreatTypes = threats.stream().noneMatch(SurvivalReflexRuntime::unsafeCombatThreat);
-		SurvivalCombatReadiness.State readiness = new SurvivalCombatReadiness.State(
-			threats.size(),
-			closest.distance(),
-			closest.lineOfSight(),
-			!safeThreatTypes
-				|| hazardousEnvironment(player)
-				|| healthRatio(player) <= config.defendMinHealthRatio()
-		);
-		return SurvivalCombatReadiness.shouldFight(readiness)
-			? SurvivalReflexAction.DEFEND
-			: SurvivalReflexAction.FLEE;
+		// Once an aggressor owns this encounter, fight regardless of health or mob count.
+		return SurvivalReflexAction.DEFEND;
 	}
 
 	private static boolean isDrowningDamage(String damageTypeId) {
 		return damageTypeId != null && (damageTypeId.equals("drown") || damageTypeId.endsWith(":drown"));
-	}
-
-	private static double healthRatio(ClientPlayerEntity player) {
-		return player == null || player.getMaxHealth() <= 0.0F ? 0.0D : player.getHealth() / player.getMaxHealth();
-	}
-
-	private Optional<FleeSelection> selectFleeTarget(
-		MinecraftClient client,
-		ClientPlayerEntity player,
-		List<ResolvedThreat> threats
-	) {
-		if (client == null || client.world == null || player == null || threats == null || threats.isEmpty()) {
-			return Optional.empty();
-		}
-		BlockPos originPos = player.getBlockPos();
-		SurvivalEscapeTargetSelector.Point origin = point(originPos);
-		List<SurvivalEscapeTargetSelector.Point> threatPoints = threats.stream()
-			.map(threat -> point(threat.entity().getBlockPos()))
-			.toList();
-		List<SurvivalEscapeTargetSelector.Candidate> candidates = new ArrayList<>();
-		for (int dx = -FLEE_SCAN_RADIUS; dx <= FLEE_SCAN_RADIUS; dx++) {
-			for (int dz = -FLEE_SCAN_RADIUS; dz <= FLEE_SCAN_RADIUS; dz++) {
-				for (int dy = FLEE_SCAN_VERTICAL_RADIUS; dy >= -FLEE_SCAN_VERTICAL_RADIUS; dy--) {
-					BlockPos candidatePos = originPos.add(dx, dy, dz);
-					GoalPosition goal = goal(candidatePos);
-					if (failedFleeTargets.contains(goal) || !isSafeFleeStanding(client, candidatePos)) {
-						continue;
-					}
-					candidates.add(new SurvivalEscapeTargetSelector.Candidate(
-						candidatePos.getX(), candidatePos.getY(), candidatePos.getZ(), true, false, false,
-						isShelteredFromThreats(client, player, candidatePos, threats)
-					));
-					break;
-				}
-			}
-		}
-		return SurvivalEscapeTargetSelector.select(origin, threatPoints, candidates)
-			.map(selected -> new FleeSelection(
-				new GoalPosition(selected.x(), selected.y(), selected.z(), true),
-				selected.sheltered()
-			));
-	}
-
-	private static boolean isShelteredFromThreats(
-		MinecraftClient client,
-		ClientPlayerEntity player,
-		BlockPos candidatePos,
-		List<ResolvedThreat> threats
-	) {
-		Vec3d candidateEye = Vec3d.ofBottomCenter(candidatePos).add(0.0D, player.getEyeHeight(player.getPose()), 0.0D);
-		return threats.stream().allMatch(threat -> client.world.raycast(new RaycastContext(
-			candidateEye,
-			threat.entity().getEyePos(),
-			RaycastContext.ShapeType.COLLIDER,
-			RaycastContext.FluidHandling.NONE,
-			player
-		)).getType() == HitResult.Type.BLOCK);
-	}
-
-	private static boolean isSafeFleeStanding(MinecraftClient client, BlockPos feetPos) {
-		if (client == null || client.world == null || feetPos == null
-			|| !client.world.isChunkLoaded(feetPos) || !client.world.isChunkLoaded(feetPos.down())) {
-			return false;
-		}
-		BlockState feet = client.world.getBlockState(feetPos);
-		BlockState head = client.world.getBlockState(feetPos.up());
-		BlockState support = client.world.getBlockState(feetPos.down());
-		if (!client.world.getFluidState(feetPos).isEmpty()
-			|| !client.world.getFluidState(feetPos.up()).isEmpty()
-			|| hazardousBlock(feet) || hazardousBlock(head) || hazardousBlock(support)) {
-			return false;
-		}
-		boolean standing = (feet.isAir() || feet.isReplaceable())
-			&& (head.isAir() || head.isReplaceable())
-			&& support.isSideSolidFullSquare(client.world, feetPos.down(), Direction.UP);
-		if (!standing) {
-			return false;
-		}
-		int escapes = 0;
-		for (Direction direction : Direction.Type.HORIZONTAL) {
-			BlockPos adjacent = feetPos.offset(direction);
-			if (basicSafeStanding(client, adjacent)) {
-				escapes++;
-			}
-		}
-		return escapes >= MIN_ESCAPE_DIRECTIONS;
-	}
-
-	private static boolean basicSafeStanding(MinecraftClient client, BlockPos feetPos) {
-		if (client == null || client.world == null || feetPos == null
-			|| !client.world.isChunkLoaded(feetPos) || !client.world.isChunkLoaded(feetPos.down())) {
-			return false;
-		}
-		BlockState feet = client.world.getBlockState(feetPos);
-		BlockState head = client.world.getBlockState(feetPos.up());
-		BlockState support = client.world.getBlockState(feetPos.down());
-		return client.world.getFluidState(feetPos).isEmpty()
-			&& client.world.getFluidState(feetPos.up()).isEmpty()
-			&& !hazardousBlock(feet)
-			&& !hazardousBlock(head)
-			&& !hazardousBlock(support)
-			&& (feet.isAir() || feet.isReplaceable())
-			&& (head.isAir() || head.isReplaceable())
-			&& support.isSideSolidFullSquare(client.world, feetPos.down(), Direction.UP);
-	}
-
-	private static boolean hazardousBlock(BlockState state) {
-		return state != null && (state.isOf(Blocks.FIRE)
-			|| state.isOf(Blocks.SOUL_FIRE)
-			|| state.isOf(Blocks.LAVA)
-			|| state.isOf(Blocks.MAGMA_BLOCK)
-			|| state.isOf(Blocks.CACTUS)
-			|| state.isOf(Blocks.CAMPFIRE)
-			|| state.isOf(Blocks.SOUL_CAMPFIRE)
-			|| state.isOf(Blocks.POWDER_SNOW));
-	}
-
-	private static boolean hazardousEnvironment(ClientPlayerEntity player) {
-		return player == null
-			|| player.isTouchingWater()
-			|| player.isSubmergedInWater()
-			|| player.isInLava()
-			|| player.isOnFire()
-			|| player.fallDistance > 3.0F;
-	}
-
-	private static boolean unsafeCombatThreat(ResolvedThreat threat) {
-		LivingEntity entity = threat == null ? null : threat.entity();
-		return entity instanceof CreeperEntity
-			|| entity instanceof RangedAttackMob
-			|| entity instanceof BlazeEntity
-			|| entity instanceof GhastEntity;
 	}
 
 	private static ResolvedThreat closestVisibleThreat(List<ResolvedThreat> threats) {
@@ -1057,37 +763,8 @@ public final class SurvivalReflexRuntime {
 			.orElseThrow();
 	}
 
-	private static boolean isTerminalPathFailure(String event) {
-		return "CALC_FAILED".equals(event)
-			|| "CANCELED".equals(event)
-			|| "DISCARDING".equals(event);
-	}
-
-	static boolean shouldRejectFleeTarget(Optional<String> pathEvent, boolean currentProcessActive) {
-		return !currentProcessActive && pathEvent.filter(SurvivalReflexRuntime::isTerminalPathFailure).isPresent();
-	}
-
-	static boolean shouldUseWaterAwareFlee(boolean touchingWater, boolean submergedInWater) {
-		return touchingWater || submergedInWater;
-	}
-
-	private void stopFleeNavigation() {
-		if (fleeNavigationOwned && baritone != null) {
-			baritone.cancel();
-		}
-		if (fleeWaterPenaltyBase != null && baritone != null) {
-			baritone.setWalkOnWaterPenalty(fleeWaterPenaltyBase);
-		}
-		fleeWaterPenaltyBase = null;
-		fleeNavigationOwned = false;
-		fleeTarget = null;
-	}
-
-	private void resetFleeProgress() {
-		completedFleeLegs = 0;
-		fleeCloseContacts = 0;
+	private void resetSecurityProgress() {
 		secureEscapeTicks = 0;
-		fleeEscalatedToDefend = false;
 		mobRoutesTick = Long.MIN_VALUE;
 		mobRoutes = Map.of();
 	}
@@ -1096,44 +773,54 @@ public final class SurvivalReflexRuntime {
 		return new GoalPosition(pos.getX(), pos.getY(), pos.getZ(), true);
 	}
 
-	private static SurvivalEscapeTargetSelector.Point point(BlockPos pos) {
-		return new SurvivalEscapeTargetSelector.Point(pos.getX(), pos.getY(), pos.getZ());
-	}
-
 	private void detectProactiveThreats(MinecraftClient client, ClientPlayerEntity player, long tick) {
 		if (client == null || client.world == null || player == null) {
 			return;
 		}
-		for (HostileEntity hostile : client.world.getEntitiesByClass(
-			HostileEntity.class,
-			player.getBoundingBox().expand(PROACTIVE_THREAT_DISTANCE),
-			Entity::isAlive
-		)) {
-			double distance = player.distanceTo(hostile);
-			boolean lineOfSight = player.canSee(hostile);
-			if (!shouldDetectProactiveThreat(true, hostile.isAlive(), distance, lineOfSight)) {
+		Set<String> targetingPlayer = Set.of();
+		if (client.getServer() != null) {
+			if (aggroQuery != null && aggroQuery.isDone()) {
+				targetingPlayer = aggroQuery.join();
+				aggroQuery = null;
+			}
+			if (aggroQuery == null) {
+				var server = client.getServer();
+				var dimension = client.world.getRegistryKey();
+				var bounds = player.getBoundingBox().expand(32.0D);
+				UUID playerId = player.getUuid();
+				aggroQuery = server.submit(() -> {
+					var world = server.getWorld(dimension);
+					if (world == null) {
+						return Set.<String>of();
+					}
+					return world.getEntitiesByClass(MobEntity.class, bounds, Entity::isAlive).stream()
+						.filter(mob -> mob.getTarget() != null && playerId.equals(mob.getTarget().getUuid()))
+						.map(Entity::getUuidAsString).collect(java.util.stream.Collectors.toUnmodifiableSet());
+				});
+			}
+		}
+		for (MobEntity mob : client.world.getEntitiesByClass(MobEntity.class,
+			player.getBoundingBox().expand(32.0D), Entity::isAlive)) {
+			// Remote clients may not receive AI targets; damage observations remain authoritative there.
+			boolean targetsUs = targetingPlayer.contains(mob.getUuidAsString())
+				|| mob.getTarget() != null && player.getUuid().equals(mob.getTarget().getUuid());
+			if (!shouldDetectProactiveThreat(targetsUs, mob.isAlive())) {
 				continue;
 			}
-			String uuid = hostile.getUuidAsString();
+			if (classifyThreatSecurity(computeMobRoute(player, mob).status(), player.canSee(mob)) == SecurityKind.SEALED) {
+				continue;
+			}
+			String uuid = mob.getUuidAsString();
 			if (observedThreats.containsKey(uuid)) {
 				continue;
 			}
-			ObservedThreat observed = new ObservedThreat(
-				uuid,
-				hostile.getName().getString(),
-				Registries.ENTITY_TYPE.getId(hostile.getType()).toString(),
-				tick
-			);
+			ObservedThreat observed = new ObservedThreat(uuid, mob.getName().getString(),
+				Registries.ENTITY_TYPE.getId(mob.getType()).toString(), tick);
 			observedThreats.put(uuid, observed);
 			pendingEvents.add(new SurvivalReflexEvent("reflex.threat_detected", mapOfNullable(
-				"source", "hostile_proximity",
-				"uuid", uuid,
-				"name", observed.name(),
-				"entityTypeId", observed.entityTypeId(),
-				"distance", distance,
-				"lineOfSight", true,
-				"tick", tick
-			)));
+				"source", "aggro_target", "uuid", uuid, "name", observed.name(),
+				"entityTypeId", observed.entityTypeId(), "distance", player.distanceTo(mob),
+				"lineOfSight", player.canSee(mob), "tick", tick)));
 		}
 	}
 
@@ -1265,8 +952,6 @@ public final class SurvivalReflexRuntime {
 	record ResolvedThreat(ObservedThreat observed, LivingEntity entity, double distance, boolean lineOfSight) {
 	}
 
-	private record FleeSelection(GoalPosition goal, boolean sheltered) {
-	}
 
 	enum RouteStatus {
 		REACHABLE,
@@ -1277,9 +962,7 @@ public final class SurvivalReflexRuntime {
 
 	enum SecurityKind {
 		UNSAFE,
-		SEALED,
-		POTENTIAL_SHELTER,
-		DISTANT_PATH
+		SEALED
 	}
 
 	private record MobRoute(RouteStatus status, int pathLength) {
@@ -1288,6 +971,4 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
-	private record MobSecurity(SecurityKind kind, double closestReachablePathLength) {
-	}
 }

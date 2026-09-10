@@ -17,6 +17,15 @@ public final class BaritoneSettingsProfile {
 		Objects.requireNonNull(settings, "settings");
 		apply(new SettingsTarget() {
 			@Override
+			public void avoidance(boolean value) { settings.avoidance.value = value; }
+
+			@Override
+			public void mobAvoidanceRadius(int value) { settings.mobAvoidanceRadius.value = value; }
+
+			@Override
+			public void mobAvoidanceCoefficient(double value) { settings.mobAvoidanceCoefficient.value = value; }
+
+			@Override
 			public void chatControl(boolean value) {
 				settings.chatControl.value = value;
 			}
@@ -91,6 +100,9 @@ public final class BaritoneSettingsProfile {
 	static void apply(SettingsTarget settings) {
 		Objects.requireNonNull(settings, "settings");
 
+		settings.avoidance(true);
+		settings.mobAvoidanceRadius(16);
+		settings.mobAvoidanceCoefficient(4.0D);
 		settings.chatControl(false);
 		settings.chatControlAnyway(false);
 		settings.prefixControl(false);
@@ -109,6 +121,12 @@ public final class BaritoneSettingsProfile {
 	}
 
 	interface SettingsTarget {
+		void avoidance(boolean value);
+
+		void mobAvoidanceRadius(int value);
+
+		void mobAvoidanceCoefficient(double value);
+
 		void chatControl(boolean value);
 
 		void chatControlAnyway(boolean value);

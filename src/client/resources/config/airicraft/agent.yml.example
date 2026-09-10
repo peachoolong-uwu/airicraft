@@ -63,6 +63,7 @@ plannerSessionCoalesceMaxMillis: 100
 reflex:
   enabled: true
   lowAirTicks: 100
+  # Legacy compatibility setting; combat no longer retreats at a health threshold.
   defendMinHealthRatio: 0.5
   threatCooldownTicks: 60
 

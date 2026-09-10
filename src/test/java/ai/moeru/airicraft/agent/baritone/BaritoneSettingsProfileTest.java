@@ -13,6 +13,9 @@ class BaritoneSettingsProfileTest {
 
 		BaritoneSettingsProfile.apply(target);
 
+		assertTrue(target.avoidance);
+		assertEquals(16, target.mobAvoidanceRadius);
+		assertEquals(4.0D, target.mobAvoidanceCoefficient);
 		assertFalse(target.chatControl);
 		assertFalse(target.chatControlAnyway);
 		assertFalse(target.prefixControl);
@@ -30,6 +33,19 @@ class BaritoneSettingsProfileTest {
 	}
 
 	private static final class FakeSettingsTarget implements BaritoneSettingsProfile.SettingsTarget {
+		private boolean avoidance;
+		private int mobAvoidanceRadius;
+		private double mobAvoidanceCoefficient;
+
+		@Override
+		public void avoidance(boolean value) { avoidance = value; }
+
+		@Override
+		public void mobAvoidanceRadius(int value) { mobAvoidanceRadius = value; }
+
+		@Override
+		public void mobAvoidanceCoefficient(double value) { mobAvoidanceCoefficient = value; }
+
 		private boolean chatControl = true;
 		private boolean chatControlAnyway = true;
 		private boolean prefixControl = true;
