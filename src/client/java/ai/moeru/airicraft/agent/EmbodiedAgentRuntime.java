@@ -285,6 +285,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private BlockPos nearbyBlockSnapshotOrigin;
 	private long nearbyBlockSnapshotTick = Long.MIN_VALUE;
 	private Map<String, Integer> nearbyBlockSnapshot = Map.of();
+	private Map<String, Integer> nearbyHarvestableBlockSnapshot;
 	private final Map<UUID, String> seenPlayerNames = new LinkedHashMap<>();
 	private volatile PendingCraftToolResult pendingCraftToolResult;
 	private final AtomicReference<PendingBlockModificationToolResult> pendingBlockModificationToolResult = new AtomicReference<>();
@@ -1707,7 +1708,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			agentPosition,
 			watchProgress,
 			blockAcquisitions(),
-			NearbyBlockAvailability.observed(worldEvidence.nearbyBlocks())
+			NearbyBlockAvailability.observed(nearbyHarvestableBlockSnapshot)
 		), foregroundAllowed);
 		drainActionGraphCoordinatorEvents();
 	}
@@ -3396,10 +3397,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			clearNearbyBlockSnapshot();
 			return Map.of();
 		}
-		if (canReuseNearbyBlockSnapshot(client.world, origin)) {
+		if (nearbyHarvestableBlockSnapshot != null && canReuseNearbyBlockSnapshot(client.world, origin)) {
 			return nearbyBlockSnapshot;
 		}
 		java.util.HashMap<String, Integer> counts = new java.util.HashMap<>();
+		java.util.HashMap<String, Integer> harvestable = new java.util.HashMap<>();
 		for (int dx = -NEARBY_BLOCK_HORIZONTAL_RADIUS; dx <= NEARBY_BLOCK_HORIZONTAL_RADIUS; dx++) {
 			for (int dy = -NEARBY_BLOCK_VERTICAL_RADIUS; dy <= NEARBY_BLOCK_VERTICAL_RADIUS; dy++) {
 				for (int dz = -NEARBY_BLOCK_HORIZONTAL_RADIUS; dz <= NEARBY_BLOCK_HORIZONTAL_RADIUS; dz++) {
@@ -3407,8 +3409,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					if (!client.world.isChunkLoaded(pos)) {
 						continue;
 					}
-					String blockId = Registries.BLOCK.getId(client.world.getBlockState(pos).getBlock()).toString();
+					BlockState blockState = client.world.getBlockState(pos);
+					String blockId = Registries.BLOCK.getId(blockState.getBlock()).toString();
 					counts.merge(blockId, 1, Integer::sum);
+					if (ai.moeru.airicraft.agent.tasks.HarvestableBlocks.ready(blockState)) harvestable.merge(blockId, 1, Integer::sum);
 				}
 			}
 		}
@@ -3416,6 +3420,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		nearbyBlockSnapshotOrigin = origin.toImmutable();
 		nearbyBlockSnapshotTick = tickCount;
 		nearbyBlockSnapshot = Map.copyOf(counts);
+		nearbyHarvestableBlockSnapshot = Map.copyOf(harvestable);
 		return nearbyBlockSnapshot;
 	}
 
@@ -3439,6 +3444,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		nearbyBlockSnapshotOrigin = null;
 		nearbyBlockSnapshotTick = Long.MIN_VALUE;
 		nearbyBlockSnapshot = Map.of();
+		nearbyHarvestableBlockSnapshot = null;
 	}
 
 	public VisionDescription describeCapturedView(FirstPersonScreenshotService.CapturedScreenshot screenshot, String prompt) throws LlmBackendException {

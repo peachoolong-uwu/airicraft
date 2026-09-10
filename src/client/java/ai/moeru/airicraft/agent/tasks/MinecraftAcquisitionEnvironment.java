@@ -65,7 +65,8 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 			center.add(constraints.radius(), constraints.verticalRadius(), constraints.radius()))) {
 			if (!world.isChunkLoaded(cursor) || !constraints.contains(position(cursor))) continue;
 			BlockState state = world.getBlockState(cursor);
-			if (spec.blockIds().contains(id(state)) && inScope(position(cursor), constraints, false)) blocks.add(cursor.toImmutable());
+			if (spec.blockIds().contains(id(state)) && HarvestableBlocks.ready(state)
+				&& inScope(position(cursor), constraints, false)) blocks.add(cursor.toImmutable());
 		}
 		blocks.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())));
 		for (BlockPos pos : blocks) {
@@ -152,7 +153,8 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 
 	@Override public boolean targetPresent(Candidate target) {
 		if (target.kind() == Kind.BLOCK) return client().world.isChunkLoaded(block(target.position()))
-			&& id(client().world.getBlockState(block(target.position()))).equals(target.id());
+			&& id(client().world.getBlockState(block(target.position()))).equals(target.id())
+			&& HarvestableBlocks.ready(client().world.getBlockState(block(target.position())));
 		return client().world.getEntitiesByClass(ItemEntity.class, new Box(block(target.position())).expand(3),
 			item -> item.isAlive() && item.getUuidAsString().equals(target.id())).size() > 0;
 	}
