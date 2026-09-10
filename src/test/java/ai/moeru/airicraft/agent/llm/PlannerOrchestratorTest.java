@@ -3527,7 +3527,7 @@ class PlannerOrchestratorTest {
 		}
 
 		@Override
-		public CompletableFuture<String> inspectNearbyEntities(String prompt) {
+		public CompletableFuture<String> inspectNearbyEntities(com.google.gson.JsonObject arguments) {
 			nearbyEntitiesRequestCount++;
 			return CompletableFuture.completedFuture(nearbyEntitiesResult);
 		}

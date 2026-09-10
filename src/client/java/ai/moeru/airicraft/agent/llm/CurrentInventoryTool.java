@@ -7,7 +7,7 @@ public interface CurrentInventoryTool {
 
 	CompletableFuture<String> checkCraftables(String prompt);
 
-	CompletableFuture<String> inspectNearbyEntities(String prompt);
+	CompletableFuture<String> inspectNearbyEntities(com.google.gson.JsonObject arguments);
 
 	static CurrentInventoryTool disabled() {
 		return new CurrentInventoryTool() {
@@ -22,7 +22,7 @@ public interface CurrentInventoryTool {
 			}
 
 			@Override
-			public CompletableFuture<String> inspectNearbyEntities(String prompt) {
+			public CompletableFuture<String> inspectNearbyEntities(com.google.gson.JsonObject arguments) {
 				return CompletableFuture.completedFuture("NEARBY_ENTITIES_UNAVAILABLE: inventory_tool_disabled");
 			}
 		};

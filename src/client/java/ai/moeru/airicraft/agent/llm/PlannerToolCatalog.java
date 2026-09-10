@@ -135,10 +135,13 @@ public final class PlannerToolCatalog {
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("prompt", string("Optional smelting status question."))
 			), List.of()), NO_ARGUMENT_VALIDATION),
-		builtInTool(INSPECT_NEARBY_ENTITIES, true, tool(INSPECT_NEARBY_ENTITIES, "List nearby loaded entities with exact selectors such as uuid, name, entityTypeId, distance, and health when available.", properties(
+		builtInTool(INSPECT_NEARBY_ENTITIES, true, tool(INSPECT_NEARBY_ENTITIES, "Search loaded entities by exact type, with nearest-first bounded results and selectors, positions and health. Absence does not describe unloaded terrain. Navigate within 32 blocks before interacting with a distant result.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
-				prop("prompt", string("Optional nearby-entity question."))
-			), List.of()), NO_ARGUMENT_VALIDATION),
+				prop("prompt", string("Optional nearby-entity question.")),
+				prop("radius", integer("Search radius in blocks, 1 to 128. Default 32. Loaded entities only.")),
+				prop("maxResults", integer("Maximum nearest matching entities, 1 to 64. Default 32.")),
+				prop("entityTypeIds", stringArray("Optional exact entity type IDs, for example minecraft:sheep. Omit for all types."))
+			), List.of()), PlannerToolCatalog::validateNearbyEntitiesArguments),
 		builtInTool(START_ACTION_GOAL, false, tool(START_ACTION_GOAL, "Start one runtime-owned action graph goal from a high-level typed intent. Prefer this over low-level action tools for execution.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 					prop("kind", enumString("Typed action goal kind. inventory_item, crafting_output, smelting_output, and catalog resource_collection are executable in v1; other kinds are reserved graph goal surfaces during migration.", List.of(
@@ -540,6 +543,19 @@ public final class PlannerToolCatalog {
 				throw new JsonParseException("maxResults must be between 1 and 5");
 			}
 		}
+	}
+
+	private static void validateNearbyEntitiesArguments(JsonObject arguments) {
+		for (String key : List.of("radius", "maxResults")) {
+			if (!arguments.has(key)) continue;
+			int maximum = key.equals("radius") ? 128 : 64;
+			JsonElement value = arguments.get(key);
+			if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()
+				|| value.getAsDouble() != Math.rint(value.getAsDouble())
+				|| value.getAsDouble() < 1 || value.getAsDouble() > maximum)
+				throw new JsonParseException(key + " must be an integer from 1 to " + maximum);
+		}
+		if (arguments.has("entityTypeIds")) requireStringArray(arguments, "entityTypeIds");
 	}
 
 	private static void validateNavigateToArguments(JsonObject arguments) {

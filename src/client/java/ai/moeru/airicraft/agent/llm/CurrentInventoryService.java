@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -147,16 +148,22 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 	}
 
 	@Override
-	public CompletableFuture<String> inspectNearbyEntities(String prompt) {
+	public CompletableFuture<String> inspectNearbyEntities(com.google.gson.JsonObject arguments) {
 		MinecraftClient client = clientSupplier.get();
 		if (client == null || client.world == null || client.player == null) {
 			return CompletableFuture.completedFuture("NEARBY_ENTITIES_UNAVAILABLE: world_not_loaded");
 		}
 
-		List<NearbyEntityService.NearbyEntitySnapshot> nearbyEntities = NearbyEntityService.listNearbyEntities(client);
+		double radius = arguments.has("radius") ? arguments.get("radius").getAsDouble() : EntitySelectorResolver.DEFAULT_NEARBY_RADIUS_BLOCKS;
+		int maxResults = arguments.has("maxResults") ? arguments.get("maxResults").getAsInt() : NearbyEntityService.DEFAULT_MAX_RESULTS;
+		Set<String> entityTypeIds = arguments.has("entityTypeIds")
+			? arguments.getAsJsonArray("entityTypeIds").asList().stream().map(com.google.gson.JsonElement::getAsString).collect(Collectors.toSet())
+			: Set.of();
+		List<NearbyEntityService.NearbyEntitySnapshot> nearbyEntities = NearbyEntityService.listNearbyEntities(client, radius, maxResults, entityTypeIds);
 		return CompletableFuture.completedFuture(
 			"Tool result for inspect_nearby_entities: "
-				+ "nearbyRadius=" + EntitySelectorResolver.DEFAULT_NEARBY_RADIUS_BLOCKS
+				+ "nearbyRadius=" + radius
+				+ ", loadedEntitiesOnly=true, maxResults=" + maxResults
 				+ ", entityCount=" + nearbyEntities.size()
 				+ ", entities=" + formatNearbyEntities(nearbyEntities)
 		);

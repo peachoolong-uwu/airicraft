@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public final class NearbyEntityService {
 	public static final int DEFAULT_MAX_RESULTS = 32;
@@ -22,14 +23,19 @@ public final class NearbyEntityService {
 	}
 
 	public static List<NearbyEntitySnapshot> listNearbyEntities(MinecraftClient client) {
+		return listNearbyEntities(client, EntitySelectorResolver.DEFAULT_NEARBY_RADIUS_BLOCKS, DEFAULT_MAX_RESULTS, Set.of());
+	}
+
+	public static List<NearbyEntitySnapshot> listNearbyEntities(MinecraftClient client, double radius, int maxResults, Set<String> entityTypeIds) {
 		if (client == null || client.world == null || client.player == null) {
 			return List.of();
 		}
 		return listNearbyEntities(
 			client.player,
 			client.world.getEntities(),
-			EntitySelectorResolver.DEFAULT_NEARBY_RADIUS_BLOCKS,
-			DEFAULT_MAX_RESULTS
+			radius,
+			maxResults,
+			entityTypeIds
 		);
 	}
 
@@ -52,6 +58,12 @@ public final class NearbyEntityService {
 		Iterable<? extends Entity> entities,
 		double nearbyRadius,
 		int maxResults
+	) {
+		return listNearbyEntities(self, entities, nearbyRadius, maxResults, Set.of());
+	}
+
+	private static List<NearbyEntitySnapshot> listNearbyEntities(
+		Entity self, Iterable<? extends Entity> entities, double nearbyRadius, int maxResults, Set<String> entityTypeIds
 	) {
 		if (self == null || entities == null) {
 			return List.of();
@@ -95,15 +107,18 @@ public final class NearbyEntityService {
 				entity instanceof PlayerEntity
 			));
 		}
-		snapshots.sort(Comparator
-			.comparingDouble(NearbyEntitySnapshot::distance)
-			.thenComparing(snapshot -> safeText(snapshot.entityTypeId()))
-			.thenComparing(snapshot -> safeText(snapshot.name()))
-			.thenComparing(snapshot -> safeText(snapshot.uuid())));
-		if (maxResults > 0 && snapshots.size() > maxResults) {
-			return List.copyOf(snapshots.subList(0, maxResults));
-		}
-		return List.copyOf(snapshots);
+		return selectSnapshots(snapshots, entityTypeIds, maxResults);
+	}
+
+	static List<NearbyEntitySnapshot> selectSnapshots(List<NearbyEntitySnapshot> snapshots, Set<String> entityTypeIds, int maxResults) {
+		return snapshots.stream()
+			.filter(snapshot -> entityTypeIds.isEmpty() || entityTypeIds.contains(snapshot.entityTypeId()))
+			.sorted(Comparator.comparingDouble(NearbyEntitySnapshot::distance)
+				.thenComparing(snapshot -> safeText(snapshot.entityTypeId()))
+				.thenComparing(snapshot -> safeText(snapshot.name()))
+				.thenComparing(snapshot -> safeText(snapshot.uuid())))
+			.limit(maxResults > 0 ? maxResults : Long.MAX_VALUE)
+			.toList();
 	}
 
 	private static String safeText(String value) {

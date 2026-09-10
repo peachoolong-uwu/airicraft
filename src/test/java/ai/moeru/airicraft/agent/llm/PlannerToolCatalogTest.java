@@ -7,6 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PlannerToolCatalogTest {
+	@Test void validatesBoundedEntitySearch() {
+		PlannerToolCall call = PlannerToolCatalog.parseToolCall(toolCall(PlannerToolCatalog.INSPECT_NEARBY_ENTITIES,
+			"{\"radius\":128,\"maxResults\":4,\"entityTypeIds\":[\"minecraft:sheep\"]}"));
+		assertEquals(128, call.arguments().get("radius").getAsInt());
+		for (String args : java.util.List.of("{\"radius\":129}", "{\"radius\":0}", "{\"radius\":1.5}",
+			"{\"maxResults\":65}", "{\"maxResults\":\"4\"}", "{\"entityTypeIds\":[]}"))
+			assertThrows(RuntimeException.class, () -> PlannerToolCatalog.parseToolCall(toolCall(PlannerToolCatalog.INSPECT_NEARBY_ENTITIES, args)));
+	}
+
 	@Test void validatesAcquisitionScopeAcrossIntentLevels() {
 		for (String name : java.util.List.of(PlannerToolCatalog.COLLECT_RESOURCE, PlannerToolCatalog.MINE_BLOCKS, PlannerToolCatalog.ENSURE_BLOCKS_IN_INVENTORY)) {
 			String selector = name.equals(PlannerToolCatalog.COLLECT_RESOURCE) ? "\"resourceKind\":\"WOOD_LOGS\"" : "\"blockIds\":[\"minecraft:oak_log\"]";
