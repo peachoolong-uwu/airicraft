@@ -54,6 +54,7 @@ public final class PlannerToolCatalog {
 	public static final String PLACE_BLOCK = "place_block";
 	public static final String USE_BLOCK = "use_block";
 	public static final String BREAK_BLOCKS = "break_blocks";
+	public static final String TEND_CROPS = "tend_crops";
 	public static final String CANCEL_TASK = "cancel_task";
 	public static final String RESUME_TASK = "resume_task";
 	public static final String CLEAR_GOAL = "clear_goal";
@@ -292,6 +293,12 @@ public final class PlannerToolCatalog {
 				prop("expectedTargetMaterial", enumString("Optional current target material check before use.", List.of("air", "replaceable", "air_or_replaceable"))),
 				prop("targets", array("Ordered target blocks to use. Maximum 16. Root facePreference, expectedSupportBlockIds, and expectedTargetMaterial apply as defaults.", useBlockTargetSchema()))
 			), List.of()), PlannerToolCatalog::validateUseBlockArguments),
+		builtInTool(TEND_CROPS, false, tool(TEND_CROPS, "Tend one existing flat crop plot, at most 16 by 16 blocks within 64 blocks of you. System 1 inspects the plot, harvests mature crops, collects drops and replants, and plants empty farmland when seeds are available. Leaves immature crops and other blocks intact. Deliberately edits crops within preserved places. One pass; does not wait for growth or till soil. Read TASK UPDATE for counts and missing seeds.", properties(
+			prop("narration", optionalString("Optional visible narration.")),
+			prop("seedItemId", string("Crop planting item, e.g. minecraft:wheat_seeds, minecraft:carrot, minecraft:potato, minecraft:beetroot_seeds.")),
+			prop("x1", integer("Minimum plot x.")), prop("y", integer("Crop block y; soil is one block below.")),
+			prop("z1", integer("Minimum plot z.")), prop("x2", integer("Maximum plot x.")), prop("z2", integer("Maximum plot z."))
+		), List.of("seedItemId", "x1", "y", "z1", "x2", "z2")), ai.moeru.airicraft.agent.tasks.CropTendingStepArgs::parse),
 		builtInTool(BREAK_BLOCKS, false, tool(BREAK_BLOCKS, "Break exact target blocks in order. Use this for precise terrain editing, not resource mining. Every target position must have been observed by a world read tool such as inspect_world or find_world_features within the last 10 planner tool calls.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("targets", array("Ordered target blocks to break. Maximum 16.", breakBlockTargetSchema()))

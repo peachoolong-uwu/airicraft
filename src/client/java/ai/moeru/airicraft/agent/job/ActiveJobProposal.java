@@ -3,6 +3,7 @@ package ai.moeru.airicraft.agent.job;
 import ai.moeru.airicraft.agent.goals.GoalMineSpec;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
 import ai.moeru.airicraft.agent.tasks.BlockBreakStepArgs;
+import ai.moeru.airicraft.agent.tasks.CropTendingStepArgs;
 import ai.moeru.airicraft.agent.tasks.BlockPlacementStepArgs;
 import ai.moeru.airicraft.agent.tasks.BlockUseStepArgs;
 import ai.moeru.airicraft.agent.tasks.CraftRecipeStepArgs;
@@ -30,8 +31,29 @@ public record ActiveJobProposal(
 	BlockPlacementStepArgs blockPlacement,
 	BlockUseStepArgs blockUse,
 	BlockBreakStepArgs blockBreak,
-	String askPrompt
+	String askPrompt,
+	CropTendingStepArgs cropTending
 ) {
+	public ActiveJobProposal(
+		ActiveJobType type,
+		String targetPlayer,
+		GoalPosition position,
+		GoalMineSpec mineSpec,
+		TaskSpec taskSpec,
+		CraftRecipeStepArgs craftRecipe,
+		DropItemsStepArgs dropItems,
+		EntityInteractionStepArgs entityInteraction,
+		SmeltItemsStepArgs smeltItems,
+		CollectSmeltedItemsStepArgs collectSmeltedItems,
+		ReturnToSurfaceStepArgs returnToSurface,
+		BlockPlacementStepArgs blockPlacement,
+		BlockUseStepArgs blockUse,
+		BlockBreakStepArgs blockBreak,
+		String askPrompt
+	) {
+		this(type, targetPlayer, position, mineSpec, taskSpec, craftRecipe, dropItems, entityInteraction, smeltItems, collectSmeltedItems, returnToSurface, blockPlacement, blockUse, blockBreak, askPrompt, null);
+	}
+
 	public ActiveJobProposal(
 		ActiveJobType type,
 		String targetPlayer,
@@ -123,6 +145,10 @@ public record ActiveJobProposal(
 
 	public static ActiveJobProposal breakBlocks(BlockBreakStepArgs blockBreak) {
 		return new ActiveJobProposal(ActiveJobType.BREAK_BLOCKS, null, null, null, null, null, null, null, null, null, null, null, null, blockBreak, null);
+	}
+
+	public static ActiveJobProposal tendCrops(CropTendingStepArgs args) {
+		return new ActiveJobProposal(ActiveJobType.TEND_CROPS, null, null, null, null, null, null, null, null, null, null, null, null, null, null, Objects.requireNonNull(args));
 	}
 
 	public static ActiveJobProposal askUser(String askPrompt) {

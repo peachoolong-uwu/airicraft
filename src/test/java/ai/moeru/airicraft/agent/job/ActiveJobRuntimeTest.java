@@ -720,6 +720,26 @@ class ActiveJobRuntimeTest {
 	}
 
 	@Test
+	void cropTendingPayloadSurvivesPauseResumeAndCancellation() {
+		ActiveJobRuntime runtime = runtime();
+		var args = new ai.moeru.airicraft.agent.tasks.CropTendingStepArgs("minecraft:wheat_seeds", 1, 63, 2, 3, 4);
+		runtime.applyPlannerResponse(new DialogueResponse("Tending crops.",
+			new DialogueIntent(DialogueIntentType.JOB_UPDATE, ActiveJobProposal.tendCrops(args)), 1L), 0, "test", 1L);
+		assertEquals(WorldTaskType.TEND_CROPS, runtime.activeTaskRequest().orElseThrow().type());
+		assertEquals(new WorldTaskRequest.TendCrops(args), runtime.activeTaskRequest().orElseThrow().task());
+		String id = runtime.current().jobId();
+		runtime.pauseForReflex(2L);
+		assertEquals(args, runtime.current().cropTending());
+		runtime.resumeAfterReflex(3L);
+		assertEquals(id, runtime.current().jobId());
+		assertEquals(new WorldTaskRequest.TendCrops(args), runtime.activeTaskRequest().orElseThrow().task());
+		runtime.cancel("test_cancel", 4L);
+		assertEquals(ActiveJobStatus.CANCELLED, runtime.current().status());
+		assertEquals(args, runtime.current().cropTending());
+		assertTrue(runtime.activeTaskRequest().isEmpty());
+	}
+
+	@Test
 	void primitiveJobAppliesOnlyMatchingTaskSnapshot() {
 		Map<TaskExecutionState, ActiveJobStatus> taskStatuses = Map.of(
 			TaskExecutionState.RUNNING, ActiveJobStatus.RUNNING,

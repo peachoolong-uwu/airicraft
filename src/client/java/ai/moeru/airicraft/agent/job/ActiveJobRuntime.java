@@ -327,7 +327,8 @@ public final class ActiveJobRuntime {
 			activeJob.source(),
 			null,
 			reason,
-			tick
+			tick,
+			activeJob.cropTending()
 		);
 		collectResourceDebugSnapshot = activeJob.type() == ActiveJobType.COLLECT_RESOURCE
 			? collectResourceProbe(activeJob, activeJob.baselineResourceCount() + activeJob.collectedCount(), false, lastPrimitiveExecution.state(), reason, tick)
@@ -384,7 +385,7 @@ public final class ActiveJobRuntime {
 			case COLLECT_RESOURCE -> tickCollectResource(activeJob, lastPrimitiveExecution, lastEvidence, actuationAllowed, nearbyResourceTargetAvailable, tick);
 			case CRAFT_RECIPE -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
 			case DROP_ITEMS -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, true, tick);
-			case SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
+			case SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
 			case ATTACK_ENTITY, USE_ENTITY -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
 			case ASK_USER -> tickAskUser(activeJob, tick);
 			case MINE_BLOCKS -> tickMineBlocks(activeJob, lastPrimitiveExecution, actuationAllowed, tick);
@@ -448,6 +449,11 @@ public final class ActiveJobRuntime {
 		if (activeJob.type() == ActiveJobType.USE_BLOCK && activeJob.blockUse() != null) {
 			clearAttemptState();
 			desiredPrimitiveTask = WorldTaskRequest.useBlock(activeJob.jobId(), activeJob.jobId(), activeJob.blockUse());
+			return;
+		}
+		if (activeJob.type() == ActiveJobType.TEND_CROPS && activeJob.cropTending() != null) {
+			clearAttemptState();
+			desiredPrimitiveTask = WorldTaskRequest.tendCrops(activeJob.jobId(), activeJob.jobId(), activeJob.cropTending());
 			return;
 		}
 		if (activeJob.type() == ActiveJobType.BREAK_BLOCKS && activeJob.blockBreak() != null) {
@@ -1260,6 +1266,9 @@ public final class ActiveJobRuntime {
 			case PLACE_BLOCK -> fromBlockPlacementStep(newJobId(), proposal.blockPlacement(), source, tick);
 			case USE_BLOCK -> fromBlockUseStep(newJobId(), proposal.blockUse(), source, tick);
 			case BREAK_BLOCKS -> fromBlockBreakStep(newJobId(), proposal.blockBreak(), source, tick);
+			case TEND_CROPS -> new ActiveJob(newJobId(), ActiveJobType.TEND_CROPS, ActiveJobStatus.QUEUED,
+				null, null, null, null, null, null, null, null, null, null, null, null,
+				-1L, 0, 0, source, null, null, tick, proposal.cropTending());
 			case RETURN_TO_SURFACE -> fromReturnToSurfaceStep(newJobId(), proposal.returnToSurface(), source, tick);
 			case ASK_USER -> fromAskUserStep(newJobId(), new AskUserStepArgs(proposal.askPrompt()), source, tick);
 			case IDLE -> ActiveJob.idle();
@@ -1294,7 +1303,8 @@ public final class ActiveJobRuntime {
 				next.source(),
 				activeJob.blockedReason(),
 				activeJob.lastError(),
-				tick
+				tick,
+				next.cropTending()
 			);
 		}
 		return next;
@@ -1325,6 +1335,7 @@ public final class ActiveJobRuntime {
 		if (left.collectSmeltedItems() != null || right.collectSmeltedItems() != null) {
 			return Objects.equals(left.collectSmeltedItems(), right.collectSmeltedItems());
 		}
+		if (left.cropTending() != null || right.cropTending() != null) return Objects.equals(left.cropTending(), right.cropTending());
 		if (left.returnToSurface() != null || right.returnToSurface() != null) {
 			return Objects.equals(left.returnToSurface(), right.returnToSurface());
 		}
@@ -1370,6 +1381,7 @@ public final class ActiveJobRuntime {
 			case RETURN_TO_SURFACE -> "Return to surface";
 			case PLACE_BLOCK -> activeJob.blockPlacement() == null ? "Place block" : "Place " + activeJob.blockPlacement().targets().size() + " " + activeJob.blockPlacement().itemId();
 			case USE_BLOCK -> activeJob.blockUse() == null ? "Use block" : "Use block at " + activeJob.blockUse().targets().size() + " target blocks";
+			case TEND_CROPS -> "Tend crops in a bounded plot";
 			case BREAK_BLOCKS -> activeJob.blockBreak() == null ? "Break blocks" : "Break " + activeJob.blockBreak().targets().size() + " target blocks";
 			case ATTACK_ENTITY -> activeJob.entityInteraction() == null ? "Attack entity" : "Attack " + activeJob.entityInteraction().selector();
 			case USE_ENTITY -> activeJob.entityInteraction() == null ? "Use entity" : "Use on " + activeJob.entityInteraction().selector();
@@ -1389,7 +1401,7 @@ public final class ActiveJobRuntime {
 			case COLLECT_SMELTED_ITEMS -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.COLLECT_SMELTED_ITEMS;
 			case RETURN_TO_SURFACE -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.NAVIGATE_TO_POSITION;
 			case PLACE_BLOCK -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.PLACE_BLOCK;
-			case USE_BLOCK -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.USE_BLOCK;
+			case USE_BLOCK, TEND_CROPS -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.USE_BLOCK;
 			case BREAK_BLOCKS -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.MINE_BLOCKS;
 			case ATTACK_ENTITY -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.ATTACK_ENTITY;
 			case USE_ENTITY -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.USE_ENTITY;
@@ -1481,7 +1493,8 @@ public final class ActiveJobRuntime {
 			job.source(),
 			blockedReason,
 			lastError,
-			tick
+			tick,
+			job.cropTending()
 		);
 	}
 

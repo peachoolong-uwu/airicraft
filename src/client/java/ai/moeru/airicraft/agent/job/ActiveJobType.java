@@ -16,6 +16,7 @@ public enum ActiveJobType {
 	PLACE_BLOCK,
 	USE_BLOCK,
 	BREAK_BLOCKS,
+	TEND_CROPS,
 	RETURN_TO_SURFACE,
 	ASK_USER
 }

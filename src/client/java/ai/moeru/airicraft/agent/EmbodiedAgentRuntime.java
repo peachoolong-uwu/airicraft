@@ -2475,6 +2475,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 						+ " firstTargetPos=" + compactPos(blockPos(blockBreak.targets().getFirst().position()))
 				);
 			}
+			case PlannerToolCatalog.TEND_CROPS -> {
+				var cropTending = ai.moeru.airicraft.agent.tasks.CropTendingStepArgs.parse(args);
+				applyPlannerJobTool(ActiveJobProposal.tendCrops(cropTending));
+				yield queuedActionToolResult("tend_crops", "plot=" + cropTending);
+			}
 			case PlannerToolCatalog.CANCEL_TASK -> {
 				String reason = stringArg(args, "reason").orElse("planner_tool_cancelled");
 				TaskSnapshot snapshot = cancelTask(reason);
@@ -2722,6 +2727,13 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				expectedStepKind = LedgerStepKind.BREAK_BLOCKS;
 				details = "targets=" + blockBreak.targets().size()
 					+ " firstTargetPos=" + compactPos(blockPos(blockBreak.targets().getFirst().position()));
+			}
+			case PlannerToolCatalog.TEND_CROPS -> {
+				var cropTending = ai.moeru.airicraft.agent.tasks.CropTendingStepArgs.parse(args);
+				proposal = ActiveJobProposal.tendCrops(cropTending);
+				expectedTaskType = WorldTaskType.TEND_CROPS;
+				expectedStepKind = LedgerStepKind.USE_BLOCK;
+				details = "plot=" + cropTending;
 			}
 			default -> {
 				return CompletableFuture.completedFuture("TOOL_ERROR: unknown_tool " + toolCall.name());
@@ -4255,6 +4267,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			payload.put("failure", current.lastFailure());
 		}
 
+		String terminalDetails = isTerminalTaskState(current.state()) && taskExecutionSnapshot != null
+			&& Objects.equals(current.taskId(), taskExecutionSnapshot.taskId())
+			? Objects.requireNonNullElse(taskExecutionSnapshot.lastPathEvent(), "") : "";
+		if (!terminalDetails.isBlank()) payload.put("message", terminalDetails);
 		String eventType = switch (current.state()) {
 			case RUNNING -> "task.started";
 			case WAITING_FOR_PICKUP -> "task.blocked";
@@ -4289,6 +4305,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					+ " collected=" + current.progress().collected()
 					+ " remaining=" + current.progress().remaining()
 					+ " failure=" + (current.lastFailure() == null ? "" : current.lastFailure())
+					+ (terminalDetails.isBlank() ? "" : " message=" + terminalDetails)
 					+ inventorySnapshot,
 				tickCount,
 				sessionSnapshot,
@@ -4360,7 +4377,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return false;
 		}
 		return switch (intent.activeJob().type()) {
-			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS -> true;
+			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS -> true;
 			case IDLE, COLLECT_RESOURCE, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, ATTACK_ENTITY, USE_ENTITY, ASK_USER -> false;
 		};
 	}
@@ -4591,7 +4608,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return false;
 		}
 		return switch (type) {
-			case MINE, UNDERWATER_HARVEST, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS -> true;
+			case MINE, UNDERWATER_HARVEST, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS -> true;
 			case FOLLOW, NAVIGATE, ATTACK_ENTITY, USE_ENTITY -> false;
 		};
 	}

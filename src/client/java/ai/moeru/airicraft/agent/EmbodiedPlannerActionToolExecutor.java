@@ -90,7 +90,7 @@ record EmbodiedPlannerActionToolExecutor(
 				PlannerToolCatalog.ATTACK_ENTITY, PlannerToolCatalog.USE_ENTITY -> ToolPolicy.TASK_AND_GRAPH_MUTATION;
 			case PlannerToolCatalog.CRAFT_RECIPE -> ToolPolicy.CRAFT;
 			case PlannerToolCatalog.PLACE_BLOCK, PlannerToolCatalog.USE_BLOCK,
-				PlannerToolCatalog.BREAK_BLOCKS -> ToolPolicy.BLOCK_MODIFICATION;
+				PlannerToolCatalog.BREAK_BLOCKS, PlannerToolCatalog.TEND_CROPS -> ToolPolicy.BLOCK_MODIFICATION;
 			default -> ToolPolicy.ACTION;
 		};
 	}
