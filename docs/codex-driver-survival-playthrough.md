@@ -13,6 +13,12 @@ Objective: progress from a fresh survival world to the Ender Dragon, using only 
 
 ## Playthrough log
 
+### 2026-09-11: autonomous capability loop follow-up
+
+Current evidence and decisions live in [the autonomous playtest log](autonomous-playtest-log.md). Peaceful play has demonstrated hunting/cooking, repeated wood and seed supply, protected shelter construction and return, and automatic planting. Mature harvest/replant and higher-difficulty survival are still being tested; do not infer them from passing executor fixtures.
+
+Minor or bypassable findings: short dropped-item approaches sometimes emit `CANCELED` before acquisition reselects and collects successfully. Entrance-side crops can be displaced by ordinary foot traffic, so keep crop rows away from the door and avoid jumping on farmland. The current `mine_blocks` description was stale about requiring exposed sources; it now advertises the live-tested buried-source excavation capability.
+
 ### 2026-09-10: buried-ore excavation
 
 **Reproduced and fixed live:** at `(204,93,458)` in `another world`, a one-coal request with `radius=6, verticalRadius=6` failed at tick `10787` with `no_reachable_resource_in_scope itemCount=0 rejectedTargets=0 lastRejection=none`. Inspection found coal at `(206,98,455)`, `(206,98,456)` and `(207,98,455)` fully enclosed by stone/dirt/other ore; the entire surrounding `205,97,454..208,99,457` box was solid. The selector required an already-open standing position and an interaction ray reaching the ore, so it never attempted to excavate. This reproduces a specific buried-source failure independently of the earlier broad coal path failures.
