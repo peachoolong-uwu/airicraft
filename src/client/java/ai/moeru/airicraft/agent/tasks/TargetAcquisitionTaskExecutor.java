@@ -110,7 +110,9 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 				release();
 				enter(target.kind() == Kind.BLOCK ? Phase.BREAK : Phase.PICKUP);
 			}
-			else if (phaseTicks > 240 || progressTicks > 80) reject("approach_stalled");
+			// Excavating a route can exceed twelve seconds while still advancing.
+			// Bound it by actual stalls and the whole attempt's active-tick budget.
+			else if (progressTicks > 80) reject("approach_stalled");
 			else {
 				double distance = distanceSquared(environment.position(), target.workPosition());
 				if (distance < bestDistance - 1) { bestDistance = distance; progressTicks = 0; }
@@ -138,6 +140,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		else if (phase == Phase.PICKUP && phaseTicks > 40) reject("pickup_not_collected");
 		setSnapshot(TaskExecutionState.RUNNING, "acquisition phase=" + phase + " target="
 			+ (target == null ? "none" : target.id() + "@" + target.position())
+			+ " workPosition=" + (target == null ? "none" : target.workPosition())
 			+ " itemCount=" + count + " targetCount=" + spec.quantity() + " rejected=" + rejected.size() + " lastRejection=" + lastRejection);
 		return Optional.empty();
 	}
@@ -193,7 +196,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	enum Kind { DROP, BLOCK }
 	enum BreakResult { BREAKING, BROKEN, FAILED }
 	record Candidate(Kind kind, String id, GoalPosition position, GoalPosition workPosition) {
-		String key() { return kind + ":" + id + ":" + position; }
+		String key() { return kind + ":" + id + ":" + position + ":" + workPosition; }
 	}
 	interface Environment {
 		GoalPosition position();

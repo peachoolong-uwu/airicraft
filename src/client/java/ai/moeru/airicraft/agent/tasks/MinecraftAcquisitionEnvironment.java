@@ -80,16 +80,51 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		blocks.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())));
 		for (BlockPos pos : blocks) {
 			String blockId = id(world.getBlockState(pos));
-			Candidate identity = new Candidate(Kind.BLOCK, blockId, position(pos), position());
-			if (rejected.contains(identity.key())) continue;
-			GoalPosition work = workPosition(pos, constraints);
-			if (work != null) result.add(new Candidate(Kind.BLOCK, blockId, position(pos), work));
+			for (GoalPosition work : workPositions(pos, constraints)) {
+				Candidate candidate = new Candidate(Kind.BLOCK, blockId, position(pos), work);
+				if (!rejected.contains(candidate.key())) result.add(candidate);
+			}
 			if (result.size() >= 32) break;
 		}
 		result.sort(Comparator.comparing(Candidate::kind)
 			.thenComparingDouble(value -> distanceSquared(position(), value.workPosition()))
 			.thenComparing(Candidate::key));
 		return result;
+	}
+
+	private List<GoalPosition> workPositions(BlockPos source, AcquisitionConstraints constraints) {
+		List<GoalPosition> sites = new ArrayList<>();
+		GoalPosition open = workPosition(source, constraints);
+		if (open != null) sites.add(open);
+		// Navigation can carve its destination's feet/head space. Requiring air here
+		// would discard fully enclosed ore before A* ever has a chance to approach it.
+		for (BlockPos pos : AcquisitionExcavationSites.find(source,
+			candidate -> inScope(position(candidate), constraints, true) && clearable(candidate),
+			this::safeSupport)) {
+			GoalPosition site = position(pos);
+			if (!sites.contains(site)) sites.add(site);
+		}
+		return sites;
+	}
+
+	private boolean clearable(BlockPos pos) {
+		var world = client().world;
+		BlockState state = world.getBlockState(pos);
+		return state.getFluidState().isEmpty() && !state.hasBlockEntity()
+			&& state.getHardness(world, pos) >= 0 && !hazardous(state);
+	}
+
+	private boolean safeSupport(BlockPos pos) {
+		var world = client().world;
+		if (!world.isChunkLoaded(pos)) return false;
+		BlockState state = world.getBlockState(pos);
+		return state.getFluidState().isEmpty() && !hazardous(state)
+			&& state.isSideSolidFullSquare(world, pos, net.minecraft.util.math.Direction.UP);
+	}
+
+	private static boolean hazardous(BlockState state) {
+		return Set.of("minecraft:cactus", "minecraft:magma_block", "minecraft:campfire", "minecraft:soul_campfire",
+			"minecraft:fire", "minecraft:soul_fire", "minecraft:lava", "minecraft:powder_snow").contains(id(state));
 	}
 
 	private GoalPosition workPosition(BlockPos target, AcquisitionConstraints constraints) {
@@ -113,9 +148,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		return world.getBlockState(pos).getCollisionShape(world, pos).isEmpty()
 			&& world.getBlockState(pos.up()).getCollisionShape(world, pos.up()).isEmpty()
 			&& world.getBlockState(pos).getFluidState().isEmpty()
-			&& world.getBlockState(pos.down()).isSideSolidFullSquare(world, pos.down(), net.minecraft.util.math.Direction.UP)
-			&& !Set.of("minecraft:cactus", "minecraft:magma_block", "minecraft:campfire", "minecraft:fire", "minecraft:lava")
-				.contains(id(world.getBlockState(pos.down())));
+			&& safeSupport(pos.down());
 	}
 
 	/** Leaves may be cleared explicitly; other occluders are not acquisition targets. */

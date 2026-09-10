@@ -57,6 +57,27 @@ class TargetAcquisitionTaskExecutorTest {
 		assertTrue(f.events.getFirst().message().contains("acquisition_scope_left"));
 	}
 
+	@Test void failedApproachDoesNotBlacklistOtherSidesOfTheSameBuriedSource() {
+		Fixture f = new Fixture();
+		Candidate first = f.env.sources.getFirst();
+		Candidate otherSide = new Candidate(first.kind(), first.id(), first.position(), pos(6,64,0));
+		f.env.sources = List.of(first, otherSide);
+		f.tick(86);
+		assertTrue(f.nav.goals.contains(otherSide.workPosition()), "Try another excavation side before abandoning the ore");
+	}
+
+	@Test void productiveExcavationCanTakeLongerThanTwelveSeconds() {
+		Fixture f = new Fixture();
+		f.env.sources = List.of(new Candidate(Kind.BLOCK, "ore", pos(12,64,0), pos(11,64,0)));
+		for (int x = 0; x < 10; x++) {
+			f.env.position = pos(x,64,0);
+			f.tick(30); // Digging each segment takes time, but the route keeps advancing.
+		}
+		assertEquals(TaskExecutionState.RUNNING, f.executor.snapshot().state());
+		assertTrue(f.nav.active);
+		assertEquals(0, f.env.rejections);
+	}
+
 	@Test void noObservedTargetsFailsWithoutStartingBaritoneMiningOrExploration() {
 		Fixture f = new Fixture();
 		f.env.sources = List.of();
