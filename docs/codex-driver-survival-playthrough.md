@@ -1,5 +1,7 @@
 # Codex Driver Survival Playthrough
 
+Latest follow-up: the [2026-09-11 autonomous capability run](autonomous-playtest-log.md#verified-checkpoint-after-the-autonomous-run) completed renewable food, maintained farming, a usable shelter/bed, full iron armor, and more than two Easy day/night cycles. Its decision log records fixes, reversions, live evidence and remaining limitations; historical observations below retain their original context.
+
 Date: 2026-09-01  
 Mode: external Codex driver (`scripts/codex-driver`)  
 Objective: progress from a fresh survival world to the Ender Dragon, using only the exposed Airicraft agent tools for gameplay.

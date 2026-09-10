@@ -20,7 +20,17 @@ Started 2026-09-11 (Asia/Taipei). User-authorized goal: continue the playtest/fi
 
 These checkpoints guide testing; they are not claims of completion.
 
-## Current checkpoint
+## Verified checkpoint after the autonomous run
+
+- All five acceptance checkpoints above were exercised live. Easy ran from world time 118,078 to 167,363: 49,285 simulation ticks, about 41 minutes and more than two full day/night cycles, with no time commands or sleep skips. No death was observed; the latest saved statistics also have no death entry and equal play-time/time-since-death values.
+- Player is paused inside `shore shelter` at `(257,63,480)`, health 20, hunger 20, full iron armor. Inventory retains three cooked porkchops, two bread, an apple, two wheat, fifteen wheat seeds, two iron picks, an iron sword, shears, three coal and five torches. One storage slot remains free.
+- Shelter door is verified closed; bed foot `(256,63,480)` faces west toward head `(255,63,480)`, with spawn point set. The east doorway column stays clear. Farm has fourteen wheat and fourteen farmland cells. World bookmarks preserve shelter/farm bounds and updated station/resource notes.
+- Live-proven changes include buried resource acquisition and tool-loss replanning, crop collection/replanting, neutral-mob avoidance, usable navigation coordinates, preserved construction areas, filtered entity queries, combat weapon retrieval, drowned weapon classification, and nearby-workbench reuse. See the decision entries for the evidence boundary of each change.
+- Full build passed after the final source changes (`post-survival-fixes-build.log`). All task changes are committed; the pre-existing dirty `vendor/action-plan-advisor` submodule was preserved.
+- Remaining limits: some recorder exports flag dropped observations; depleted acquisition scopes can repeat eight futile replans; storage/transfer will be the next capacity requirement. Earlier farmland damage during elevated leaf harvesting remains causally unconfirmed. Normal/Hard difficulty and a clean long run without interventions have not been validated.
+- Final live pause: debug session `e5ac8a7b-f80e-439e-9315-6f822e55d914`, epoch 1, client tick 28,356. Re-read the handle before resuming. Export `completed-checkpoint.jsonl` has 1,491 observations with frames and a truncated flag; retain the earlier focused, non-truncated incident exports as well.
+
+## Initial checkpoint
 
 - Code at start: `e166303a`, live via HotSwap. World: `another world`, peaceful survival, driver mode active.
 - Player `(209,92,447)`, health 20. Inventory: iron/stone/wooden pickaxes, nine coal, three raw iron, eight torches, four dark-oak logs, 57 cobblestone, 16 dirt, one plank.
@@ -314,3 +324,9 @@ D039 live result: the two-bread goal succeeded with one `wheat_x3_to_bread` rout
 The helmet goal exhausted the local ore scope with zero targets and zero broken blocks, repeating eight replans before terminal failure. Recorded as a bounded but wasteful depleted-scope retry, not a new excavation failure. A structured query of the remembered old workshop found four iron ore at `(205,95..96,457..459)` (`old-workshop-iron-query.txt`). Starting a trip there to search a fresh acquisition scope. Current recorder exports have a truncated flag from session drop counters; keep that limitation explicit.
 
 D036 live verification: the next workshop trip triggered skeleton combat without any manual sword equip. Attack events at client ticks 19,354, 19,383, 19,395 and 19,415 explicitly recorded `weaponItemId=minecraft:iron_sword`; the threat resolved. Further encounters followed. At the next resolved hold, inventory showed the sword in hotbar slot 5 at 239/250 durability, health 20 and air 300 (`new-combat-events.txt`, `sword-combat-{state,inventory}.txt`). This proves inventory retrieval and actual attacks in the live world. Resumed the exact held workshop navigation.
+
+### D040 — Complete the supply return and Easy checkpoint
+
+The old-workshop scope contained eleven observed ore, and constrained acquisition collected five raw iron with full health (`fresh-iron-inventory.txt`). The supplied helmet goal succeeded, and equip verification showed all four iron armor slots. Its return encountered another hostile, recovered to full health, resumed the held route and arrived at the revised shelter bookmark. The tighter local monitor reads the current hold, waits for food use, and resumes only a resolved reflex; earlier stale-hold/item-use rejections were expected concurrency guards, not successful resumes.
+
+Final inspections confirmed the closed door, intact bed, fourteen planted/hydrated farmland cells, full health/hunger and retained food/tools. Paused at world time 167,363 after 49,285 Easy simulation ticks. This completes the stated two-cycle capability checkpoint across the playtest/fix loop; it is not a claim of uninterrupted autonomous reliability or validation on harder difficulties. Keep Easy for the next session, address inventory capacity before extended gathering, and investigate remaining wasteful scope retries from their recorded evidence.
