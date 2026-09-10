@@ -177,9 +177,10 @@ public final class AiricraftCliMain {
 		mapWaypoints.addSubcommand(new MapWaypointsDeleteCommand(context));
 		map.addSubcommand(new MapImageCommand(context));
 
-		root.addSubcommand("world", new UsageCommand(out, "airicraft world", "World inspection commands"));
+		root.addSubcommand("world", new UsageCommand(out, "airicraft world", "World inspection and singleplayer settings"));
 		CommandLine world = root.getSubcommands().get("world");
 		world.addSubcommand(new WorldSnapshotCommand(context));
+		world.addSubcommand(new WorldDifficultyCommand(context));
 
 		root.addSubcommand("highlights", new UsageCommand(out, "airicraft highlights", "Highlight commands"));
 		CommandLine highlights = root.getSubcommands().get("highlights");
@@ -1866,6 +1867,19 @@ public final class AiricraftCliMain {
 			payload.put("capturedAtMs", capture.capturedAtMs());
 			context.printer.printSuccess("map image", payload);
 			return 0;
+		}
+	}
+
+	@Command(name = "difficulty", mixinStandardHelpOptions = true, description = "Read or change the local singleplayer world's difficulty; respects locked and hardcore worlds.")
+	private static final class WorldDifficultyCommand extends BaseCommand {
+		@Option(names = "--set", description = "peaceful, easy, normal, or hard. Omit to inspect.")
+		private String difficulty;
+		private WorldDifficultyCommand(CliContext context) { super(context, "world difficulty"); }
+		@Override Map<String, Object> runCommand() {
+			if (difficulty == null) return transport().get("/v1/worlds/difficulty");
+			if (!List.of("peaceful", "easy", "normal", "hard").contains(difficulty))
+				throw new CliUsageException(commandPath(), "invalid_arguments", "Difficulty must be peaceful, easy, normal, or hard");
+			return transport().post("/v1/worlds/difficulty", Map.of("difficulty", difficulty));
 		}
 	}
 

@@ -251,6 +251,18 @@ public final class ModBridgeServer {
 	}
 
 	private void handleWorlds(HttpExchange exchange) throws IOException {
+		// HttpServer dispatches this subroute through the registered /v1/worlds prefix.
+		if ("/v1/worlds/difficulty".equals(exchange.getRequestURI().getPath())) {
+			if ("POST".equals(exchange.getRequestMethod())) {
+				handleJsonBody(exchange, "POST", DifficultyRequest.class, request -> {
+					if (request == null || request.difficulty() == null)
+						throw new BridgeUnavailableException("invalid_request", "Missing difficulty");
+					return worldDifficulty(request.difficulty());
+				});
+			}
+			else handleJson(exchange, () -> worldDifficulty(null));
+			return;
+		}
 		handleJson(exchange, () -> {
 			try {
 				var client = getClient();
@@ -264,6 +276,13 @@ public final class ModBridgeServer {
 				throw new BridgeUnavailableException(exception.code(), exception.getMessage());
 			}
 		});
+	}
+
+	private Map<String, Object> worldDifficulty(String requested) {
+		try { return singleplayerWorldService.difficulty(requested); }
+		catch (SingleplayerWorldService.SingleplayerWorldException exception) {
+			throw new BridgeUnavailableException(exception.code(), exception.getMessage());
+		}
 	}
 
 	private void handleJoinWorld(HttpExchange exchange) throws IOException {
@@ -2476,6 +2495,9 @@ public final class ModBridgeServer {
 	}
 
 	private record JoinWorldRequest(String worldId) {
+	}
+
+	private record DifficultyRequest(String difficulty) {
 	}
 
 	private record JoinServerRequest(String serverId) {

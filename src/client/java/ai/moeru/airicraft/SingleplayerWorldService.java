@@ -2,6 +2,7 @@ package ai.moeru.airicraft;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.world.GameMode;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.storage.LevelStorage;
 import net.minecraft.world.level.storage.LevelStorageException;
 import net.minecraft.world.level.storage.LevelSummary;
@@ -22,6 +23,51 @@ public final class SingleplayerWorldService {
 	private static final int WORLD_ID_HASH_LENGTH = 8;
 	private static final Duration LIST_TIMEOUT = Duration.ofSeconds(10);
 	private static final Duration JOIN_TIMEOUT = Duration.ofSeconds(10);
+
+	/** The same world setting as the options screen; never overrides a locked or hardcore world. */
+	public Map<String, Object> difficulty(String requestedName) {
+		if (ai.moeru.airicraft.debug.ServerTickDebugRuntime.controller().status().paused())
+			throw new SingleplayerWorldException("debug_busy", "Continue server ticks before querying or changing difficulty");
+		Difficulty requested = requestedName == null ? null : switch (requestedName) {
+			case "peaceful" -> Difficulty.PEACEFUL;
+			case "easy" -> Difficulty.EASY;
+			case "normal" -> Difficulty.NORMAL;
+			case "hard" -> Difficulty.HARD;
+			default -> throw new SingleplayerWorldException("invalid_request", "Difficulty must be peaceful, easy, normal, or hard");
+		};
+		MinecraftClient client = requireClient();
+		var server = runOnClientThread(client, () -> {
+			if (client.world == null) throw new SingleplayerWorldException("world_not_loaded", "No world is loaded");
+			if (client.getServer() == null) throw new SingleplayerWorldException("singleplayer_required", "Difficulty control requires the local singleplayer server");
+			return client.getServer();
+		});
+		try {
+			return server.submit(() -> {
+				var properties = server.getSaveProperties();
+				Difficulty before = properties.getDifficulty();
+				if (requested != null && requested != before) {
+					if (properties.isDifficultyLocked() || properties.isHardcore())
+						throw new SingleplayerWorldException("difficulty_locked", "World difficulty is locked");
+					server.setDifficulty(requested, false);
+				}
+				return Map.<String, Object>of("difficulty", properties.getDifficulty().getName(),
+					"previousDifficulty", before.getName(), "changed", before != properties.getDifficulty(),
+					"locked", properties.isDifficultyLocked(), "hardcore", properties.isHardcore(),
+					"timeOfDay", server.getOverworld().getTimeOfDay());
+			}).get(5, TimeUnit.SECONDS);
+		}
+		catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			throw new SingleplayerWorldException("singleplayer_interrupted", "Difficulty request was interrupted", exception);
+		}
+		catch (ExecutionException exception) {
+			if (exception.getCause() instanceof SingleplayerWorldException cause) throw cause;
+			throw new SingleplayerWorldException("difficulty_failed", "Difficulty request failed", exception);
+		}
+		catch (java.util.concurrent.TimeoutException exception) {
+			throw new SingleplayerWorldException("singleplayer_timeout", "Timed out waiting for the server difficulty request", exception);
+		}
+	}
 
 	public List<Map<String, Object>> listWorlds() {
 		MinecraftClient client = requireClient();

@@ -1532,6 +1532,32 @@ class AiricraftCliMainTest {
 	}
 
 	@Test
+	void worldDifficultyReadsAndSetsWithoutChangingItOnInspection() {
+		TestTransport transport = new TestTransport();
+		transport.when("GET", "/v1/worlds/difficulty").payload = Map.of("difficulty", "peaceful", "locked", false);
+		transport.when("POST", "/v1/worlds/difficulty").payload = Map.of("difficulty", "easy", "changed", true);
+		CliResult read = execute(transport, "world", "difficulty");
+		assertEquals(0, read.exitCode());
+		assertTrue(read.output().contains("difficulty: peaceful"));
+		assertFalse(transport.requested("POST", "/v1/worlds/difficulty"));
+		CliResult changed = execute(transport, "world", "difficulty", "--set", "easy");
+		assertEquals(0, changed.exitCode());
+		assertEquals(Map.of("difficulty", "easy"), transport.lastRequest("POST", "/v1/worlds/difficulty").body());
+		assertTrue(changed.output().contains("changed: true"));
+	}
+
+	@Test
+	void worldDifficultyRejectsInvalidValuesAndReportsLockedWorlds() {
+		TestTransport transport = new TestTransport();
+		assertEquals(2, execute(transport, "world", "difficulty", "--set", "impossible").exitCode());
+		assertFalse(transport.requested("POST", "/v1/worlds/difficulty"));
+		transport.when("POST", "/v1/worlds/difficulty").failure = new BridgeUnavailableException("difficulty_locked", "World difficulty is locked");
+		CliResult locked = execute(transport, "world", "difficulty", "--set", "easy");
+		assertEquals(4, locked.exitCode());
+		assertTrue(locked.output().contains("error_code: difficulty_locked"));
+	}
+
+	@Test
 	void missingRequiredArgumentReturnsUsageError() {
 		CliResult result = execute(new TestTransport(), "worlds", "join");
 
