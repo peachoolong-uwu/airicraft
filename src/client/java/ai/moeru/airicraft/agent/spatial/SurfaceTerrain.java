@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.spatial;
 
 import net.minecraft.block.BlockState;
+import net.minecraft.block.MushroomBlock;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.Heightmap;
@@ -16,7 +17,7 @@ public final class SurfaceTerrain {
 			BlockPos pos = new BlockPos(column.getX(), y, column.getZ());
 			BlockState state = world.getBlockState(pos);
 			if (!state.getFluidState().isEmpty()) break;
-			if (!state.isIn(BlockTags.LOGS) && !state.isIn(BlockTags.LEAVES)
+			if (!state.isIn(BlockTags.LOGS) && !state.isIn(BlockTags.LEAVES) && !(state.getBlock() instanceof MushroomBlock)
 				&& !state.getCollisionShape(world, pos).isEmpty()) break;
 			y--;
 		}
