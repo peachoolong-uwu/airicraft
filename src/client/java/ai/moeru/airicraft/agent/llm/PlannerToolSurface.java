@@ -150,6 +150,7 @@ public final class PlannerToolSurface {
 
 	public static String categoryFor(String toolName) {
 		return switch (PlannerToolCatalog.normalizeName(toolName)) {
+			case "remember_place", "recall_place", "list_places", "forget_place" -> "place memory";
 			case PlannerToolCatalog.TAKE_A_LOOK,
 				PlannerToolCatalog.INSPECT_WORLD,
 				PlannerToolCatalog.INSPECT_INVENTORY,

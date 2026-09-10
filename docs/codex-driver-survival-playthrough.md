@@ -91,6 +91,10 @@ This is a reproduced recovery-target/meaning defect with practical progression i
 
 Paused identity: debug session `95d7d6ed-d2b4-41be-8c47-3131e1e2807a`, epoch 1, server tick 9797, agent tick 9980; hold `043e9f14-f060-428b-8065-353a59f5dc13`. Repeated-read validation held server tick, agent tick and event seq 233 unchanged. Main evidence: `/tmp/playtest-wood-underground.jsonl`, `/tmp/playtest-wood-detour-end-pause.txt`, `/tmp/playtest-surface-target.jsonl`, `/tmp/playtest-surface-target-status.txt`, `/tmp/playtest-surface-target-events.txt`, `/tmp/playtest-surface-target-pause.txt`, `/tmp/playtest-ravine-sky.png`. The export retains ticks 9886–9980 for decision states; the command results and event buffer preserve the earlier target selection and aggression onset.
 
+### 2026-09-10: explicit place memory added while paused
+
+Implemented the first part of the agent-owned destination design: remember/recall/list/forget named coordinates, persisted in the world save. See [place memory](place-memory.md) for the tool contract and validation. HotSwap and a targeted tool-registry update preserved the same paused client, combat hold and tick identities. Saved `ravine incident` at `(199,30,29)` and `wood tree approach` at `(284,64,-141)` with notes explaining their context. Both survived provider recreation and were verified on disk. The ravine incident is not labelled a safe destination; no movement or escape was attempted. The legacy surface selector remains for existing callers in this first pass.
+
 ### Launch
 
 - Client launch started with an isolated bridge-state file at `/private/tmp/airicraft-codex-driver-01a05cde.json`.

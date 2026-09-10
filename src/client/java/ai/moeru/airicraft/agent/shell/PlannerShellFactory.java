@@ -27,6 +27,7 @@ import ai.moeru.airicraft.agent.llm.PlannerToolNarrationSink;
 import ai.moeru.airicraft.agent.llm.PlannerToolRegistry;
 import ai.moeru.airicraft.agent.llm.WorldFeatureSearchService;
 import ai.moeru.airicraft.agent.llm.WorldFeatureSearchToolProvider;
+import ai.moeru.airicraft.agent.memory.PlaceMemoryToolProvider;
 import ai.moeru.airicraft.agent.llm.codex.CodexAppServerLlmBackend;
 import ai.moeru.airicraft.agent.observability.AgentObservability;
 import ai.moeru.airicraft.agent.recording.PlannerCallJournal;
@@ -178,6 +179,7 @@ public final class PlannerShellFactory {
 		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
+			PlaceMemoryToolProvider.forClient(),
 			new ReiRecipeSearchToolProvider(),
 			new MapPlannerToolProvider(MapIntegrationBridge::registry)
 		);
