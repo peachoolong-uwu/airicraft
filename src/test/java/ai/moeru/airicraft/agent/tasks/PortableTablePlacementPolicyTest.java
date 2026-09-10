@@ -16,6 +16,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PortableTablePlacementPolicyTest {
 	@Test
+	void preservedDoorwayIsExcludedEvenWhenItIsTheClosestFeasibleSite() {
+		GoalPosition origin = position(259, 63, 481);
+		GoalPosition doorway = position(259, 63, 480);
+		GoalPosition outsidePreservedArea = position(259, 65, 479);
+		assertEquals(List.of(outsidePreservedArea), PortableTablePlacementPolicy.rankFeasibleSites(origin,
+			List.of(new PortableTablePlacementPolicy.SiteObservation(doorway, true, true, true, false, true),
+				observation(outsidePreservedArea, true, false)), 8));
+	}
+
+	@Test
 	void candidatePositionsIncludePlayerCellForTunnelFallback() {
 		GoalPosition origin = position(2, 59, -5);
 
@@ -61,8 +71,8 @@ class PortableTablePlacementPolicyTest {
 			origin,
 			List.of(
 				observation(feasible, true, false),
-				new PortableTablePlacementPolicy.SiteObservation(blockedTarget, true, false, true, false),
-				new PortableTablePlacementPolicy.SiteObservation(missingSupport, true, true, false, false)
+				new PortableTablePlacementPolicy.SiteObservation(blockedTarget, true, false, true, false, false),
+				new PortableTablePlacementPolicy.SiteObservation(missingSupport, true, true, false, false, false)
 			),
 			PortableTablePlacementPolicy.MAX_ATTEMPTS
 		);
@@ -196,7 +206,8 @@ class PortableTablePlacementPolicyTest {
 			true,
 			feasible,
 			feasible,
-			playerOccupied
+			playerOccupied,
+			false
 		);
 	}
 

@@ -1,5 +1,7 @@
 package ai.moeru.airicraft.agent.tasks;
 
+import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
+
 import ai.moeru.airicraft.agent.baritone.BaritoneFacade;
 import ai.moeru.airicraft.agent.control.CameraController;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
@@ -732,6 +734,11 @@ public final class CraftingTaskExecutor implements WorldTaskExecutor {
 		}
 
 		GoalPosition target = placementState.activeTarget();
+		if (WorldPlacePreservation.contains(client.world, blockPos(target))) {
+			resetPortableTablePlacementAttempt(sessionSnapshot);
+			portableTablePlacementState = placementState.advance("preserved_place");
+			return WorkbenchReadiness.notReadyState();
+		}
 		if (portableTablePlacementTask == null) {
 			portableTablePlacementTask = portableTablePlacementRequest(request, placementState.attemptNumber(), target);
 		}
@@ -823,7 +830,8 @@ public final class CraftingTaskExecutor implements WorldTaskExecutor {
 			targetLoaded,
 			targetState != null && (targetState.isAir() || targetState.isReplaceable()),
 			adjacentSupportAvailable,
-			occupiesPlayerSpace(candidate, origin)
+			occupiesPlayerSpace(candidate, origin),
+			WorldPlacePreservation.contains(client.world, target)
 		);
 	}
 

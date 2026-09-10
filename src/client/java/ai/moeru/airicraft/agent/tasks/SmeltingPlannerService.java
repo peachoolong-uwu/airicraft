@@ -1,5 +1,7 @@
 package ai.moeru.airicraft.agent.tasks;
 
+import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
+
 import net.minecraft.block.ShapeContext;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -598,6 +600,7 @@ public final class SmeltingPlannerService {
 		if (client == null || client.world == null || !client.world.isChunkLoaded(pos) || !client.world.isChunkLoaded(pos.down())) {
 			return false;
 		}
+		if (WorldPlacePreservation.contains(client.world, pos)) return false;
 		BlockState target = client.world.getBlockState(pos);
 		BlockState support = client.world.getBlockState(pos.down());
 		return (target.isAir() || target.isReplaceable())

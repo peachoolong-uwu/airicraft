@@ -111,14 +111,15 @@ final class PortableTablePlacementPolicy {
 		boolean targetLoaded,
 		boolean targetReplaceable,
 		boolean adjacentSupportAvailable,
-		boolean playerOccupied
+		boolean playerOccupied,
+		boolean preserved
 	) {
 		SiteObservation {
 			Objects.requireNonNull(target, "target");
 		}
 
 		boolean feasible() {
-			return targetLoaded && targetReplaceable && adjacentSupportAvailable;
+			return targetLoaded && targetReplaceable && adjacentSupportAvailable && !preserved;
 		}
 	}
 

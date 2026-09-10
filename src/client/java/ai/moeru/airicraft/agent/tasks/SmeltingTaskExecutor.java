@@ -1,5 +1,7 @@
 package ai.moeru.airicraft.agent.tasks;
 
+import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
+
 import ai.moeru.airicraft.agent.baritone.BaritoneFacade;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
 import ai.moeru.airicraft.agent.session.SessionSnapshot;
@@ -568,6 +570,7 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		if (client == null || client.world == null || !client.world.isChunkLoaded(pos) || !client.world.isChunkLoaded(pos.down())) {
 			return false;
 		}
+		if (WorldPlacePreservation.contains(client.world, pos)) return false;
 		BlockState target = client.world.getBlockState(pos);
 		BlockState support = client.world.getBlockState(pos.down());
 		return (target.isAir() || target.isReplaceable())
