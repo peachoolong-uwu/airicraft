@@ -65,10 +65,21 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 	}
 
 	private boolean visible(Vec3d eye, BlockPos target) {
-		if (eye.squaredDistanceTo(Vec3d.ofCenter(target)) > 20.25) return false;
-		var hit = client().world.raycast(new RaycastContext(eye, Vec3d.ofCenter(target), RaycastContext.ShapeType.OUTLINE,
+		Vec3d aim = cropAim(target);
+		if (aim == null || eye.squaredDistanceTo(aim) > 20.25) return false;
+		var hit = client().world.raycast(new RaycastContext(eye, aim, RaycastContext.ShapeType.OUTLINE,
 			RaycastContext.FluidHandling.NONE, client().player));
 		return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(target);
+	}
+
+	private Vec3d cropAim(BlockPos pos) {
+		var world = client().world;
+		var shape = world.getBlockState(pos).getOutlineShape(world, pos);
+		return cropAim(pos, shape);
+	}
+
+	static Vec3d cropAim(BlockPos pos, net.minecraft.util.shape.VoxelShape shape) {
+		return shape.isEmpty() ? null : shape.getBoundingBox().getCenter().add(pos.getX(), pos.getY(), pos.getZ());
 	}
 
 	@Override public boolean canHarvest(GoalPosition crop) {
@@ -81,7 +92,7 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 			|| client.player.currentScreenHandler != client.player.playerScreenHandler
 			|| !client.player.currentScreenHandler.getCursorStack().isEmpty()) return false;
 		BlockPos pos = block(crop);
-		camera.lookAtNow(client, Vec3d.ofCenter(pos));
+		camera.lookAtNow(client, cropAim(pos));
 		client.interactionManager.attackBlock(pos, Direction.UP);
 		client.player.swingHand(Hand.MAIN_HAND);
 		return state(crop, args) == Cell.EMPTY_FARMLAND;

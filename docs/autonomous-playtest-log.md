@@ -148,3 +148,7 @@ A current-position bookmark captured on farmland recorded `(261,62,483)`, althou
 Current-position memory and navigation completion now use Baritone's own `playerFeet()` coordinate convention. Explicit user coordinates remain exact. Focused facade, task and memory tests passed; HotSwap applied four classes. Live current capture returned `(264,63,483)`, then moving to `(261,63,483)` and returning to the new bookmark both completed. Evidence: `farmland-fixed-{away,return}-*`. Updated the local watcher to pause unexpected CANCELLED outcomes as well as failures.
 
 The row crop at `(263,63,484)` reached age 5; live mature harvest/replant is still pending. A fresh query found five crops total, not six: the old entrance-side `(259,63,481)` plant is absent. Keep productive rows away from routine access and do not count remembered crop totals as current evidence.
+
+### D016 — Aim inside short crop outlines
+
+The generic crop tending code aimed at the full block center. A deterministic voxel raycast reproduced a miss when that endpoint lies on the top boundary of the half-height mature beetroot outline; aiming at the outline's center hits. Use the actual crop outline center for both visibility and camera aim. The geometry regression and focused navigation/memory/task tests passed; HotSwap applied the environment change. This is geometry proof, not a live beetroot harvest claim. Live wheat harvest remains the next farming checkpoint.
