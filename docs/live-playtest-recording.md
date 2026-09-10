@@ -12,7 +12,7 @@ This extends the Runtime Observatory's observation store. It does not require th
 - Snapshot payload schema 3 separates repeated context: `recipe_catalog` holds known crafting/smelting knowledge, `dialogue_history` holds conversation history, and `action_graph_execution` holds each execution's detailed payload (including its existing bounded trace). Snapshots reference these with `recipeCatalogSequence` or `observationSequence`. Unchanged context extends its validity without another copy; changed context gets a new sequence. Root task/reflex/mission fields replace duplicate copies inside `agent`.
 - Changed task/reflex/event-pipeline decision state at client decision boundaries. Reflex evidence includes threats, route assessments, escape targets, rejected targets, completed escape legs, close contacts, security counters and actuator failures.
 - Incremental semantic events and debug timeline entries, including external tool arguments, returned text and failures linked by call ID. Embedded LLM request/response records are retained separately. The external Codex conversation is outside this client recorder.
-- Sparse 640×360 JPEG frames read directly from the active client's world framebuffer, before hand/HUD rendering. No RGB sidecar or replay renderer runs alongside the game.
+- Sparse 640×360 JPEG frames sampled every 40 server ticks by default and read directly from the active client's world framebuffer, before hand/HUD rendering. No RGB sidecar or replay renderer runs alongside the game.
 
 Every observation retains its producer's agent `tick` and wall timestamp, plus `serverTickId`, the latest completed server tick when collected. These are different clocks: a drained event's server stamp describes collection, not a claim that its original decision ran on the server thread. A frame is stamped at framebuffer readback request, before asynchronous encoding.
 
@@ -59,7 +59,7 @@ World changes and runtime reloads start fresh recording sessions. Leaving a worl
 debugDashboard:
   historyMegabytes: 64
   visualCaptureEnabled: true
-  visualCaptureIntervalTicks: 20  # 40 for 0.5 fps, 100 for 0.2 fps
+  visualCaptureIntervalTicks: 40  # default 0.5 fps; 20 for 1 fps, 100 for 0.2 fps
 ```
 
 Existing explicit `visualCaptureEnabled: false` settings remain effective. The server-clock window and RGB capture described here require a local integrated server. Remote-server dashboard observations remain available, with `serverClockAvailable: false` and unavailable server stamps; they are not presented as server-aligned replay.
