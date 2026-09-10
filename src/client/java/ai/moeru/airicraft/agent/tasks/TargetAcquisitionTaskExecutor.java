@@ -75,6 +75,8 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		GoalMineSpec spec = request.goal().mineSpec();
 		int count = environment.inventoryCount(spec);
 		if (count >= spec.quantity()) return finish(true, "inventory_target_reached itemCount=" + count);
+		if (!environment.requiredToolAvailable(spec))
+			return finish(false, "missing_required_harvest_tool itemIds=" + spec.requiredToolItemIds(), TaskFailureCode.MISSING_ITEM);
 		if (activeTicks > 2400) return finish(false, "acquisition_budget_exhausted itemCount=" + count);
 		if (!environment.inScope(environment.position(), constraints, true))
 			return finish(false, "acquisition_scope_left itemCount=" + count);
@@ -158,10 +160,14 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private Optional<TaskTerminalEvent> finish(boolean success, String reason) {
+		return finish(success, reason, TaskFailureCode.MISSING_FACT);
+	}
+
+	private Optional<TaskTerminalEvent> finish(boolean success, String reason, TaskFailureCode failureCode) {
 		terminal = new TaskTerminalEvent(request.taskId(), request.goal(),
 			success ? TaskExecutionState.COMPLETED : TaskExecutionState.FAILED,
 			reason, success ? TaskTerminationCause.GOAL_REACHED : null,
-			success ? TaskFailureCode.NONE : TaskFailureCode.MISSING_FACT);
+			success ? TaskFailureCode.NONE : failureCode);
 		release();
 		enter(Phase.RELEASE);
 		return finishRelease();
@@ -205,6 +211,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	interface Environment {
 		GoalPosition position();
 		int inventoryCount(GoalMineSpec spec);
+		boolean requiredToolAvailable(GoalMineSpec spec);
 		boolean inScope(GoalPosition position, AcquisitionConstraints constraints, boolean standing);
 		List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected);
 		boolean targetPresent(Candidate target);

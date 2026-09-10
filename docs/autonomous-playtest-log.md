@@ -250,3 +250,9 @@ The recorded doorway regression and focused crafting/smelting tests passed. HotS
 ### D030 — Begin Easy survival
 
 Cleared and closed the shelter door, equipped the iron sword, and enabled normal spawn-proof lighting. `world difficulty --set easy` returned changed=true at world time 118,078; a separate read returned easy with changed=false. No commands changed time, weather, health, inventory or growth rules. Start state: healthy, iron chestplate/leggings, six cooked porkchops, one bread, one apple, fourteen torches, a maintained wheat plot and the remembered enclosed shelter. Capture `easy-start-ticks.txt` anchors the server clock. Aim for at least two full day/night cycles with actual supply work, not idle shelter time alone. Pause/export unexpected behavior and resume after fixes.
+
+### D031 — Tool breakage must invalidate the active acquisition route
+
+The Easy-mode replacement-pick goal acquired one raw iron, then repeatedly stalled after its old iron pickaxe broke. At pause, the player held a wooden pickaxe against iron ore; a stone pickaxe remained in inventory, while the route required `minecraft:iron_pickaxe`. Export: `easy-pick-acquisition-stall.jsonl` (389 observations with frames, not truncated). Acquisition only checked tool suitability at dispatch/break time and treated later failure as another target rejection.
+
+Added a per-tick presence check for the route's required tool, after checking completed inventory quantity. Tool loss fails with `MISSING_ITEM` and releases movement instead of cycling excavation sides. The regression failed before the change; acquisition/crop tests passed afterward. HotSwapped seven classes and resumed the same action goal. It replanned automatically to the existing stone pickaxe, gathered the remaining ore, and entered smelting (`tool-loss-replan-*`). The goal now needs two fresh pickaxes because the old one broke; full crafting completion is pending.

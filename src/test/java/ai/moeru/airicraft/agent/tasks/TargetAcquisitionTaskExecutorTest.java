@@ -9,6 +9,17 @@ import static org.junit.jupiter.api.Assertions.*;
 import static ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor.*;
 
 class TargetAcquisitionTaskExecutorTest {
+	@Test void losingTheRequiredToolDuringApproachFailsWithoutRetryingOtherTargets() {
+		Fixture f = new Fixture();
+		f.tick(2);
+		assertTrue(f.nav.active);
+		f.env.requiredToolAvailable = false;
+		f.tick(1);
+		assertFalse(f.nav.active);
+		assertEquals(TaskExecutionState.FAILED, f.executor.snapshot().state());
+		assertEquals(TaskFailureCode.MISSING_ITEM, f.events.getFirst().failureCode());
+		assertEquals(0, f.env.rejections);
+	}
 	@Test void workSearchIncludesGroundFromWhichAnOverheadLogIsInEyeReach() {
 		var log = new net.minecraft.util.math.BlockPos(284,69,-138);
 		var feet = new net.minecraft.util.math.BlockPos(285,64,-138);
@@ -155,6 +166,8 @@ class TargetAcquisitionTaskExecutorTest {
 		GoalPosition position = pos(0,64,0);
 		List<Candidate> sources = List.of(new Candidate(Kind.BLOCK,"log",pos(5,64,0),pos(4,64,0)));
 		boolean interactable, inScope = true;
+		boolean requiredToolAvailable = true;
+		public boolean requiredToolAvailable(GoalMineSpec spec) { return requiredToolAvailable; }
 		int count, breaks, rejections;
 		public GoalPosition position() { return position; }
 		public int inventoryCount(GoalMineSpec s) { return count; }

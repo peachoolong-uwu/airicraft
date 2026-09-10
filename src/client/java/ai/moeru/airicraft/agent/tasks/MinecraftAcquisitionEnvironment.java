@@ -42,6 +42,15 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		}
 		return count;
 	}
+	@Override public boolean requiredToolAvailable(GoalMineSpec spec) {
+		if (spec.requiredToolItemIds().isEmpty()) return true;
+		var inventory = client().player.getInventory();
+		for (int i = 0; i < inventory.size(); i++) {
+			var stack = inventory.getStack(i);
+			if (!stack.isEmpty() && spec.requiredToolItemIds().contains(Registries.ITEM.getId(stack.getItem()).toString())) return true;
+		}
+		return false;
+	}
 	@Override public boolean inScope(GoalPosition position, AcquisitionConstraints constraints, boolean standing) {
 		BlockPos pos = block(position);
 		if (!constraints.contains(position) || !client().world.isChunkLoaded(pos)) return false;
