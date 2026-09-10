@@ -13,6 +13,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.CraftingScreenHandler;
@@ -70,6 +71,23 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 		String position = client.player.getBlockPos().getX() + "," + client.player.getBlockPos().getY() + "," + client.player.getBlockPos().getZ();
 		String equippedItemId = Registries.ITEM.getId(client.player.getMainHandStack().getItem()).toString();
 		int selectedHotbarSlot = client.player.getInventory().getSelectedSlot();
+		List<Map<String, Object>> durability = new ArrayList<>();
+		int freeStorageSlots = 0;
+		for (int slot = 0; slot < stacks.size(); slot++) {
+			ItemStack stack = stacks.get(slot);
+			if (slot < PlayerInventory.MAIN_SIZE && stack.isEmpty()) freeStorageSlots++;
+			if (!stack.isEmpty() && stack.isDamageable()) {
+				Map<String, Object> tool = new LinkedHashMap<>();
+				tool.put("inventorySlot", slot);
+				tool.put("itemId", Registries.ITEM.getId(stack.getItem()).toString());
+				tool.put("remaining", stack.getMaxDamage() - stack.getDamage());
+				tool.put("maximum", stack.getMaxDamage());
+				durability.add(tool);
+			}
+		}
+		Map<String, String> equipment = new LinkedHashMap<>();
+		for (EquipmentSlot slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.OFFHAND))
+			equipment.put(slot.getName(), Registries.ITEM.getId(client.player.getEquippedStack(slot).getItem()).toString());
 		return CompletableFuture.completedFuture(
 			"Tool result for inspect_inventory: "
 				+ "dimension=" + dimension
@@ -79,6 +97,11 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 				+ ", hotbarItems=" + hotbarItems(client.player.getInventory())
 				+ ", inventoryCounts=" + resourceCounts
 				+ ", itemCounts=" + sortedItemCounts(itemCounter.count(client.player.getInventory()))
+				+ ", freeStorageSlots=" + freeStorageSlots
+				+ ", equipment=" + equipment
+				+ ", durability=" + durability
+				+ ", vitals=" + Map.of("health", client.player.getHealth(), "maxHealth", client.player.getMaxHealth(),
+					"food", client.player.getHungerManager().getFoodLevel(), "saturation", client.player.getHungerManager().getSaturationLevel())
 		);
 	}
 
