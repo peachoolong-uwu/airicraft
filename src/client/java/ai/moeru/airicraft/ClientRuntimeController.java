@@ -285,7 +285,6 @@ public final class ClientRuntimeController {
 	public void onFirstPersonFrameRendered() {
 		MinecraftClient client = MinecraftClient.getInstance();
 		if (client != null) {
-			clientTickDebugRuntime.beforeFirstPersonFrame(client, currentAgentRuntime());
 			screenshotService.onWorldRendered(client);
 			try {
 				dashboardObservationCollector.onRenderedFrame(client, currentAgentRuntime());

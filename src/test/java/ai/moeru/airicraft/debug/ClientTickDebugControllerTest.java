@@ -12,6 +12,50 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientTickDebugControllerTest {
 	@Test
+	void serverPauseAndStepPermitExactlyOneClientDecisionTickBeforeCapture() {
+		ClientTickDebugController client = new ClientTickDebugController();
+		ServerTickDebugController server = new ServerTickDebugController();
+		assertTrue(client.beginServerAlignedTick(server.status()));
+		client.onClientTickCompleted();
+		var pause = client.pause();
+		String session = client.status().debugSessionId();
+		server.pause(session);
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		assertTrue(server.beginServerTick());
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		server.completeServerTick();
+		assertTrue(client.beginServerAlignedTick(server.status()));
+		var intent = client.onClientTickCompleted().orElseThrow();
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		client.attachSnapshot(intent, snapshot(intent));
+		client.completeFrame(intent, frame());
+		pause.join();
+		long tick = client.status().clientTickId();
+		for (int i = 0; i < 100; i++) {
+			assertFalse(client.beginServerAlignedTick(server.status()));
+		}
+		assertEquals(tick, client.status().clientTickId());
+
+		var step = client.step(session, 1L);
+		server.step(session, 1L);
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		server.beginServerTick();
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		server.completeServerTick();
+		assertTrue(client.beginServerAlignedTick(server.status()));
+		var stepIntent = client.onClientTickCompleted().orElseThrow();
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		client.attachSnapshot(stepIntent, snapshot(stepIntent));
+		client.completeFrame(stepIntent, frame());
+		assertEquals(tick + 1L, step.join().snapshot().clientTickId());
+		assertEquals(2L, server.status().serverTickId());
+		assertFalse(client.beginServerAlignedTick(server.status()));
+		server.continueRunning(session, 2L);
+		client.continueRunning(session, 2L);
+		assertTrue(client.beginServerAlignedTick(server.status()));
+	}
+
+	@Test
 	void pauseCapturesCurrentRenderedFrameWithoutAdvancingATick() {
 		ClientTickDebugController controller = new ClientTickDebugController();
 		var future = controller.pause();

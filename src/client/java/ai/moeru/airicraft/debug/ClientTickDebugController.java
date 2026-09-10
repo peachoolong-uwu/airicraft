@@ -69,6 +69,21 @@ public final class ClientTickDebugController {
 		};
 	}
 
+	/** Admit the final client tick only after its authoritative server boundary completes. */
+	public synchronized boolean beginServerAlignedTick(ServerTickDebugController.DebugStatus server) {
+		if (phase == Phase.RUNNING) {
+			return true;
+		}
+		if ((phase == Phase.PAUSE_REQUESTED || phase == Phase.STEP_ARMED)
+			&& server.paused()
+			&& Objects.equals(debugSessionId, server.debugSessionId())
+			&& server.pauseEpoch() == pauseEpoch + 1L) {
+			onClientTickStarted();
+			return true;
+		}
+		return false;
+	}
+
 	public synchronized void onClientTickStarted() {
 		if (phase == Phase.PAUSE_REQUESTED) {
 			phase = Phase.PAUSE_TICK_RUNNING;

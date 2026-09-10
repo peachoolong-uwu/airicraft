@@ -91,8 +91,9 @@ public final class ClientTickDebugRuntime {
 		return controller.allowVanillaTick(vanillaAllowsTick) && !traceRecorder.waitingForFrame();
 	}
 
-	public void onClientTickStarted() {
-		controller.onClientTickStarted();
+	public boolean beginClientTick() {
+		return !traceRecorder.waitingForFrame()
+			&& controller.beginServerAlignedTick(ServerTickDebugRuntime.controller().status());
 	}
 
 	public void onClientTickCompleted(MinecraftClient client, EmbodiedAgentRuntime runtime) {
@@ -113,18 +114,6 @@ public final class ClientTickDebugRuntime {
 		}
 		else {
 			ClientTickPlayerActionEvents.clear();
-		}
-	}
-
-	public void beforeFirstPersonFrame(MinecraftClient client, EmbodiedAgentRuntime runtime) {
-		ServerTickDebugController.DebugStatus serverStatus = ServerTickDebugRuntime.controller().status();
-		ClientTickDebugController.DebugStatus clientStatus = controller.status();
-		if (
-			serverStatus.paused()
-				&& Objects.equals(serverStatus.debugSessionId(), clientStatus.debugSessionId())
-				&& serverStatus.pauseEpoch() == clientStatus.pauseEpoch() + 1L
-		) {
-			controller.onRenderedFrameBoundary().ifPresent(intent -> beginCapture(client, runtime, intent));
 		}
 	}
 

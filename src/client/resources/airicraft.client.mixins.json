@@ -11,6 +11,7 @@
 		"GameRendererMixin",
 		"GameRendererPauseMixin",
 		"MessageHandlerMixin",
+		"MinecraftClientTickDebugMixin",
 		"SlotMixin"
 	],
 	"injectors": {
