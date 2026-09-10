@@ -10,7 +10,6 @@ import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalNear;
 import baritone.api.process.IBaritoneProcess;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.Objects;
@@ -212,12 +211,12 @@ public final class LiveBaritoneFacade implements BaritoneFacade {
 		if (position == null) {
 			return false;
 		}
-		MinecraftClient client = MinecraftClient.getInstance();
-		if (client == null || client.player == null) {
+		if (baritone == null || baritone.getPlayerContext() == null) {
 			return false;
 		}
 
-		BlockPos playerBlockPos = client.player.getBlockPos();
+		BlockPos playerBlockPos = baritone.getPlayerContext().playerFeet();
+		if (playerBlockPos == null) return false;
 		if (position.exactY()) {
 			return playerBlockPos.getX() == position.x()
 				&& playerBlockPos.getY() == position.y()

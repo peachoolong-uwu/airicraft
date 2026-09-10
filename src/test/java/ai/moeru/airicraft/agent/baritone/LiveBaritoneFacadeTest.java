@@ -3,6 +3,8 @@ package ai.moeru.airicraft.agent.baritone;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
 import ai.moeru.airicraft.agent.goals.GoalMineSpec;
 import baritone.api.IBaritone;
+import baritone.api.utils.IPlayerContext;
+import baritone.api.utils.BetterBlockPos;
 import baritone.api.behavior.IPathingBehavior;
 import baritone.api.event.events.PathEvent;
 import baritone.api.event.listener.AbstractGameEventListener;
@@ -54,6 +56,20 @@ class LiveBaritoneFacadeTest {
 		assertEquals(12, goal.x);
 		assertEquals(64, goal.y);
 		assertEquals(-8, goal.z);
+	}
+
+	@Test
+	void navigationCompletionUsesBaritoneFeetOnPartialHeightGround() {
+		RecordingBaritoneHarness harness = new RecordingBaritoneHarness();
+		LiveBaritoneFacade facade = new LiveBaritoneFacade(harness.baritone(), () -> {});
+		// Standing at physical Y 62.9375 on farmland: Baritone feet are Y 63.
+		harness.feet.set(new BetterBlockPos(264, 63, 483));
+		assertTrue(facade.navigationGoalReached(new GoalPosition(264, 63, 483, true)));
+		assertFalse(facade.navigationGoalReached(new GoalPosition(264, 62, 483, true)));
+		assertFalse(facade.navigationGoalReached(new GoalPosition(261, 63, 483, true)));
+		assertTrue(facade.navigationGoalReached(new GoalPosition(264, 62, 483, false)));
+		harness.feet.set(null);
+		assertFalse(facade.navigationGoalReached(new GoalPosition(264, 63, 483, true)));
 	}
 
 	@Test
@@ -274,14 +290,18 @@ class LiveBaritoneFacadeTest {
 			}
 			default -> defaultValue(method);
 		});
+		private final AtomicReference<BetterBlockPos> feet = new AtomicReference<>();
+		private final IPlayerContext playerContext = proxy(IPlayerContext.class, (proxy, method, args) ->
+			method.getName().equals("playerFeet") ? feet.get() : defaultValue(method));
 		private final IBaritone baritone = proxy(IBaritone.class, (proxy, method, args) -> switch (method.getName()) {
 			case "getPathingBehavior" -> pathingBehavior;
+			case "getPlayerContext" -> playerContext;
 			case "getFollowProcess" -> followProcess;
 			case "getMineProcess" -> mineProcess;
 			case "getCustomGoalProcess" -> customGoalProcess;
 			case "getPathingControlManager" -> pathingControlManager;
 			case "getGameEventHandler" -> eventBus;
-			case "getBuilderProcess", "getExploreProcess", "getFarmProcess", "getGetToBlockProcess", "getElytraProcess", "getWorldProvider", "getInputOverrideHandler", "getPlayerContext", "getSelectionManager", "getCommandManager" -> null;
+			case "getBuilderProcess", "getExploreProcess", "getFarmProcess", "getGetToBlockProcess", "getElytraProcess", "getWorldProvider", "getInputOverrideHandler", "getSelectionManager", "getCommandManager" -> null;
 			case "openClick" -> null;
 			default -> defaultValue(method);
 		});

@@ -3,6 +3,7 @@ package ai.moeru.airicraft.agent.memory;
 import ai.moeru.airicraft.agent.llm.PlannerToolCall;
 import ai.moeru.airicraft.agent.llm.PlannerToolCatalog;
 import ai.moeru.airicraft.agent.llm.PlannerToolProvider;
+import baritone.api.BaritoneAPI;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -46,7 +47,7 @@ public final class PlaceMemoryToolProvider implements PlannerToolProvider {
 			if (client.getServer() == null) {
 				throw new IllegalStateException("world_persistence_unavailable: requires a locally hosted world save");
 			}
-			var pos = client.player.getBlockPos();
+			var pos = BaritoneAPI.getProvider().getPrimaryBaritone().getPlayerContext().playerFeet();
 			return new Context(client.getServer().getSavePath(WorldSavePath.ROOT),
 				client.world.getRegistryKey().getValue().toString(), pos.getX(), pos.getY(), pos.getZ());
 		}, command -> MinecraftClient.getInstance().execute(command),
@@ -75,7 +76,7 @@ public final class PlaceMemoryToolProvider implements PlannerToolProvider {
 		return List.of(
 			toolForProvider("remember_place", "Remember or replace a named place in this world save. A bookmark records intent, not safety or reachability.",
 				propertiesForProvider(narration, name,
-					propForProvider("position", Map.of("description", "Omit or use current to capture the player's current block position; otherwise supply exact coordinates.",
+					propForProvider("position", Map.of("description", "Omit or use current to capture the player's current navigation feet position; otherwise supply exact coordinates.",
 						"oneOf", List.of(Map.of("type", "string", "enum", List.of("current")), coordinates))),
 					propForProvider("preserveArea", area),
 					propForProvider("note", optionalStringForProvider("Optional purpose or context, up to 2048 characters. Replaces the previous note; omitted means empty."))), List.of("name")),
