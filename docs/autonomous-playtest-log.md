@@ -152,3 +152,17 @@ The row crop at `(263,63,484)` reached age 5; live mature harvest/replant is sti
 ### D016 — Aim inside short crop outlines
 
 The generic crop tending code aimed at the full block center. A deterministic voxel raycast reproduced a miss when that endpoint lies on the top boundary of the half-height mature beetroot outline; aiming at the outline's center hits. Use the actual crop outline center for both visibility and camera aim. The geometry regression and focused navigation/memory/task tests passed; HotSwap applied the environment change. This is geometry proof, not a live beetroot harvest claim. Live wheat harvest remains the next farming checkpoint.
+
+### D017 — Full recorder window and shelter/supply recheck
+
+At server tick 12,551, the new half-frame-per-second default retained the full 12,000-tick window: 597 runtime snapshots, 300 visual frames, 49,453,744 bytes total and 20,784,272 visual bytes. No dropped record types were reported; expired entries belong to normal rolling retention. Evidence: `recorder-half-fps-window.txt`. This is a complete live window under the current workload, not a guarantee for every scene or event rate.
+
+Returned to the shelter and inspected both halves of its shell. All 50 required floor, roof and wall/door cells were observed with no air gaps; furnace, table and wall torch remain present. The high-level 21-torch goal succeeded, stock five to 21, consuming four coal and four sticks. Picked up the displaced entrance crop's seed on the return trip (seven total). Evidence: `shelter-{current,west}-shell.txt`, `shelter-return-after-farm-*`, `replenish-torches-*`. Full build passed after the navigation and crop-aim fixes (`post-navigation-build.log`).
+
+### D018 — Detours are navigation progress
+
+Local eight-coal acquisition selected `(249,63,489)` from the shelter. The first approach was rejected after 81 ticks, although recorded positions moved from `(256,63,480)` through the eastern entrance to `(260,63,483)` and `(260,62,485)`. The progress metric only accepted a new shortest straight-line distance to the target, so leaving the room initially in the opposite direction consumed the entire no-progress allowance. Paused both gates and exported `shore-coal-stall.jsonl` before editing (674 observations, not truncated). The next side had already excavated 22 stone blocks; that productive continuation was not evidence of a new stall.
+
+A regression using the recorded detour failed first, then passed when the no-progress check tracked movement between positions. Stationary approaches still time out, and the 2,400-active-tick attempt budget bounds looping routes. HotSwap applied the change and resumed the same coal job. Live completion is pending.
+
+The same coal job completed after HotSwap, inventory two to ten coal, with no replacement acquisition request (`shore-coal-eight-2-*`). This proves continuation and resource completion; the original detour had already been abandoned, so its prevention is currently covered by the recorded-position regression. Several short drop approaches emitted CANCELED and were reselected while pickup still progressed; log this as a bypassable inefficiency, not a new progression blocker.

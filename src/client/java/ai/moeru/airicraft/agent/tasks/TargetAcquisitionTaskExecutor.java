@@ -24,7 +24,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	private int activeTicks;
 	private int phaseTicks;
 	private int progressTicks;
-	private double bestDistance;
+	private GoalPosition progressPosition;
 	private boolean navigationOwned;
 	private TaskTerminalEvent terminal;
 	private boolean emitted;
@@ -97,7 +97,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			if (((WorldTaskRequest.Mine) request.task()).mineGoalSatisfied() && target.kind() == Kind.BLOCK)
 				return finish(true, "requested_blocks_broken");
 			enter(Phase.APPROACH);
-			bestDistance = distanceSquared(environment.position(), target.workPosition());
+			progressPosition = environment.position();
 			progressTicks = 0;
 		}
 		else if (!environment.targetPresent(target)) {
@@ -114,8 +114,12 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			// Bound it by actual stalls and the whole attempt's active-tick budget.
 			else if (progressTicks > 80) reject("approach_stalled");
 			else {
-				double distance = distanceSquared(environment.position(), target.workPosition());
-				if (distance < bestDistance - 1) { bestDistance = distance; progressTicks = 0; }
+				GoalPosition position = environment.position();
+				// Valid routes may initially move away from the target to leave a room or go around terrain.
+				if (progressPosition == null || distanceSquared(position, progressPosition) >= 1) {
+					progressPosition = position;
+					progressTicks = 0;
+				}
 				else progressTicks++;
 				if (!navigationOwned) {
 					navigation.pollPathEvent();

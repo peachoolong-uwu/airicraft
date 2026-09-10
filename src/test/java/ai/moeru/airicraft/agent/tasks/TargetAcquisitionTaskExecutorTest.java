@@ -78,6 +78,21 @@ class TargetAcquisitionTaskExecutorTest {
 		assertEquals(0, f.env.rejections);
 	}
 
+	@Test void detourAwayFromOreIsProgressEvenBeforeBeatingStartingDistance() {
+		Fixture f = new Fixture();
+		f.env.sources = List.of(new Candidate(Kind.BLOCK, "ore", pos(249,63,489), pos(249,63,488)));
+		f.env.position = pos(256,63,480);
+		f.tick(2);
+		// Recorded route must leave the protected shelter via its eastern door.
+		for (GoalPosition step : List.of(pos(258,63,480), pos(260,63,483), pos(260,62,485), pos(260,63,486))) {
+			f.env.position = step;
+			f.tick(30);
+		}
+		assertEquals(TaskExecutionState.RUNNING, f.executor.snapshot().state());
+		assertTrue(f.nav.active);
+		assertEquals(0, f.env.rejections);
+	}
+
 	@Test void noObservedTargetsFailsWithoutStartingBaritoneMiningOrExploration() {
 		Fixture f = new Fixture();
 		f.env.sources = List.of();
