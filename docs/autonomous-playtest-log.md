@@ -166,3 +166,9 @@ Local eight-coal acquisition selected `(249,63,489)` from the shelter. The first
 A regression using the recorded detour failed first, then passed when the no-progress check tracked movement between positions. Stationary approaches still time out, and the 2,400-active-tick attempt budget bounds looping routes. HotSwap applied the change and resumed the same coal job. Live completion is pending.
 
 The same coal job completed after HotSwap, inventory two to ten coal, with no replacement acquisition request (`shore-coal-eight-2-*`). This proves continuation and resource completion; the original detour had already been abandoned, so its prevention is currently covered by the recorded-position regression. Several short drop approaches emitted CANCELED and were reselected while pickup still progressed; log this as a bypassable inefficiency, not a new progression blocker.
+
+### D019 — Renewable crop harvest and parallel smelting demonstrated
+
+The eight-iron acquisition completed from ore at Y=68 down to Y=54, with no detour stall and eight raw iron collected. Returned to the remembered shelter. Enabled existing automatic spawn-proof lighting (`maxLightLevel=1`, spacing six); four torches were consumed during excavation. Started smelting all eight raw iron using one coal at the shelter furnace, then tended the farm while smelting continued.
+
+The first mature row pass completed at server tick 18,637: `harvested=1 planted=1 growing=3 missingSeedPlots=0`. Inventory confirmed one wheat and ten seeds (seven before the pass); exact read confirmed the mature `(263,63,484)` plant was replanted at age 0 and the other three row crops remained. This proves real harvest, pickup and replant through one tool call. A bread output still requires three wheat, so the full edible-crop checkpoint remains open. Evidence: `shore-iron-eight-{1,2}-*`, `iron-return-home-*`, `tend-first-mature.jsonl` (93 records, not truncated), `tend-first-mature-*`.
