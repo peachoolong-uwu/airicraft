@@ -11,6 +11,56 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DashboardObservationStoreTest {
 	@Test
+	void seekLoadsTheReferencedContextVersionAndKeysStayIndependent() {
+		DashboardObservationStore store = new DashboardObservationStore(1024L * 1024L);
+		store.advanceClock(10, false, true);
+		var first = store.appendContext("action_graph_execution", "first", 10, 10, Map.of("state", "running"));
+		var second = store.appendContext("action_graph_execution", "second", 10, 10, Map.of("state", "running"));
+		assertNotEquals(first.sequence(), second.sequence());
+		store.advanceClock(500, false, true);
+		store.appendContext("action_graph_execution", "first", 500, 500, Map.of("state", "running"));
+		store.append("runtime_snapshot", 500, 500, Map.of("actionGraph", Map.of("observationSequence", first.sequence())));
+		store.advanceClock(600, false, true);
+		store.appendContext("action_graph_execution", "first", 600, 600, Map.of("state", "completed"));
+		var observations = store.seek(500).get("observations").toString();
+		assertTrue(observations.contains("running"));
+		assertFalse(observations.contains("completed"));
+	}
+
+	@Test
+	void reusedContextSurvivesWhileReferencedAndExportsAcrossTheWindowBoundary() {
+		DashboardObservationStore store = new DashboardObservationStore(1024L * 1024L);
+		store.advanceClock(10, false, true);
+		var first = store.appendContext("recipe_catalog", 10, 100, Map.of("recipe", "bread"));
+		store.advanceClock(12_000, false, true);
+		var reused = store.appendContext("recipe_catalog", 12_000, 200, Map.of("recipe", "bread"));
+		assertEquals(first.sequence(), reused.sequence());
+		store.advanceClock(12_100, false, true);
+		assertEquals(1, store.retainedObservations().size());
+		var page = store.recordingPage(100, 12_100, 0, Long.MAX_VALUE, 10, java.util.Set.of(), false);
+		assertTrue(page.get("observations").toString().contains("bread"));
+		store.advanceClock(24_001, false, true);
+		assertTrue(store.retainedObservations().isEmpty());
+	}
+
+	@Test
+	void catalogChangesKeepSeparateVersionsAndBudgetEvictsOlderValidityFirst() {
+		DashboardObservationStore store = new DashboardObservationStore(1024L * 1024L);
+		store.advanceClock(1, false, true);
+		var first = store.appendContext("recipe_catalog", 1, 1, Map.of("recipe", "bread"));
+		store.advanceClock(2, false, true);
+		var second = store.appendContext("recipe_catalog", 2, 2, Map.of("recipe", "cake"));
+		assertNotEquals(first.sequence(), second.sequence());
+		store.append("log", 2, 2, Map.of("message", "x".repeat(260_000)));
+		store.advanceClock(3, false, true);
+		assertEquals(second.sequence(), store.appendContext("recipe_catalog", 3, 3, Map.of("recipe", "cake")).sequence());
+		store.append("log", 3, 3, Map.of("message", "y".repeat(270_000)));
+		assertTrue(store.retainedObservations().stream().anyMatch(o -> o.sequence() == second.sequence()));
+		assertFalse(store.retainedObservations().stream().anyMatch(o -> o.sequence() == first.sequence()));
+		assertTrue(store.snapshot().retainedBytes() <= store.snapshot().maxBytes());
+	}
+
+	@Test
 	void recordsVersionedObservationsWithinOneSession() {
 		DashboardObservationStore store = new DashboardObservationStore(1024L * 1024L);
 		String sessionId = store.startSession("client_started", 0L, 100L);

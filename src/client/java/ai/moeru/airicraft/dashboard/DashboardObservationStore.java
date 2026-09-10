@@ -45,6 +45,7 @@ public final class DashboardObservationStore {
 	private long visualBytes;
 	private String sessionId = UUID.randomUUID().toString();
 	private long sessionStartedAtMs;
+	private Map<String, Long> contextSequences;
 
 	public DashboardObservationStore(long maxBytes) {
 		this.maxBytes = Math.max(1024L * 1024L, maxBytes);
@@ -55,6 +56,7 @@ public final class DashboardObservationStore {
 		typeCounts.clear();
 		droppedByType.clear();
 		expiredByType.clear();
+		if (contextSequences != null) contextSequences.clear();
 		retainedBytes = 0L;
 		visualBytes = 0L;
 		sessionId = UUID.randomUUID().toString();
@@ -194,10 +196,27 @@ public final class DashboardObservationStore {
 		}
 		List<DashboardObservation> selected = new ArrayList<>(events);
 		selected.addAll(baseline.values());
+		Set<Long> references = new java.util.HashSet<>();
+		for (var observation : selected) collectContextReferences(JsonParser.parseString(observation.payloadJson()), references);
+		for (var observation : retained) {
+			if (references.contains(observation.sequence()) && !selected.contains(observation)) selected.add(observation);
+		}
 		selected.sort(java.util.Comparator.comparingLong(DashboardObservation::sequence));
 		result.put("selectedServerTickId", tick);
 		result.put("observations", selected.stream().map(observation -> observationPayload(observation, false)).toList());
 		return result;
+	}
+
+	private static void collectContextReferences(com.google.gson.JsonElement value, Set<Long> references) {
+		if (value.isJsonArray()) value.getAsJsonArray().forEach(element -> collectContextReferences(element, references));
+		else if (value.isJsonObject()) {
+			value.getAsJsonObject().entrySet().forEach(entry -> {
+				if ((entry.getKey().equals("observationSequence") || entry.getKey().equals("recipeCatalogSequence"))
+					&& entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isNumber()) {
+					references.add(entry.getValue().getAsLong());
+				} else collectContextReferences(entry.getValue(), references);
+			});
+		}
 	}
 
 	private static JsonObject observationPayload(DashboardObservation observation, boolean includeImages) {
@@ -229,6 +248,33 @@ public final class DashboardObservationStore {
 		String payloadJson
 	) {
 		return appendAt(type, tick, serverTickId, capturedAtMs, payloadJson);
+	}
+
+	/** Reuse unchanged context while it is still retained; its validity follows its latest use. */
+	public synchronized DashboardObservation appendContext(String type, long tick, long capturedAtMs, Object payload) {
+		return appendContext(type, type, tick, capturedAtMs, payload);
+	}
+
+	public synchronized DashboardObservation appendContext(String type, String key, long tick, long capturedAtMs, Object payload) {
+		String json = GSON.toJson(payload);
+		if (contextSequences == null) contextSequences = new LinkedHashMap<>();
+		String contextKey = type + ':' + key;
+		Long previousSequence = contextSequences.get(contextKey);
+		DashboardObservation previous = null;
+		for (var iterator = observations.descendingIterator(); iterator.hasNext();) {
+			DashboardObservation candidate = iterator.next();
+			if (previousSequence != null && candidate.sequence() == previousSequence) {
+				previous = candidate;
+				break;
+			}
+		}
+		if (previous != null && previous.payloadJson().equals(json)) {
+			extendObservation(sessionId, previous.sequence(), type, serverTickId);
+			return previous;
+		}
+		DashboardObservation added = appendAt(type, tick, serverTickId, capturedAtMs, json);
+		contextSequences.put(contextKey, added.sequence());
+		return added;
 	}
 
 	private DashboardObservation appendAt(String type, long tick, long observedServerTick, long capturedAtMs, String payloadJson) {
@@ -286,13 +332,17 @@ public final class DashboardObservationStore {
 
 	/** Extend an identical frame's validity without retaining or publishing another image. */
 	public synchronized boolean extendFrame(String expectedSession, long sequence, long throughTick) {
+		return extendObservation(expectedSession, sequence, "visual_frame", throughTick);
+	}
+
+	private boolean extendObservation(String expectedSession, long sequence, String type, long throughTick) {
 		if (!sessionId.equals(expectedSession)) {
 			return false;
 		}
 		ArrayDeque<DashboardObservation> updated = new ArrayDeque<>();
 		boolean found = false;
 		for (DashboardObservation observation : observations) {
-			if (observation.sequence() == sequence && observation.type().equals("visual_frame")) {
+			if (observation.sequence() == sequence && observation.type().equals(type)) {
 				observation = new DashboardObservation(observation.sequence(), observation.sessionId(), observation.tick(),
 					observation.serverTickId(), throughTick, observation.capturedAtMs(), observation.type(), observation.payloadJson());
 				found = true;
@@ -409,7 +459,12 @@ public final class DashboardObservationStore {
 			}
 		}
 		while (retainedBytes > maxBytes && !observations.isEmpty()) {
-			removed(observations.removeFirst());
+			// Reused context can start long ago and still serve current snapshots.
+			// Evict by the end of validity, rather than its original insertion time.
+			DashboardObservation oldest = observations.stream()
+				.min(java.util.Comparator.comparingLong(DashboardObservation::throughServerTickId)).orElseThrow();
+			observations.remove(oldest);
+			removed(oldest);
 		}
 	}
 
@@ -430,6 +485,7 @@ public final class DashboardObservationStore {
 	}
 
 	private void removed(DashboardObservation observation, boolean expired) {
+		if (contextSequences != null) contextSequences.values().removeIf(sequence -> sequence == observation.sequence());
 		retainedBytes -= observation.retainedBytes();
 		if (observation.type().equals("visual_frame")) {
 			visualBytes -= observation.retainedBytes();

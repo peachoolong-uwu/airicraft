@@ -75,3 +75,17 @@ Recorder diagnosis: a captured runtime snapshot repeated about 1 MB of mission e
 Roof placement was blocked as `target_not_inspected` for `(258,65,480)`. The automatic inspection and an explicit one-cell `inspect_area` both returned zero records. Paused/exported `roof-uninspected.jsonl`. Source filtered out air unless a nonreplaceable block sat directly below, making ceilings and the upper half of doors impossible to inspect through this path.
 
 Removed that hidden filter: `inspect_area` reports the requested cells, including air, subject to its existing result cap. `find_blocks` remains the selective search. Only returned cells grant mutation freshness; limits remain unchanged. Focused world-query tests passed. After HotSwap, the same two-cell roof query returned both air cells and both cobblestone roof placements completed (`roof-query-fixed.txt`, `roof-fixed-result.txt`). No client restart.
+
+### D007 — Shelter furnished; relocate crops away from foot traffic
+
+Door `(258,63,480)` is closed and faces east. Interior furnace `(255,63,479)`, crafting table `(255,63,481)`, wall torch `(255,64,480)` and outside farm torch `(259,64,479)` were placed successfully. `shelter-interior.png` visually confirms the lit room and workstations. Saved `shore shelter` and `shore wheat farm` in world memory with exact geometry and crop positions.
+
+A later check found `(259,62,479)` reverted to grass and the crop above missing; three other wheat plants remain. The old recorder window cannot identify the moment. Trampling during entry/navigation is plausible, not proven. The original farm overlaps the door approach, so move/expand cultivation away from this traffic instead of treating every loss as an executor bug. Preserve mature crops until harvest where practical. Evidence: `shelter-farm-check.txt`; paused boundary and export `recorder-before-catalog.jsonl`.
+
+### D008 — Deduplicate recorder context, retain current state at one-second intervals
+
+Initial live compaction reduced a runtime payload from about 2 MB to 151,536 JSON bytes, but 120,427 bytes were repeated action-graph details and 18,205 were dialogue history. The final projection stores recipe catalogs, dialogue history, and each action-graph execution as reusable versioned context; a snapshot keeps exact sequence references plus current evidence/summaries. Unchanged context extends its validity; budget eviction considers the end of validity so recently reused context is not discarded just because it was first inserted long ago. Detailed execution payloads retain the existing bounded trace contract.
+
+Runtime snapshots now sample every 20 completed server ticks; per-client-boundary task/reflex decisions and five-tick LLM polling remain. Duplicate mission/task/reflex copies inside `agent` are removed. CLI interval export includes overlapping context; live and file seek load the referenced versions. Full build and context/version/retention/seek tests passed. HotSwap required no restart. Live snapshots measured 15,627 JSON bytes; the first sample held nine distinct execution contexts rather than copying all nine into every snapshot. This proves payload reduction, not yet a full ten-minute workload retention run. Earlier loss counters remain historical and are not reset to hide drops.
+
+Browser validation loaded both structured and framed exports, decoded a 640x360 incident frame, and exercised saved playback without console errors. Evidence: `recorder-context-first.jsonl`, `seed-farm-conflict.jsonl`, `recorder-build.log`.

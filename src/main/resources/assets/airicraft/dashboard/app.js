@@ -294,6 +294,15 @@ function renderRuntime(snapshot) {
   el('content').innerHTML = `<div class="grid two-col">${sections.map(key => `<section class="card"><div class="card-head"><h2>${escapeHtml(key.replace(/([A-Z])/g,' $1'))}</h2><small>snapshot #${snapshot.sequence}</small></div><div class="card-body"><pre class="json">${escapeHtml(pretty(p[key]))}</pre></div></section>`).join('')}</div>`;
 }
 
+function contextReferences(value, references = new Set()) {
+  if (!value || typeof value !== 'object') return references;
+  for (const [key, child] of Object.entries(value)) {
+    if (['observationSequence', 'recipeCatalogSequence'].includes(key) && Number.isInteger(child)) references.add(child);
+    else contextReferences(child, references);
+  }
+  return references;
+}
+
 function renderLogs() {
   const logs = state.observations.filter(o => o.sequence <= state.selectedSequence && o.type === 'log' && matches(o)).slice().reverse();
   el('content').innerHTML = `<section class="card"><div class="card-head"><h2>Minecraft / Airicraft logs</h2><small>${logs.length} retained lines</small></div>${logs.length ? logs.map(o => `<div class="log-line selectable" data-sequence="${o.sequence}"><time>${timeFmt.format(o.capturedAtMs)}</time><span>${escapeHtml(o.payload?.message)}</span></div>`).join('') : '<p class="muted card-body">No matching log lines.</p>'}</section>`;
@@ -428,6 +437,14 @@ async function seekRecording(tick) {
       if (record.type === 'visual_frame') delete record.payload.imageBase64;
       return record;
     }));
+    const references = contextReferences(observations.map(record => record.payload));
+    const loaded = new Set(observations.map(record => record.sequence));
+    for (const entry of state.replayIndex) {
+      if (references.has(entry.sequence) && !loaded.has(entry.sequence)) {
+        observations.push(JSON.parse(await state.replayFile.slice(entry.offset, entry.end).text()));
+      }
+    }
+    observations.sort((a, b) => a.sequence - b.sequence);
     batch = { observations };
   } else {
     batch = await (await api(`/api/recording?at=${tick}`)).json();

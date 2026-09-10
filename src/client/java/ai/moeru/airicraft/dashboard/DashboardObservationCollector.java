@@ -2,6 +2,7 @@ package ai.moeru.airicraft.dashboard;
 
 import ai.moeru.airicraft.agent.EmbodiedAgentRuntime;
 import ai.moeru.airicraft.agent.debug.LlmFlightRecord;
+import ai.moeru.airicraft.agent.tasks.MissionExecutionSnapshot;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.registry.Registries;
 import net.minecraft.client.world.ClientWorld;
@@ -14,7 +15,8 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 public final class DashboardObservationCollector {
-	private static final int SNAPSHOT_INTERVAL_TICKS = 5;
+	private static final int SNAPSHOT_INTERVAL_TICKS = 20;
+	private static final int LLM_POLL_INTERVAL_TICKS = 5;
 	private final DashboardObservationStore store;
 	private final DashboardFrameCapture frameCapture;
 	private static final Gson GSON = new Gson();
@@ -75,7 +77,7 @@ public final class DashboardObservationCollector {
 		captureDebugTimeline(runtime);
 		// Remote servers do not expose this clock; preserve their dashboard without inventing server ticks.
 		long tick = available ? clock.serverTickId() : runtime.tickCount();
-		if (clock.paused() || lastLlmPollTick == Long.MIN_VALUE || tick - lastLlmPollTick >= SNAPSHOT_INTERVAL_TICKS) {
+		if (clock.paused() || lastLlmPollTick == Long.MIN_VALUE || tick - lastLlmPollTick >= LLM_POLL_INTERVAL_TICKS) {
 			captureLlmHistory(runtime, runtime.tickCount());
 			lastLlmPollTick = tick;
 		}
@@ -175,22 +177,38 @@ public final class DashboardObservationCollector {
 		));
 	}
 
-	private static Map<String, Object> runtimeSnapshot(MinecraftClient client, EmbodiedAgentRuntime runtime) {
+	private Map<String, Object> runtimeSnapshot(MinecraftClient client, EmbodiedAgentRuntime runtime) {
 		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("schemaVersion", 2);
-		payload.put("agent", runtime.snapshot());
+		payload.put("schemaVersion", 3);
+		var agent = runtime.snapshot();
+		payload.put("agent", Map.of("initialized", agent.initialized(), "tickCount", agent.tickCount(), "session", agent.session()));
 		payload.put("planner", runtime.plannerDebugSnapshot());
-		payload.put("dialogue", runtime.dialogueSnapshot());
+		payload.put("dialogue", Map.of("observationSequence", store.appendContext("dialogue_history", runtime.tickCount(),
+			System.currentTimeMillis(), runtime.dialogueSnapshot()).sequence()));
 		payload.put("dialogueState", runtime.debugDialogueState());
 		payload.put("conversationSources", runtime.debugConversationSources());
 		payload.put("activeGoal", runtime.activeGoal().orElse(null));
 		payload.put("activeJob", runtime.activeJob());
 		payload.put("task", runtime.taskSnapshot());
 		payload.put("taskExecution", runtime.taskExecutionSnapshot());
-		payload.put("missionExecution", runtime.missionExecutionSnapshot());
+		payload.put("missionExecution", missionPayload(store, runtime.missionExecutionSnapshot(), runtime.tickCount(), System.currentTimeMillis()));
 		payload.put("reflex", runtime.survivalReflexSnapshot());
 		payload.put("reflexDecision", runtime.survivalReflexDecisionEvidence());
-		payload.put("actionGraph", runtime.actionGraphGoalsPayload(true));
+		Map<String, Object> actionGraph = new LinkedHashMap<>(runtime.actionGraphGoalsPayload(false));
+		actionGraph.put("executions", runtime.actionGraphExecutions().stream().map(view -> {
+			var execution = view.execution();
+			var context = store.appendContext("action_graph_execution", execution.executionId(), runtime.tickCount(),
+				System.currentTimeMillis(), view.toPayload(true));
+			var detail = view.toPayload(false);
+			Map<String, Object> summary = new LinkedHashMap<>();
+			for (String key : java.util.List.of("executionId", "state", "goal", "residency", "failureCode", "message", "activeTaskId")) {
+				var value = detail.get(key);
+				if (value != null) summary.put(key, value);
+			}
+			summary.put("observationSequence", context.sequence());
+			return summary;
+		}).toList());
+		payload.put("actionGraph", actionGraph);
 		payload.put("behaviorTree", runtime.behaviorTreeSnapshot());
 		payload.put("eventPipeline", runtime.debugEventPipelineState());
 		payload.put("taskProgressProbe", runtime.debugCollectResourceState());
@@ -202,6 +220,40 @@ public final class DashboardObservationCollector {
 		payload.put("visionAvailable", runtime.visionAvailable());
 		payload.put("world", worldSnapshot(client));
 		return payload;
+	}
+
+	static Map<String, Object> missionPayload(DashboardObservationStore store, MissionExecutionSnapshot mission, long tick, long capturedAtMs) {
+		if (mission == null) return Map.of();
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("mission", mission.mission());
+		result.put("ledger", mission.ledger());
+		result.put("activeStep", mission.activeStep());
+		result.put("lastStepResult", mission.lastStepResult());
+		result.put("primitiveExecution", mission.primitiveExecution());
+		var evidence = mission.evidence();
+		if (evidence != null) {
+			var catalog = store.appendContext("recipe_catalog", tick, capturedAtMs,
+				Map.of("knownCrafts", evidence.knownCrafts(), "knownSmelts", evidence.knownSmelts()));
+			Map<String, Object> facts = new LinkedHashMap<>();
+			facts.put("recipeCatalogSequence", catalog.sequence());
+			facts.put("knownCraftCount", evidence.knownCrafts().size());
+			facts.put("knownSmeltCount", evidence.knownSmelts().size());
+			facts.put("inventoryCounts", evidence.inventoryCounts());
+			facts.put("itemCounts", evidence.itemCounts());
+			facts.put("nearbyBlocks", evidence.nearbyBlocks());
+			facts.put("availableCrafts", evidence.availableCrafts());
+			facts.put("availableSmelts", evidence.availableSmelts());
+			facts.put("dimension", evidence.dimension());
+			facts.put("x", evidence.x());
+			facts.put("y", evidence.y());
+			facts.put("z", evidence.z());
+			facts.put("equippedItemId", evidence.equippedItemId());
+			facts.put("selectedHotbarSlot", evidence.selectedHotbarSlot());
+			facts.put("hotbarItems", evidence.hotbarItems());
+			facts.put("tick", evidence.tick());
+			result.put("evidence", facts);
+		}
+		return result;
 	}
 
 	private static Map<String, Object> worldSnapshot(MinecraftClient client) {

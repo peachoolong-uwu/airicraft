@@ -8,7 +8,8 @@ This extends the Runtime Observatory's observation store. It does not require th
 
 ## Evidence
 
-- Full runtime snapshots every five server ticks and at each paused boundary: player/inventory, active goal/job, task and mission execution, action graph, planner, dialogue and event routing state.
+- Runtime snapshots every 20 server ticks and at each paused boundary: player/inventory, active goal/job, task and mission execution, action graph summaries, planner and event routing state. Short-lived task/reflex decisions still have their own capture at client decision boundaries; LLM history is polled every five server ticks.
+- Snapshot payload schema 3 separates repeated context: `recipe_catalog` holds known crafting/smelting knowledge, `dialogue_history` holds conversation history, and `action_graph_execution` holds each execution's detailed payload (including its existing bounded trace). Snapshots reference these with `recipeCatalogSequence` or `observationSequence`. Unchanged context extends its validity without another copy; changed context gets a new sequence. Root task/reflex/mission fields replace duplicate copies inside `agent`.
 - Changed task/reflex/event-pipeline decision state at client decision boundaries. Reflex evidence includes threats, route assessments, escape targets, rejected targets, completed escape legs, close contacts, security counters and actuator failures.
 - Incremental semantic events and debug timeline entries, including external tool arguments, returned text and failures linked by call ID. Embedded LLM request/response records are retained separately. The external Codex conversation is outside this client recorder.
 - Sparse 640×360 JPEG frames read directly from the active client's world framebuffer, before hand/HUD rendering. No RGB sidecar or replay renderer runs alongside the game.
@@ -28,7 +29,7 @@ airicraft agent debug recording query --from-server-tick 2400 --to-server-tick 2
   --type decision_state,debug_timeline,semantic_event --limit 100
 ```
 
-`query` returns bounded pages, frame metadata without image bytes, `nextCursor`, `hasMore`, and loss counters. Continue with `--since <nextCursor>` and the same tick range/types. For broader context omit `--type`; `runtime_snapshot` contains the periodic complete state. To retrieve one selected image:
+`query` returns bounded pages, frame metadata without image bytes, `nextCursor`, `hasMore`, and loss counters. Continue with `--since <nextCursor>` and the same tick range/types. `runtime_snapshot` gives compact current state; omit `--type` or query `recipe_catalog,dialogue_history,action_graph_execution` to retrieve referenced detail. Match the exact sequence, since a later context version is not evidence for an earlier decision. Exports include context whose validity overlaps the requested interval, even when first recorded before that interval. Live and file playback seek also load the selected snapshot's retained references. To retrieve one selected image:
 
 ```sh
 airicraft agent debug recording query --type visual_frame --from-server-tick 2400 --to-server-tick 2800
