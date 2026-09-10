@@ -3,6 +3,7 @@ package ai.moeru.airicraft.agent.tasks;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
 import ai.moeru.airicraft.agent.session.SessionSnapshot;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.FluidBlock;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.registry.Registries;
@@ -158,7 +159,7 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private static boolean satisfied(BlockState state) {
-		return state.isAir() || state.isReplaceable() || !state.getFluidState().isEmpty();
+		return state.isAir() || state.getBlock() instanceof FluidBlock;
 	}
 
 	private static boolean withinInteractionRange(ClientPlayerEntity player, Vec3d pos) {
