@@ -5,8 +5,20 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ServerTickDebugControllerTest {
+	@Test
+	void repeatingTheSamePausePreservesAuthorityAndDoesNotAdvanceEitherBoundary() {
+		ServerTickDebugController controller = pausedController();
+		var before = controller.status();
+		controller.pause("debug-1");
+		assertEquals(before, controller.status());
+		assertFalse(controller.beginServerTick());
+		assertThrows(ServerTickDebugController.DebugStateException.class, () -> controller.pause("different-session"));
+		assertEquals(before, controller.status());
+	}
+
 	@Test
 	void pausePermitsExactlyOneFinalServerTickThenRejectsFurtherTicks() {
 		ServerTickDebugController controller = new ServerTickDebugController();

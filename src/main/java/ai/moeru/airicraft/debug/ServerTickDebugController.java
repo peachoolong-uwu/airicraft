@@ -15,6 +15,7 @@ public final class ServerTickDebugController {
 	private long serverTickId;
 
 	public synchronized void pause(String requestedDebugSessionId) {
+		if (phase == Phase.PAUSED && Objects.equals(debugSessionId, requestedDebugSessionId)) return;
 		requirePhase(Phase.RUNNING, "debug_busy", "The server tick debugger is busy");
 		debugSessionId = requireSessionId(requestedDebugSessionId);
 		pauseEpoch = 0L;
