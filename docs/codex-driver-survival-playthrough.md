@@ -17,7 +17,7 @@ Objective: progress from a fresh survival world to the Ender Dragon, using only 
 
 ### 2026-09-11: autonomous capability loop follow-up
 
-Current evidence and decisions live in [the autonomous playtest log](autonomous-playtest-log.md). Peaceful play has demonstrated hunting/cooking, repeated wood and seed supply, protected shelter construction and return, and automatic planting. Mature harvest/replant and higher-difficulty survival are still being tested; do not infer them from passing executor fixtures.
+Current evidence and decisions live in [the autonomous playtest log](autonomous-playtest-log.md). Live checks now cover hunting/cooking, repeated resource supply, protected shelter construction and return, mature crop harvest/collection/replant, bread consumption, a bed/spawn point, and full iron armor. The player survived 49,285 Easy simulation ticks across the fix loop and returned home at full health/hunger. Some recorder exports have gaps; harder difficulties and a clean long run without interventions remain unverified.
 
 Minor or bypassable findings: short dropped-item approaches sometimes emit `CANCELED` before acquisition reselects and collects successfully. Entrance-side crops can be displaced by ordinary foot traffic, so keep crop rows away from the door and avoid jumping on farmland. The current `mine_blocks` description was stale about requiring exposed sources; it now advertises the live-tested buried-source excavation capability.
 
