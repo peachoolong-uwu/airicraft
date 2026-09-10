@@ -1,5 +1,6 @@
 package ai.moeru.airicraft.agent.llm;
 
+import ai.moeru.airicraft.agent.spatial.SurfaceTerrain;
 import com.google.gson.JsonObject;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -96,7 +97,8 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 			if (component.sources().size() < request.minConnectedWaterSources()) {
 				return;
 			}
-			FeatureCandidate candidate = waterCandidate(component, access, origin, candidates.size() + 1, request.minConnectedWaterSources());
+			FeatureCandidate candidate = waterCandidate(component, access, origin, candidates.size() + 1, request.minConnectedWaterSources(), request.surfaceOnly());
+			if (candidate == null) return;
 			if (request.direction().isPresent() && request.direction().get() != directionFrom(origin, candidate.targetPos())) {
 				return;
 			}
@@ -144,14 +146,18 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		WorldFeatureAccess access,
 		BlockPos origin,
 		int index,
-		int minConnectedWaterSources
+		int minConnectedWaterSources,
+		boolean surfaceOnly
 	) {
-		BlockPos center = center(component.sources());
-		TargetSelection target = targetWithStand(access, component.sources(), origin);
+		List<BlockPos> eligible = component.sources().stream().filter(pos -> !surfaceOnly || access.isSurface(pos)).toList();
+		if (eligible.isEmpty()) return null;
+		BlockPos center = center(eligible);
+		TargetSelection target = targetWithStand(access, eligible, origin, surfaceOnly);
 		LinkedHashMap<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("connectedWaterSources", component.sources().size());
 		evidence.put("requiredConnectedWaterSources", minConnectedWaterSources);
 		evidence.put("capped", component.capped());
+		if (surfaceOnly) evidence.put("surfaceWaterSources", eligible.size());
 		double confidence = Math.min(1.0D, component.sources().size() / (double) (minConnectedWaterSources * 2));
 		return new FeatureCandidate(
 			"water_body-" + index,
@@ -170,7 +176,8 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		HashMap<Column, BlockPos> stemsByColumn = new HashMap<>();
 		access.forEachCandidatePosition(origin, request.maxDistanceBlocks(), request.direction(), FeatureKind.FOREST, pos -> {
 			BlockPos immutable = pos.toImmutable();
-			if (!request.accepts(origin, immutable) || !access.sample(immutable).log()) {
+			if (!request.accepts(origin, immutable) || !access.sample(immutable).log()
+				|| (request.surfaceOnly() && !access.isSurface(immutable))) {
 				return;
 			}
 			if (!hasNearbyLeaves(access, immutable)) {
@@ -210,7 +217,7 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 			if (cluster.size() < request.minTreeCount()) {
 				continue;
 			}
-			FeatureCandidate candidate = forestCandidate(cluster, access, origin, candidates.size() + 1, request.minTreeCount());
+			FeatureCandidate candidate = forestCandidate(cluster, access, origin, candidates.size() + 1, request.minTreeCount(), request.surfaceOnly());
 			if (request.direction().isPresent() && request.direction().get() != candidate.direction()) {
 				continue;
 			}
@@ -224,11 +231,12 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		WorldFeatureAccess access,
 		BlockPos origin,
 		int index,
-		int minTreeCount
+		int minTreeCount,
+		boolean surfaceOnly
 	) {
 		List<BlockPos> stemPositions = cluster.stream().map(TreeStem::pos).toList();
 		BlockPos center = center(stemPositions);
-		TargetSelection target = targetWithStand(access, stemPositions, origin);
+		TargetSelection target = targetWithStand(access, stemPositions, origin, surfaceOnly);
 		LinkedHashMap<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("treeStems", cluster.size());
 		evidence.put("requiredTreeStems", minTreeCount);
@@ -261,13 +269,13 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		return false;
 	}
 
-	private static TargetSelection targetWithStand(WorldFeatureAccess access, List<BlockPos> positions, BlockPos origin) {
+	private static TargetSelection targetWithStand(WorldFeatureAccess access, List<BlockPos> positions, BlockPos origin, boolean surfaceOnly) {
 		List<BlockPos> sorted = positions.stream()
 			.map(BlockPos::toImmutable)
 			.sorted(Comparator.comparingInt(pos -> distance(origin, pos)))
 			.toList();
 		for (BlockPos pos : sorted) {
-			Optional<BlockPos> standPos = nearestStandableAdjacent(access, pos, origin);
+			Optional<BlockPos> standPos = nearestStandableAdjacent(access, pos, origin, surfaceOnly);
 			if (standPos.isPresent()) {
 				return new TargetSelection(pos, standPos);
 			}
@@ -275,7 +283,7 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		return new TargetSelection(sorted.getFirst(), Optional.empty());
 	}
 
-	private static Optional<BlockPos> nearestStandableAdjacent(WorldFeatureAccess access, BlockPos targetPos, BlockPos origin) {
+	private static Optional<BlockPos> nearestStandableAdjacent(WorldFeatureAccess access, BlockPos targetPos, BlockPos origin, boolean surfaceOnly) {
 		ArrayList<BlockPos> candidates = new ArrayList<>();
 		for (Direction direction : Direction.Type.HORIZONTAL) {
 			for (int dy = -1; dy <= 2; dy++) {
@@ -284,6 +292,7 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		}
 		return candidates.stream()
 			.filter(access::isStandable)
+			.filter(pos -> !surfaceOnly || access.isSurface(pos))
 			.min(Comparator.comparingInt(pos -> distance(origin, pos)));
 	}
 
@@ -301,6 +310,7 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 
 	private static String resultText(SearchRequest request, List<FeatureCandidate> candidates) {
 		return "Tool result for find_world_features: featureKind=" + request.featureKind().wireValue()
+			+ " surfaceOnly=" + request.surfaceOnly()
 			+ " direction=" + request.direction().map(SearchDirection::wireValue).orElse("any")
 			+ " maxDistanceBlocks=" + request.maxDistanceBlocks()
 			+ " returned=" + candidates.size()
@@ -389,7 +399,8 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		int maxDistanceBlocks,
 		int limit,
 		int minConnectedWaterSources,
-		int minTreeCount
+		int minTreeCount,
+		boolean surfaceOnly
 	) {
 		static SearchRequest from(JsonObject arguments) {
 			return new SearchRequest(
@@ -398,7 +409,8 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 				boundedInt(arguments, "maxDistanceBlocks", DEFAULT_MAX_DISTANCE_BLOCKS, 1, MAX_DISTANCE_BLOCKS),
 				boundedInt(arguments, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
 				boundedInt(arguments, "minConnectedWaterSources", DEFAULT_MIN_CONNECTED_WATER_SOURCES, 1, MAX_CONNECTED_WATER_SCAN),
-				boundedInt(arguments, "minTreeCount", DEFAULT_MIN_TREE_COUNT, 1, 128)
+				boundedInt(arguments, "minTreeCount", DEFAULT_MIN_TREE_COUNT, 1, 128),
+				arguments.has("surfaceOnly") && arguments.get("surfaceOnly").getAsBoolean()
 			);
 		}
 
@@ -478,6 +490,8 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 		SampledBlock sample(BlockPos pos);
 
 		boolean isStandable(BlockPos pos);
+
+		boolean isSurface(BlockPos pos);
 	}
 
 	record SampledBlock(boolean plainWaterSource, boolean log, boolean leaves) {
@@ -600,6 +614,11 @@ public final class WorldFeatureSearchService implements WorldFeatureSearchTool {
 				state.isIn(BlockTags.LOGS),
 				state.isIn(BlockTags.LEAVES)
 			);
+		}
+
+		@Override
+		public boolean isSurface(BlockPos pos) {
+			return world.isChunkLoaded(pos) && pos.getY() >= SurfaceTerrain.groundY(world, pos);
 		}
 
 		@Override

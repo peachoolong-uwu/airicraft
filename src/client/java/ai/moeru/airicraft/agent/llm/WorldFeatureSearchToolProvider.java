@@ -53,6 +53,7 @@ public final class WorldFeatureSearchToolProvider implements PlannerToolProvider
 			PlannerToolCatalog.propertiesForProvider(
 				PlannerToolCatalog.propForProvider("narration", PlannerToolCatalog.optionalStringForProvider("Optional visible narration before using the tool.")),
 				PlannerToolCatalog.propForProvider("featureKind", PlannerToolCatalog.enumStringForProvider("Feature kind to find.", FEATURES)),
+				PlannerToolCatalog.propForProvider("surfaceOnly", Map.of("type", "boolean", "description", "Restrict target and standing positions to the surface, ignoring logs/leaves as roofs. Useful for surface water, farms and camps. Default false.")),
 				PlannerToolCatalog.propForProvider("direction", PlannerToolCatalog.enumStringForProvider("Optional compass direction octant to search.", DIRECTIONS)),
 				PlannerToolCatalog.propForProvider("maxDistanceBlocks", Map.of("type", "integer", "description", "Optional search distance in blocks. Default 192, maximum 256.")),
 				PlannerToolCatalog.propForProvider("limit", Map.of("type", "integer", "description", "Optional result limit. Default 3, maximum 8.")),
@@ -68,6 +69,7 @@ public final class WorldFeatureSearchToolProvider implements PlannerToolProvider
 		return """
 			Use find_world_features when you need coordinate-grounded exploration targets beyond inspect_world radius, such as a water_body or forest. It returns exact centerPos, targetPos, standPos, distanceBlocks, direction, evidence, and confidence from already-loaded chunks only.
 			For bucket filling, call find_world_features with featureKind=water_body and optional direction, navigate_to standPos, then use_block with itemId=minecraft:bucket on targetPos.
+			Use surfaceOnly=true when seeking surface water or forest access for a farm or camp; water bodies may otherwise include connected underground sources.
 			For forests, call find_world_features with featureKind=forest and optional direction, then navigate_to standPos or centerPos before gathering logs.
 			If find_world_features returns no candidates, move or look toward the likely area and call it again; do not invent coordinates from vision alone.
 			""";
@@ -100,6 +102,10 @@ public final class WorldFeatureSearchToolProvider implements PlannerToolProvider
 		validateInt(arguments, "limit");
 		validateInt(arguments, "minConnectedWaterSources");
 		validateInt(arguments, "minTreeCount");
+		if (arguments.has("surfaceOnly") && (!arguments.get("surfaceOnly").isJsonPrimitive()
+			|| !arguments.getAsJsonPrimitive("surfaceOnly").isBoolean())) {
+			throw new JsonParseException("surfaceOnly must be a boolean");
+		}
 	}
 
 	@Override

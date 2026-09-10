@@ -14,7 +14,7 @@ import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.Heightmap;
+import ai.moeru.airicraft.agent.spatial.SurfaceTerrain;
 import net.minecraft.world.RaycastContext;
 
 import java.util.ArrayList;
@@ -45,17 +45,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 	}
 
 	private int surfaceGroundY(BlockPos column) {
-		var world = client().world;
-		int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, column.getX(), column.getZ()) - 1;
-		while (y > world.getBottomY()) {
-			BlockPos pos = new BlockPos(column.getX(), y, column.getZ());
-			BlockState state = world.getBlockState(pos);
-			if (!state.getFluidState().isEmpty()) break;
-			if (!state.isIn(BlockTags.LOGS) && !state.isIn(BlockTags.LEAVES)
-				&& !state.getCollisionShape(world, pos).isEmpty()) break;
-			y--;
-		}
-		return y;
+		return SurfaceTerrain.groundY(client().world, column);
 	}
 
 	@Override public List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected) {

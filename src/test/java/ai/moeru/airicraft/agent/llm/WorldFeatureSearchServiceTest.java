@@ -16,6 +16,35 @@ class WorldFeatureSearchServiceTest {
 	private static final BlockPos ORIGIN = new BlockPos(0, 64, 0);
 
 	@Test
+	void surfaceSearchSkipsUndergroundPoolsBeforeLimitingResults() {
+		FakeWorldFeatureAccess access = new FakeWorldFeatureAccess();
+		access.surfaceY = 63;
+		addWaterPool(access, 2, 40, 0, 4, 2);
+		addWaterPool(access, 30, 63, 0, 4, 2);
+		access.standable(new BlockPos(1, 41, 0));
+		access.standable(new BlockPos(29, 64, 0));
+		JsonObject args = args("water_body");
+		args.addProperty("surfaceOnly", true);
+		args.addProperty("limit", 1);
+		var result = WorldFeatureSearchService.search(access, new BlockPos(0,40,0), args);
+		assertTrue(result.text().contains("targetPos=30,63,0"));
+		assertTrue(result.text().contains("standPos=29,64,0"));
+	}
+
+	@Test
+	void surfacePoolDoesNotOfferAnUndergroundStandingPosition() {
+		FakeWorldFeatureAccess access = new FakeWorldFeatureAccess();
+		access.surfaceY = 63;
+		addWaterPool(access, 10, 63, 0, 4, 2);
+		access.standable(new BlockPos(9, 62, 0));
+		access.standable(new BlockPos(9, 64, 0));
+		JsonObject args = args("water_body");
+		args.addProperty("surfaceOnly", true);
+		var result = WorldFeatureSearchService.search(access, new BlockPos(0,40,0), args);
+		assertTrue(result.text().contains("standPos=9,64,0"));
+	}
+
+	@Test
 	void waterBodyRequiresEightConnectedSourcesByDefault() {
 		FakeWorldFeatureAccess access = new FakeWorldFeatureAccess();
 		addWaterPool(access, 10, 63, 0, 4, 2);
@@ -126,6 +155,8 @@ class WorldFeatureSearchServiceTest {
 	}
 
 	private static final class FakeWorldFeatureAccess implements WorldFeatureSearchService.WorldFeatureAccess {
+		private int surfaceY = Integer.MIN_VALUE;
+		public boolean isSurface(BlockPos pos) { return pos.getY() >= surfaceY; }
 		private final HashMap<BlockPos, WorldFeatureSearchService.SampledBlock> samples = new HashMap<>();
 		private final HashSet<BlockPos> standable = new HashSet<>();
 
