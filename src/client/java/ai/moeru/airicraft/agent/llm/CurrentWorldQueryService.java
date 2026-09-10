@@ -85,9 +85,7 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 				continue;
 			}
 			BlockState state = world.getBlockState(pos);
-			if (includeAreaRecord(world, pos, state)) {
-				records.add(BlockRecord.of(pos, state, distance(player.getBlockPos(), pos)));
-			}
+			records.add(BlockRecord.of(pos, state, distance(player.getBlockPos(), pos)));
 		}
 		int maxResults = boundedInt(arguments, "maxResults", DEFAULT_MAX_RESULTS, 1, MAX_RESULTS);
 		return areaResult(bounds.scope(), bounds.compact(), scanned, records, maxResults);
@@ -106,14 +104,6 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			+ " matched=" + safeRecords.size()
 			+ " returned=" + limited.size()
 			+ " blocks=" + formatRecords(limited, maxResults), limited.stream().map(record -> record.pos().toImmutable()).toList());
-	}
-
-	private static boolean includeAreaRecord(World world, BlockPos pos, BlockState state) {
-		if (!state.isAir()) {
-			return true;
-		}
-		BlockState below = world.isChunkLoaded(pos.down()) ? world.getBlockState(pos.down()) : null;
-		return below != null && !below.isAir() && !below.isReplaceable();
 	}
 
 	private static WorldQueryResult findBlocks(World world, ClientPlayerEntity player, QueryBounds bounds, JsonObject arguments) {

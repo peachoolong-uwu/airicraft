@@ -59,3 +59,19 @@ The bucket inventory goal succeeded (`action-graph-150bd65e-9d14-4faa-8707-2764d
 Attempting to get wheat seeds reproduced false success: `break_blocks` on observed short grass `(215,107,459)` returned `brokenTargets=0 skippedTargets=1`; the following world read still found short grass. Paused and exported `grass-skipped.jsonl` before rebuilding. The completion predicate classified every replaceable block, and every waterlogged block, as already removed.
 
 Narrow fix: only air and standalone fluid blocks count as cleared. After HotSwap and approaching the same target, the repeated request returned `brokenTargets=1 skippedTargets=0`, and the next nearby scan no longer found grass there. No seeds dropped from this single random trial. Focused block-break tests passed; live proof is in `grass-break-fixed-result.txt`. Continue testing seed acquisition without assuming one broken grass guarantees a drop.
+
+### D005 — Reuse the generic inventory planner for seeds and tools
+
+The high-level goal for four wheat seeds resolved a short-grass mining route with probabilistic yield (`estimatedBreakCount=32`) and completed with four seeds. No seed-specific acquisition tool was necessary. The route also picked up the earlier pork drop in transit: inventory now holds five raw porkchops. Surface shore navigation to `(260,63,478)` completed, with the player settling in adjacent shallow water `(260,62,479)`. A bucket interaction filled the bucket, and a high-level stone-hoe goal completed.
+
+Planted four wheat crops using two batch `use_block` calls: soil `(259,62,479..481)` plus `(260,62,478)`, crops one block above. Structured reads confirmed wheat age 0 and hydration beginning (moisture 7 on the first tile). Evidence: `seed-goal-2-status.txt`, `fill-bucket-result.txt`, `hoe-goal-status.txt`, `till-farm-result.txt`, `plant-farm-result.txt`, `shelter-ground.txt`.
+
+Choose a small excavated shelter in the hillside immediately west of the farm. Initial room bounds `(255..257,63..64,479..481)`, entrance `(258,63,480)`, floor Y=62 and roof Y=65. Preserve the farm and add roof where the hillside is open. Existing exact-break batches suffice for the first room; no speculative building DSL. Seven entry/first-row blocks were successfully excavated through normal tools.
+
+Recorder diagnosis: a captured runtime snapshot repeated about 1 MB of mission evidence twice, mostly the entire known recipe catalog (`knownCrafts` ~958 KB, `knownSmelts` ~40 KB). Static recipe knowledge must be retained once with explicit references, while current decision/world evidence remains independently queryable. This is measured from `grass-skipped.jsonl`, not just an assumed byte-budget problem. Implementation pending.
+
+### D006 — Area inspection must include air cells
+
+Roof placement was blocked as `target_not_inspected` for `(258,65,480)`. The automatic inspection and an explicit one-cell `inspect_area` both returned zero records. Paused/exported `roof-uninspected.jsonl`. Source filtered out air unless a nonreplaceable block sat directly below, making ceilings and the upper half of doors impossible to inspect through this path.
+
+Removed that hidden filter: `inspect_area` reports the requested cells, including air, subject to its existing result cap. `find_blocks` remains the selective search. Only returned cells grant mutation freshness; limits remain unchanged. Focused world-query tests passed. After HotSwap, the same two-cell roof query returned both air cells and both cobblestone roof placements completed (`roof-query-fixed.txt`, `roof-fixed-result.txt`). No client restart.
