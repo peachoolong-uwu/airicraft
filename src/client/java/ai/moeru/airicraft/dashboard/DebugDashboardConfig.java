@@ -29,7 +29,7 @@ public record DebugDashboardConfig(
 			DEFAULT_BASE_PORT,
 			DEFAULT_PORT_SCAN_LIMIT,
 			DEFAULT_HISTORY_BYTE_BUDGET,
-			false,
+			true,
 			20
 		);
 	}

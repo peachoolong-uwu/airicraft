@@ -215,6 +215,7 @@ public final class ModBridgeServer {
 				httpServer.createContext("/v1/agent/debug/trace/start", this::handleClientTickTraceStart);
 				httpServer.createContext("/v1/agent/debug/trace/stop", this::handleClientTickTraceStop);
 				httpServer.createContext("/v1/agent/debug/trace/records", this::handleClientTickTraceRecords);
+				httpServer.createContext("/v1/agent/debug/recording", exchange -> handleJson(exchange, () -> liveRecordingResponse(exchange)));
 				httpServer.createContext("/v1/agent/tools", this::handleAgentTools);
 			registerExtensionRoutes(httpServer);
 			httpServer.start();
@@ -2423,6 +2424,30 @@ public final class ModBridgeServer {
 
 	private ClientTickDebugRuntime clientTickDebugRuntime() {
 		return Objects.requireNonNull(clientTickDebugRuntimeSupplier.get(), "clientTickDebugRuntime");
+	}
+
+	private Object liveRecordingResponse(HttpExchange exchange) {
+		var store = AiricraftClient.runtimeController().liveRecording();
+		try {
+			if (getQuery(exchange, "frame") != null) {
+				return store.framePayload(getLongQuery(exchange, "frame", 0L));
+			}
+			if (!"query".equals(getQuery(exchange, "mode"))) {
+				return store.recordingStatus();
+			}
+			String types = getQuery(exchange, "types");
+			return store.recordingPage(
+				getLongQuery(exchange, "from", Math.max(0L, store.serverTickId() - ai.moeru.airicraft.dashboard.DashboardObservationStore.HISTORY_WINDOW_TICKS)),
+				getLongQuery(exchange, "to", store.serverTickId()),
+				getLongQuery(exchange, "since", 0L), getLongQuery(exchange, "through", Long.MAX_VALUE),
+				Math.toIntExact(getLongQuery(exchange, "limit", 100L)),
+				types == null || types.isBlank() ? java.util.Set.of() : new java.util.HashSet<>(List.of(types.split(","))),
+				"true".equals(getQuery(exchange, "images"))
+			);
+		}
+		catch (IllegalArgumentException | ArithmeticException exception) {
+			throw new BridgeUnavailableException("invalid_request", exception.getMessage());
+		}
 	}
 
 	@FunctionalInterface

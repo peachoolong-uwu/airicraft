@@ -68,7 +68,6 @@ public final class ClientRuntimeController {
 		this.dashboardObservationStore = new DashboardObservationStore(config.debugDashboard().historyByteBudget());
 		this.dashboardObservationCollector = new DashboardObservationCollector(
 			dashboardObservationStore,
-			screenshotService,
 			() -> config.debugDashboard()
 		);
 		this.debugDashboardServer = new DebugDashboardServer(dashboardObservationStore);
@@ -122,6 +121,10 @@ public final class ClientRuntimeController {
 		plannerDebugOverlay.setMode(mode);
 	}
 
+	public DashboardObservationStore liveRecording() {
+		return dashboardObservationStore;
+	}
+
 	public FirstPersonScreenshotService screenshotService() {
 		return screenshotService;
 	}
@@ -144,6 +147,7 @@ public final class ClientRuntimeController {
 	}
 
 	public void onWorldLeave() {
+		dashboardObservationCollector.worldLeft();
 		clientTickDebugRuntime.reset("world_left", "The world closed during a client tick debug capture");
 		screenshotService.failActiveCapture("capture_failed", "Screenshot capture was interrupted");
 		currentAgentRuntime().onWorldLeave();
@@ -283,6 +287,16 @@ public final class ClientRuntimeController {
 		if (client != null) {
 			clientTickDebugRuntime.beforeFirstPersonFrame(client, currentAgentRuntime());
 			screenshotService.onWorldRendered(client);
+			try {
+				dashboardObservationCollector.onRenderedFrame(client, currentAgentRuntime());
+			}
+			catch (RuntimeException exception) {
+				long now = System.currentTimeMillis();
+				if (now - lastDashboardCaptureFailureLogAtMs >= 10_000L) {
+					lastDashboardCaptureFailureLogAtMs = now;
+					Airicraft.LOGGER.warn("Live recording frame observation failed", exception);
+				}
+			}
 		}
 	}
 
@@ -335,6 +349,7 @@ public final class ClientRuntimeController {
 		highlightManager.clear();
 		bridgeServer.stop();
 		debugDashboardServer.stop();
+		dashboardObservationCollector.close();
 	}
 
 	private EmbodiedAgentRuntime currentAgentRuntime() {

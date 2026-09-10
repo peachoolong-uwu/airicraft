@@ -338,6 +338,30 @@ class AiricraftCliMainTest {
 	}
 
 	@Test
+	void recordingQueryUsesExplicitServerRangeAndNoImagePayloads() {
+		TestTransport transport = new TestTransport();
+		transport.when("GET", "/v1/agent/debug/recording").payload = linkedMap("observations", List.of(), "nextCursor", 9);
+		CliResult result = execute(transport, "agent", "debug", "recording", "query", "--from-server-tick", "20",
+			"--to-server-tick", "40", "--since", "5", "--type", "decision_state", "--limit", "10");
+		assertEquals(0, result.exitCode());
+		assertEquals("/v1/agent/debug/recording?mode=query&since=5&limit=10&from=20&to=40&types=decision_state",
+			transport.lastRequest("GET", "/v1/agent/debug/recording").path());
+		assertTrue(result.output().contains("nextCursor: 9"));
+	}
+
+	@Test
+	void recordingFrameWritesOnlyTheRequestedImage(@TempDir Path tempDir) throws Exception {
+		TestTransport transport = new TestTransport();
+		transport.when("GET", "/v1/agent/debug/recording").payload = linkedMap("sequence", 7L,
+			"payload", linkedMap("format", "jpeg", "imageBase64", "AQID"));
+		Path output = tempDir.resolve("frame.jpg");
+		CliResult result = execute(transport, "agent", "debug", "recording", "frame", "--sequence", "7", "--output", output.toString());
+		assertEquals(0, result.exitCode());
+		assertArrayEquals(new byte[] {1, 2, 3}, Files.readAllBytes(output));
+		assertFalse(result.output().contains("AQID"));
+	}
+
+	@Test
 	void clientTickPauseSavesFrameAndRendersSnapshotIdentity(@TempDir Path tempDir) throws Exception {
 		TestTransport transport = new TestTransport();
 		transport.when("POST", "/v1/agent/debug/ticks/pause").payload = linkedMap(

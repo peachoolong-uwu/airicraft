@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
 
 final class DashboardLogTailer {
 	private static final int MAX_LINE_CHARS = 64 * 1024;
@@ -45,7 +44,7 @@ final class DashboardLogTailer {
 				if (decoded.length() > MAX_LINE_CHARS) {
 					decoded = decoded.substring(0, MAX_LINE_CHARS) + " …[truncated]";
 				}
-				store.append("log", store.latestTick(), System.currentTimeMillis(), Map.of("message", decoded));
+				store.appendLog(decoded, System.currentTimeMillis());
 			}
 			offset = file.getFilePointer();
 		}

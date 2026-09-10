@@ -118,6 +118,21 @@ public final class SurvivalReflexRuntime {
 		return snapshot;
 	}
 
+	public Map<String, Object> decisionEvidence() {
+		Map<String, Object> evidence = new LinkedHashMap<>();
+		evidence.put("snapshot", snapshot);
+		evidence.put("fleeTarget", fleeTarget);
+		evidence.put("failedFleeTargets", List.copyOf(failedFleeTargets));
+		evidence.put("completedFleeLegs", completedFleeLegs);
+		evidence.put("fleeCloseContacts", fleeCloseContacts);
+		evidence.put("secureEscapeTicks", secureEscapeTicks);
+		evidence.put("fleeEscalatedToDefend", fleeEscalatedToDefend);
+		evidence.put("fleeNavigationOwned", fleeNavigationOwned);
+		evidence.put("mobRoutesTick", mobRoutesTick);
+		evidence.put("mobRoutes", Map.copyOf(mobRoutes));
+		return evidence;
+	}
+
 	public void observeDamage(DamageObservation observation) {
 		if (observation == null) {
 			return;

@@ -13,6 +13,12 @@ const state = {
   search: '',
   streamAbort: null,
   replay: false,
+  replayFile: null,
+  replayIndex: [],
+  selectedServerTick: 0,
+  seekGeneration: 0,
+  frameCache: null,
+  playbackTimer: null,
 };
 
 const CLIENT_HISTORY_CHARACTER_BUDGET = 4 * 1024 * 1024;
@@ -91,11 +97,21 @@ function resetObservations() {
   state.loadedCharacters = 0;
   state.selectedObservation = null;
   state.selectedSequence = 0;
+  el('inspector-content').innerHTML = '<p class="muted">Select an observation from this recording to inspect its payload.</p>';
 }
 
 function updateMetadata(data) {
   const metadata = { ...(data || {}) };
   delete metadata.observations;
+  if (!state.replay && state.metadata?.sessionId && metadata.sessionId && state.metadata.sessionId !== metadata.sessionId) {
+    stopPlayback();
+    ++state.seekGeneration;
+    resetObservations();
+    state.live = true;
+    state.partialHistory = false;
+    if (state.frameCache?.url.startsWith('blob:')) URL.revokeObjectURL(state.frameCache.url);
+    state.frameCache = null;
+  }
   state.metadata = { ...(state.metadata || {}), ...metadata };
   updateChrome();
 }
@@ -103,20 +119,22 @@ function updateMetadata(data) {
 function updateChrome() {
   const latest = state.observations.at(-1);
   const meta = state.metadata || {};
-  el('tick').textContent = fmt.format(latest?.tick ?? meta.latestTick ?? 0);
+  el('tick').textContent = fmt.format(meta.serverTickId ?? latest?.serverTickId ?? latest?.tick ?? 0);
   el('session').textContent = String(meta.sessionId || latest?.sessionId || '—').slice(0, 8);
   el('memory').textContent = `${bytes(meta.retainedBytes)} retained · ~${bytes(state.loadedCharacters)} loaded`;
   el('llm-count').textContent = state.observations.filter(o => o.type === 'llm_call').length;
   el('event-count').textContent = state.observations.filter(o => o.type === 'semantic_event' || o.type === 'debug_timeline').length;
   el('log-count').textContent = state.observations.filter(o => o.type === 'log').length;
   const cursor = el('time-cursor');
-  cursor.min = state.observations[0]?.sequence || 0;
-  cursor.max = latest?.sequence || 0;
-  cursor.value = state.selectedSequence || cursor.max;
+  cursor.disabled = meta.serverClockAvailable === false && !state.replay;
+  el('play-history').disabled = cursor.disabled;
+  cursor.min = meta.fromServerTickId ?? Math.max(0, (meta.serverTickId || 0) - (meta.historyWindowTicks || 12000));
+  cursor.max = meta.toServerTickId ?? meta.serverTickId ?? latest?.serverTickId ?? 0;
+  cursor.value = state.live ? cursor.max : state.selectedServerTick;
   const selected = observationAtCursor();
   el('cursor-label').textContent = state.live
-    ? 'Following the latest observation'
-    : selected ? `${timeFmt.format(selected.capturedAtMs)} · tick ${fmt.format(selected.tick)} · #${selected.sequence}` : 'Historical cursor';
+    ? (meta.paused ? 'Server paused · recording window frozen' : 'Following the latest observation')
+    : selected ? `Server tick ${fmt.format(state.selectedServerTick)} · ${timeFmt.format(selected.capturedAtMs)}` : 'Historical cursor';
   el('return-live').classList.toggle('active', state.live);
 }
 
@@ -184,7 +202,7 @@ function renderOverview(snapshot) {
         <div class="timeline">${lastEvents.length ? lastEvents.map(timelineRow).join('') : '<p class="muted card-body">No transitions in the retained window.</p>'}</div>
       </section>
       <div class="grid">
-        ${frame ? `<section class="card"><div class="card-head"><h2>Visual context</h2><small>tick ${fmt.format(frame.tick)} · higher-cost capture</small></div><img class="visual-frame selectable" data-sequence="${frame.sequence}" src="data:image/${escapeHtml(frame.payload.format)};base64,${frame.payload.imageBase64}" alt="Minecraft frame at tick ${frame.tick}"></section>` : ''}
+        ${frame ? `<section class="card"><div class="card-head"><h2>Visual context</h2><small>server tick ${fmt.format(frame.serverTickId ?? frame.tick)} · sparse client RGB</small></div><img class="visual-frame selectable" data-sequence="${frame.sequence}" data-recorded-frame="${frame.sequence}" alt="Minecraft frame at tick ${frame.tick}"></section>` : ''}
         <section class="card">
           <div class="card-head"><h2>Embodied state</h2><small>tick ${fmt.format(snapshot.tick)}</small></div>
           <div class="card-body">${kv({
@@ -205,6 +223,7 @@ function renderOverview(snapshot) {
       </div>
     </div>`;
   bindSelectable();
+  if (frame) loadRecordedFrame(frame).catch(error => toast(error.message));
 }
 
 function statCard(label, value, note, accent) {
@@ -340,7 +359,7 @@ async function stream(since) {
         if (!line) continue;
         const batch = JSON.parse(line.slice(6));
         updateMetadata(batch);
-        addObservations(batch.observations);
+        if (state.live) addObservations(batch.observations);
       }
     }
   } catch (error) {
@@ -370,23 +389,112 @@ async function exportSession() {
   } catch (error) { toast(error.message); }
 }
 
-async function openSession(file) {
-  state.streamAbort?.abort();
-  state.replay = true; state.live = true; state.metadata = null; state.partialHistory = false;
-  resetObservations();
-  for (const line of (await file.text()).split(/\r?\n/)) {
-    if (!line) continue;
-    const record = JSON.parse(line);
-    if (record.recordType === 'manifest') {
-      updateMetadata(record);
+async function loadRecordedFrame(frame) {
+  const key = `${frame.sessionId}:${frame.sequence}`;
+  if (state.frameCache?.key !== key) {
+    let url;
+    if (state.replay) {
+      const entry = state.replayIndex.find(item => item.sequence === frame.sequence);
+      if (!entry) return;
+      const record = JSON.parse(await state.replayFile.slice(entry.offset, entry.end).text());
+      if (!record.payload.imageBase64) return;
+      url = `data:image/${record.payload.format};base64,${record.payload.imageBase64}`;
+    } else {
+      url = URL.createObjectURL(await (await api(`/api/frame?sequence=${frame.sequence}`)).blob());
     }
-    else if (record.recordType === 'observation') {
-      const observation = { ...record };
-      delete observation.recordType;
-      addObservations([observation], false);
-    }
+    if (state.frameCache?.url.startsWith('blob:')) URL.revokeObjectURL(state.frameCache.url);
+    state.frameCache = { key, url };
   }
-  updateChrome(); render(); connected(true); toast(`Opened ${file.name}`);
+  const img = document.querySelector(`[data-recorded-frame="${frame.sequence}"]`);
+  if (img) img.src = state.frameCache.url;
+}
+
+async function seekRecording(tick) {
+  const generation = ++state.seekGeneration;
+  state.live = false;
+  state.selectedServerTick = tick;
+  let batch;
+  if (state.replay) {
+    const baseline = new Map();
+    const events = [];
+    for (const entry of state.replayIndex) {
+      if (entry.serverTickId > tick) continue;
+      if (['runtime_snapshot', 'decision_state', 'visual_frame', 'llm_call'].includes(entry.type)) baseline.set(entry.type, entry);
+      else if (entry.serverTickId >= tick - 100) { events.push(entry); if (events.length > 50) events.shift(); }
+    }
+    const entries = [...events, ...baseline.values()].sort((a, b) => a.sequence - b.sequence);
+    const observations = await Promise.all(entries.map(async entry => {
+      const record = JSON.parse(await state.replayFile.slice(entry.offset, entry.end).text());
+      if (record.type === 'visual_frame') delete record.payload.imageBase64;
+      return record;
+    }));
+    batch = { observations };
+  } else {
+    batch = await (await api(`/api/recording?at=${tick}`)).json();
+  }
+  if (generation !== state.seekGeneration) return;
+  resetObservations();
+  updateMetadata(batch);
+  addObservations(batch.observations, false);
+  state.selectedSequence = state.observations.at(-1)?.sequence || 0;
+  updateChrome(); render();
+}
+
+function stopPlayback() {
+  clearTimeout(state.playbackTimer);
+  state.playbackTimer = null;
+  el('play-history').textContent = 'Play history';
+}
+
+async function advancePlayback() {
+  const end = Number(el('time-cursor').max);
+  const next = Math.min(end, state.selectedServerTick + 5);
+  try { await seekRecording(next); }
+  catch (error) { stopPlayback(); return toast(error.message); }
+  if (next >= end) return stopPlayback();
+  if (state.playbackTimer !== null) state.playbackTimer = setTimeout(advancePlayback, 250);
+}
+
+async function openSession(file) {
+  stopPlayback();
+  ++state.seekGeneration;
+  state.streamAbort?.abort();
+  if (state.frameCache?.url.startsWith('blob:')) URL.revokeObjectURL(state.frameCache.url);
+  state.frameCache = null;
+  state.replay = true; state.live = false; state.metadata = null; state.partialHistory = false;
+  state.replayFile = file; state.replayIndex = [];
+  resetObservations();
+  // Index byte ranges instead of retaining parsed payloads or decoded RGB for the entire file.
+  const reader = file.stream().getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = ''; let offset = 0;
+  function indexLine(line, terminated) {
+    const end = offset + encoder.encode(line).length;
+    if (line.trim()) {
+      const record = JSON.parse(line);
+      if (record.recordType === 'manifest') updateMetadata(record);
+      else if (record.recordType === 'observation') state.replayIndex.push({
+        sequence: record.sequence, serverTickId: record.serverTickId ?? record.tick,
+        type: record.type, offset, end,
+      });
+    }
+    offset = end + (terminated ? 1 : 0);
+  }
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+    let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      indexLine(buffer.slice(0, newline), true);
+      buffer = buffer.slice(newline + 1);
+    }
+    if (done) { if (buffer) indexLine(buffer, false); break; }
+  }
+  const lastTick = state.metadata?.toServerTickId ?? state.metadata?.serverTickId ?? state.replayIndex.at(-1)?.serverTickId ?? 0;
+  updateMetadata({ serverTickId: lastTick });
+  await seekRecording(lastTick);
+  connected(true); toast(`Opened ${file.name}`);
 }
 
 function toast(message) {
@@ -400,8 +508,22 @@ document.querySelectorAll('#stream-nav button').forEach(button => button.addEven
   state.view = button.dataset.view; render();
 }));
 el('search').addEventListener('input', event => { state.search = event.target.value.trim().toLowerCase(); render(); });
-el('time-cursor').addEventListener('input', event => { state.live = false; state.selectedSequence = Number(event.target.value); updateChrome(); render(); });
-el('return-live').addEventListener('click', () => { state.live = true; state.selectedSequence = state.observations.at(-1)?.sequence || 0; updateChrome(); render(); });
+el('time-cursor').addEventListener('input', event => { stopPlayback(); seekRecording(Number(event.target.value)).catch(error => toast(error.message)); });
+el('return-live').addEventListener('click', async () => {
+  stopPlayback();
+  if (state.replay) return seekRecording(Number(el('time-cursor').max));
+  ++state.seekGeneration;
+  state.live = true; resetObservations();
+  await loadInitial();
+});
+el('play-history').addEventListener('click', async () => {
+  if (state.playbackTimer !== null) return stopPlayback();
+  if (state.live || state.selectedServerTick >= Number(el('time-cursor').max)) {
+    await seekRecording(Number(el('time-cursor').min));
+  }
+  el('play-history').textContent = 'Pause history';
+  state.playbackTimer = setTimeout(advancePlayback, 0);
+});
 el('export').addEventListener('click', exportSession);
 el('session-file').addEventListener('change', event => event.target.files[0] && openSession(event.target.files[0]).catch(error => toast(error.message)));
 el('close-inspector').addEventListener('click', () => { el('inspector').classList.add('collapsed'); document.querySelector('.workspace').classList.add('inspector-collapsed'); });

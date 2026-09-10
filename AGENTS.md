@@ -144,7 +144,8 @@
 
 ## Behavior Notes
 - Each client automatically owns a read-only LAN debug dashboard. It scans upward from configured port `8765`, uses a viewer token distinct from the control bridge token, and prints the clickable URL in logs, `airicraft status`, and in-game chat.
-- Dashboard observations include full raw LLM envelopes, 4 Hz runtime snapshots, event/debug histories, and logs. The default 64 MiB history is bounded and reports evictions. Optional one-frame-per-second visual capture is off by default.
+- Live playtest diagnosis: pause server ticks, query the rolling decision history, and export the incident before rebuilding. See `docs/live-playtest-recording.md` for CLI queries, selective frames, playback, and loss checks.
+- Dashboard observations include full LLM envelopes, runtime snapshots, decision states, events, and sparse client RGB. The default window is 12,000 completed server ticks, capped at 64 MiB; tick-debug pause freezes it. Pixel-identical frames are skipped before encoding.
 - Dashboard export is replayable JSONL. The dashboard must never expose bridge mutation routes or backpressure the client tick when a viewer is slow.
 - The bridge is tied to the Minecraft client process, not world load state.
 - `airicraft reload` and `/airicraft reload` reload both config files live without restarting the client.

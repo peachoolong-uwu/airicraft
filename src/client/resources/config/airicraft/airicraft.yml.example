@@ -25,8 +25,9 @@ debugDashboard:
   # The server binds on all interfaces and scans upward when this port is taken.
   basePort: 8765
   portScanLimit: 100
-  # Total retained observation history across runtime snapshots, events, LLM calls, and logs.
-  historyMegabytes: 256
-  # Optional, higher-cost visual context. When enabled, captures at most one frame per interval.
-  visualCaptureEnabled: false
+  # Rolling 12,000-server-tick window (10 minutes at 20 TPS), bounded by this memory cap.
+  historyMegabytes: 64
+  # Sparse active-client RGB; identical frames are skipped before encoding.
+  visualCaptureEnabled: true
+  # Completed server ticks between samples. 20 = at most 1 fps, 40 = 0.5 fps.
   visualCaptureIntervalTicks: 20

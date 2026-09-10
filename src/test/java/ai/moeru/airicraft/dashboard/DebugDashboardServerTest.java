@@ -68,6 +68,32 @@ class DebugDashboardServerTest {
 	}
 
 	@Test
+	void seekLoadsPriorStateAndFetchesRgbSeparatelyBehindTheViewerToken() throws Exception {
+		DashboardObservationStore store = new DashboardObservationStore(1024L * 1024L);
+		store.advanceClock(10L, false, true);
+		store.append("runtime_snapshot", 40L, 1L, Map.of("state", "idle"));
+		var frame = store.appendFrame(store.sessionId(), 40L, 10L, 1L, Map.of("format", "jpeg", "imageBase64", "AQID"));
+		store.advanceClock(20L, false, true);
+		store.append("runtime_snapshot", 50L, 2L, Map.of("state", "moving"));
+		DebugDashboardServer server = new DebugDashboardServer(store, temporaryDirectory.resolve("latest.log"));
+		server.start(new DebugDashboardConfig(true, freePort(), 1, 1024L * 1024L));
+		try {
+			String baseUrl = "http://127.0.0.1:" + server.status().port();
+			String token = server.status().primaryUrl().split("#token=")[1];
+			assertEquals(401, send(baseUrl + "/api/recording?at=15", null).statusCode());
+			String seek = send(baseUrl + "/api/recording?at=15", token).body();
+			assertTrue(seek.contains("idle"));
+			assertTrue(!seek.contains("moving") && !seek.contains("AQID"));
+			assertEquals(401, send(baseUrl + "/api/frame?sequence=" + frame.sequence(), null).statusCode());
+			assertEquals(200, send(baseUrl + "/api/frame?sequence=" + frame.sequence(), token).statusCode());
+			assertEquals(404, send(baseUrl + "/api/frame?sequence=999", token).statusCode());
+		}
+		finally {
+			server.stop();
+		}
+	}
+
+	@Test
 	void boundsObservationResponsesByBytesInsteadOfOnlyItemCount() throws Exception {
 		int port = freePort();
 		DashboardObservationStore store = new DashboardObservationStore(16L * 1024L * 1024L);

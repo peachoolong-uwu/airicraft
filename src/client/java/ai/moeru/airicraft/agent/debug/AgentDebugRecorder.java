@@ -44,6 +44,12 @@ public final class AgentDebugRecorder {
 		this.attemptCapacity = Math.max(1, attemptCapacity);
 	}
 
+	public synchronized void recordExternalTool(long tick, String callId, String name, String phase, Object evidence) {
+		appendTimeline(tick, System.currentTimeMillis(), "external_tool", phase,
+			name + " " + phase, Map.of("callId", callId, "toolName", String.valueOf(name)),
+			Map.of("evidence", evidence));
+	}
+
 	public synchronized void recordPlannerSubmission(
 		long generation,
 		int attempt,

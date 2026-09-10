@@ -96,6 +96,12 @@ public final class AiricraftCliMain {
 		agentDebug.addSubcommand(new AgentDebugIdleTriggerCommand(context));
 		agentDebug.addSubcommand(new AgentDebugStateCommand(context));
 		agentDebug.addSubcommand(new AgentDebugTimelineCommand(context));
+		agentDebug.addSubcommand("recording", new UsageCommand(out, "airicraft agent debug recording", "Rolling live-playtest evidence"));
+		CommandLine recording = agentDebug.getSubcommands().get("recording");
+		recording.addSubcommand(new AgentDebugRecordingStatusCommand(context));
+		recording.addSubcommand(new AgentDebugRecordingQueryCommand(context));
+		recording.addSubcommand(new AgentDebugRecordingExportCommand(context));
+		recording.addSubcommand(new AgentDebugRecordingFrameCommand(context));
 		agentDebug.addSubcommand("ticks", new UsageCommand(out, "airicraft agent debug ticks", "Client tick debug commands"));
 		CommandLine agentDebugTicks = agentDebug.getSubcommands().get("ticks");
 		agentDebugTicks.addSubcommand(new AgentDebugTicksStateCommand(context));
@@ -711,6 +717,73 @@ public final class AiricraftCliMain {
 		Map<String, Object> runCommand() {
 			String path = since == null ? "/v1/agent/debug/timeline" : "/v1/agent/debug/timeline?since=" + since;
 			return PayloadViews.agentDebugTimeline(transport().get(path), verbose());
+		}
+	}
+
+	@Command(name = "status", mixinStandardHelpOptions = true, description = "Inspect the rolling recording window, clock and evidence loss.")
+	private static final class AgentDebugRecordingStatusCommand extends BaseCommand {
+		private AgentDebugRecordingStatusCommand(CliContext context) { super(context, "agent debug recording status"); }
+		@Override Map<String, Object> runCommand() { return transport().get("/v1/agent/debug/recording"); }
+	}
+
+	@Command(name = "query", mixinStandardHelpOptions = true, description = "Read a bounded page of structured evidence without image bytes.")
+	private static class AgentDebugRecordingQueryCommand extends BaseCommand {
+		@Option(names = "--from-server-tick", description = "First completed server tick, inclusive. Defaults to the window start.")
+		Long fromTick;
+		@Option(names = "--to-server-tick", description = "Last completed server tick, inclusive. Defaults to the latest tick.")
+		Long toTick;
+		@Option(names = "--since", description = "Observation sequence cursor returned by the previous query.")
+		long since;
+		@Option(names = "--limit", description = "Maximum observations per page (1-1000).")
+		int limit = 100;
+		@Option(names = "--type", split = ",", description = "Observation types, comma separated or repeated.")
+		List<String> types = new ArrayList<>();
+
+		private AgentDebugRecordingQueryCommand(CliContext context) { this(context, "agent debug recording query"); }
+		AgentDebugRecordingQueryCommand(CliContext context, String command) { super(context, command); }
+		String queryPath() {
+			if (since < 0 || limit < 1 || limit > 1000 || (fromTick != null && fromTick < 0) || (toTick != null && toTick < 0)
+				|| (fromTick != null && toTick != null && fromTick > toTick)) {
+				throw new CliUsageException(commandPath(), "invalid_arguments", "Use nonnegative ticks/cursor, from <= to, and limit 1-1000");
+			}
+			return "/v1/agent/debug/recording?mode=query&since=" + since + "&limit=" + limit
+				+ (fromTick == null ? "" : "&from=" + fromTick) + (toTick == null ? "" : "&to=" + toTick)
+				+ (types.isEmpty() ? "" : "&types=" + URLEncoder.encode(String.join(",", types), StandardCharsets.UTF_8));
+		}
+		@Override Map<String, Object> runCommand() { return transport().get(queryPath()); }
+	}
+
+	@Command(name = "export", mixinStandardHelpOptions = true, description = "Save the retained interval as replayable JSONL. Pause server ticks first for a stable export.")
+	private static final class AgentDebugRecordingExportCommand extends AgentDebugRecordingQueryCommand {
+		@Option(names = "--output", required = true, description = "JSONL file to create.")
+		Path output;
+		@Option(names = "--frames", description = "Include sparse RGB images in the export.")
+		boolean frames;
+		private AgentDebugRecordingExportCommand(CliContext context) { super(context, "agent debug recording export"); }
+		@Override Map<String, Object> runCommand() {
+			try {
+				return new LiveRecordingExporter(transport(), OBJECT_MAPPER).export(output, queryPath(), frames);
+			}
+			catch (java.io.IOException exception) { throw new UncheckedIOException(exception); }
+		}
+	}
+
+	@Command(name = "frame", mixinStandardHelpOptions = true, description = "Fetch one retained RGB frame by observation sequence.")
+	private static final class AgentDebugRecordingFrameCommand extends BaseCommand {
+		@Option(names = "--sequence", required = true, description = "visual_frame observation sequence from query.")
+		long sequence;
+		@Option(names = "--output", required = true, description = "Path to write the JPEG frame.")
+		Path output;
+		private AgentDebugRecordingFrameCommand(CliContext context) { super(context, "agent debug recording frame"); }
+		@Override Map<String, Object> runCommand() {
+			Map<String, Object> observation = transport().get("/v1/agent/debug/recording?frame=" + sequence);
+			Map<String, Object> payload = OBJECT_MAPPER.convertValue(observation.get("payload"), MAP_TYPE);
+			String encoded = String.valueOf(payload.remove("imageBase64"));
+			Path path = output.toAbsolutePath().normalize();
+			writeCapture(path, java.util.Base64.getDecoder().decode(encoded));
+			observation.put("payload", payload);
+			observation.put("outputPath", path.toString());
+			return observation;
 		}
 	}
 

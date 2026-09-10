@@ -834,6 +834,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return survivalReflexRuntime.snapshot();
 	}
 
+	public Map<String, Object> survivalReflexDecisionEvidence() {
+		return survivalReflexRuntime.decisionEvidence();
+	}
+
 	public SurvivalReflexSnapshot resumeSafetyHold(String holdId, String source) {
 		SurvivalReflexRuntime.ResumeResult result = survivalReflexRuntime.resume(holdId, tickCount);
 		switch (result) {
@@ -1068,14 +1072,23 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	public CompletableFuture<ExternalPlannerToolResult> executeCodexDriverTool(String name, JsonObject arguments) {
 		requireCodexDriverActive();
+		String callId = UUID.randomUUID().toString();
+		debugRecorder.recordExternalTool(tickCount, callId, name, "requested", arguments == null ? Map.of() : arguments.deepCopy());
 		try {
-			return dialogueRuntime.executeExternalTool(name, arguments);
+			return dialogueRuntime.executeExternalTool(name, arguments).whenComplete((result, error) ->
+				debugRecorder.recordExternalTool(tickCount, callId, name, error == null ? "completed" : "failed",
+					error == null ? result.text() : String.valueOf(error.getMessage())));
 		}
 		catch (com.google.gson.JsonParseException | IllegalArgumentException exception) {
+			debugRecorder.recordExternalTool(tickCount, callId, name, "rejected", String.valueOf(exception.getMessage()));
 			throw new BridgeUnavailableException(
 				"invalid_request",
 				exception.getMessage() == null || exception.getMessage().isBlank() ? "Invalid tool arguments" : exception.getMessage()
 			);
+		}
+		catch (RuntimeException exception) {
+			debugRecorder.recordExternalTool(tickCount, callId, name, "failed", String.valueOf(exception.getMessage()));
+			throw exception;
 		}
 	}
 

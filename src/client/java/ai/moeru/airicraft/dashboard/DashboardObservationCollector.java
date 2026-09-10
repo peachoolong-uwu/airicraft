@@ -1,22 +1,26 @@
 package ai.moeru.airicraft.dashboard;
 
-import ai.moeru.airicraft.BridgeUnavailableException;
-import ai.moeru.airicraft.FirstPersonScreenshotService;
 import ai.moeru.airicraft.agent.EmbodiedAgentRuntime;
 import ai.moeru.airicraft.agent.debug.LlmFlightRecord;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.registry.Registries;
+import net.minecraft.client.world.ClientWorld;
+import ai.moeru.airicraft.debug.ServerTickDebugRuntime;
+import com.google.gson.Gson;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Base64;
 import java.util.function.Supplier;
 
 public final class DashboardObservationCollector {
 	private static final int SNAPSHOT_INTERVAL_TICKS = 5;
 	private final DashboardObservationStore store;
-	private final FirstPersonScreenshotService screenshotService;
+	private final DashboardFrameCapture frameCapture;
+	private static final Gson GSON = new Gson();
+	private ClientWorld observedWorld;
+	private String lastDecisionJson;
+	private long lastPausedTick = Long.MIN_VALUE;
 	private final Supplier<DebugDashboardConfig> configSupplier;
 	private final Map<Long, String> llmVersions = new HashMap<>();
 	private Long eventCursor;
@@ -24,20 +28,17 @@ public final class DashboardObservationCollector {
 	private long lastSnapshotTick = Long.MIN_VALUE;
 	private long lastLlmPollTick = Long.MIN_VALUE;
 	private long highestLlmSequence;
-	private long lastVisualCaptureTick = Long.MIN_VALUE;
-	private volatile boolean visualCapturePending;
 
 	public DashboardObservationCollector(DashboardObservationStore store) {
-		this(store, null, DebugDashboardConfig::defaults);
+		this(store, DebugDashboardConfig::defaults);
 	}
 
 	public DashboardObservationCollector(
 		DashboardObservationStore store,
-		FirstPersonScreenshotService screenshotService,
 		Supplier<DebugDashboardConfig> configSupplier
 	) {
 		this.store = store;
-		this.screenshotService = screenshotService;
+		this.frameCapture = new DashboardFrameCapture(store);
 		this.configSupplier = configSupplier;
 	}
 
@@ -50,58 +51,73 @@ public final class DashboardObservationCollector {
 		lastSnapshotTick = Long.MIN_VALUE;
 		lastLlmPollTick = Long.MIN_VALUE;
 		highestLlmSequence = 0L;
-		lastVisualCaptureTick = Long.MIN_VALUE;
-		visualCapturePending = false;
+		lastDecisionJson = null;
+		lastPausedTick = Long.MIN_VALUE;
 	}
 
 	public void capture(MinecraftClient client, EmbodiedAgentRuntime runtime) {
-		long tick = runtime.tickCount();
-		captureEventHistory(runtime);
-		captureDebugTimeline(runtime);
-		if (lastLlmPollTick == Long.MIN_VALUE || tick - lastLlmPollTick >= SNAPSHOT_INTERVAL_TICKS) {
-			captureLlmHistory(runtime, tick);
-			lastLlmPollTick = tick;
-		}
-		if (lastSnapshotTick == Long.MIN_VALUE || tick - lastSnapshotTick >= SNAPSHOT_INTERVAL_TICKS) {
-			store.append("runtime_snapshot", tick, System.currentTimeMillis(), runtimeSnapshot(client, runtime));
-			lastSnapshotTick = tick;
-		}
-		captureVisualContext(client, tick);
-	}
-
-	private void captureVisualContext(MinecraftClient client, long tick) {
-		DebugDashboardConfig config = configSupplier.get();
-		if (screenshotService == null
-			|| config == null
-			|| !config.visualCaptureEnabled()
-			|| visualCapturePending
-			|| client == null
-			|| client.world == null
-			|| client.player == null
-			|| (lastVisualCaptureTick != Long.MIN_VALUE && tick - lastVisualCaptureTick < config.visualCaptureIntervalTicks())) {
+		var clock = ServerTickDebugRuntime.controller().status();
+		boolean worldLoaded = client != null && client.world != null && client.player != null;
+		boolean available = worldLoaded && client.getServer() != null;
+		if (!worldLoaded) {
+			store.advanceClock(store.serverTickId(), true, false);
 			return;
 		}
-		try {
-			visualCapturePending = true;
-			lastVisualCaptureTick = tick;
-			screenshotService.requestCapture(client).whenComplete((capture, throwable) -> {
-				visualCapturePending = false;
-				if (capture == null || throwable != null) {
-					return;
-				}
-				store.append("visual_frame", tick, capture.capturedAtMs(), Map.of(
-					"format", capture.format(),
-					"width", capture.width(),
-					"height", capture.height(),
-					"sourceWidth", capture.sourceWidth(),
-					"sourceHeight", capture.sourceHeight(),
-					"imageBase64", Base64.getEncoder().encodeToString(capture.imageBytes())
-				));
-			});
+		store.advanceClock(available ? clock.serverTickId() : -1L, clock.paused(), available);
+		if (observedWorld != client.world) {
+			observedWorld = client.world;
+			startSession("world_joined", runtime);
 		}
-		catch (BridgeUnavailableException exception) {
-			visualCapturePending = false;
+		if (clock.paused() && lastPausedTick == clock.serverTickId()) {
+			return;
 		}
+		captureEventHistory(runtime);
+		captureDebugTimeline(runtime);
+		// Remote servers do not expose this clock; preserve their dashboard without inventing server ticks.
+		long tick = available ? clock.serverTickId() : runtime.tickCount();
+		if (clock.paused() || lastLlmPollTick == Long.MIN_VALUE || tick - lastLlmPollTick >= SNAPSHOT_INTERVAL_TICKS) {
+			captureLlmHistory(runtime, runtime.tickCount());
+			lastLlmPollTick = tick;
+		}
+		// Keep the actual task/reflex decision state at each client decision boundary, including short-lived failures.
+		Map<String, Object> decision = new LinkedHashMap<>();
+		decision.put("task", runtime.taskExecutionSnapshot());
+		decision.put("reflex", runtime.survivalReflexDecisionEvidence());
+		decision.put("eventPipeline", runtime.debugEventPipelineState());
+		String decisionJson = GSON.toJson(decision);
+		if (!decisionJson.equals(lastDecisionJson)) {
+			store.appendJson("decision_state", runtime.tickCount(), System.currentTimeMillis(), decisionJson);
+			lastDecisionJson = decisionJson;
+		}
+		if (clock.paused() || lastSnapshotTick == Long.MIN_VALUE || tick - lastSnapshotTick >= SNAPSHOT_INTERVAL_TICKS) {
+			Map<String, Object> snapshot = runtimeSnapshot(client, runtime);
+			snapshot.put("serverClock", clock);
+			snapshot.put("serverClockAvailable", available);
+			snapshot.put("frameCapture", frameCapture.status());
+			store.append("runtime_snapshot", runtime.tickCount(), System.currentTimeMillis(), snapshot);
+			lastSnapshotTick = tick;
+		}
+		if (clock.paused()) {
+			lastPausedTick = tick;
+		}
+	}
+
+	public void onRenderedFrame(MinecraftClient client, EmbodiedAgentRuntime runtime) {
+		var clock = ServerTickDebugRuntime.controller().status();
+		// A server pause can finish between client ticks. Retain the final boundary even when client ticks stop.
+		if (clock.paused()) {
+			capture(client, runtime);
+		}
+		frameCapture.onRenderedFrame(client, runtime.tickCount(), clock.serverTickId(), clock.paused(), configSupplier.get());
+	}
+
+	public void worldLeft() {
+		observedWorld = null;
+		store.advanceClock(store.serverTickId(), true, false);
+	}
+
+	public void close() {
+		frameCapture.close();
 	}
 
 	private void captureEventHistory(EmbodiedAgentRuntime runtime) {
@@ -161,7 +177,7 @@ public final class DashboardObservationCollector {
 
 	private static Map<String, Object> runtimeSnapshot(MinecraftClient client, EmbodiedAgentRuntime runtime) {
 		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("schemaVersion", 1);
+		payload.put("schemaVersion", 2);
 		payload.put("agent", runtime.snapshot());
 		payload.put("planner", runtime.plannerDebugSnapshot());
 		payload.put("dialogue", runtime.dialogueSnapshot());
@@ -173,6 +189,7 @@ public final class DashboardObservationCollector {
 		payload.put("taskExecution", runtime.taskExecutionSnapshot());
 		payload.put("missionExecution", runtime.missionExecutionSnapshot());
 		payload.put("reflex", runtime.survivalReflexSnapshot());
+		payload.put("reflexDecision", runtime.survivalReflexDecisionEvidence());
 		payload.put("actionGraph", runtime.actionGraphGoalsPayload(true));
 		payload.put("behaviorTree", runtime.behaviorTreeSnapshot());
 		payload.put("eventPipeline", runtime.debugEventPipelineState());

@@ -101,6 +101,8 @@ public final class DebugDashboardServer {
 		candidate.createContext("/api/observations", this::handleObservations);
 		candidate.createContext("/api/stream", this::handleStream);
 		candidate.createContext("/api/export", this::handleExport);
+		candidate.createContext("/api/recording", this::handleRecordingSeek);
+		candidate.createContext("/api/frame", this::handleFrame);
 		candidate.start();
 
 		server = candidate;
@@ -205,6 +207,31 @@ public final class DebugDashboardServer {
 		writeJson(exchange, 200, response);
 	}
 
+	private void handleRecordingSeek(HttpExchange exchange) throws IOException {
+		if (authorizeGet(exchange)) {
+			writeJson(exchange, 200, store.seek(longQuery(exchange, "at", store.serverTickId())));
+		}
+	}
+
+	private void handleFrame(HttpExchange exchange) throws IOException {
+		if (!authorizeGet(exchange)) {
+			return;
+		}
+		try {
+			JsonObject payload = store.framePayload(longQuery(exchange, "sequence", 0L)).getAsJsonObject("payload");
+			byte[] image = java.util.Base64.getDecoder().decode(payload.get("imageBase64").getAsString());
+			exchange.getResponseHeaders().set("Content-Type", "image/" + payload.get("format").getAsString());
+			exchange.getResponseHeaders().set("Cache-Control", "no-store");
+			exchange.sendResponseHeaders(200, image.length);
+			try (OutputStream output = exchange.getResponseBody()) {
+				output.write(image);
+			}
+		}
+		catch (IllegalArgumentException exception) {
+			writeJson(exchange, 404, Map.of("error", "frame_unavailable", "message", exception.getMessage()));
+		}
+	}
+
 	private void handleObservations(HttpExchange exchange) throws IOException {
 		if (!authorizeGet(exchange)) {
 			return;
@@ -270,11 +297,11 @@ public final class DebugDashboardServer {
 		try (Writer writer = new BufferedWriter(new OutputStreamWriter(exchange.getResponseBody(), StandardCharsets.UTF_8))) {
 			JsonObject manifest = queryMetadata(metadata);
 			manifest.addProperty("recordType", "manifest");
-			manifest.addProperty("schemaVersion", 1);
+			manifest.addProperty("schemaVersion", 2);
 			writeJsonLine(writer, manifest);
 			for (DashboardObservation observation : retained) {
 				writer.write("{\"recordType\":\"observation\",");
-				writeObservationFields(writer, observation);
+				writeObservationFields(writer, observation, true);
 				writer.write("}\n");
 			}
 		}
@@ -306,10 +333,14 @@ public final class DebugDashboardServer {
 
 	private static JsonObject queryMetadata(DashboardObservationStore.Query query) {
 		JsonObject response = new JsonObject();
-		response.addProperty("schemaVersion", 1);
+		response.addProperty("schemaVersion", 2);
 		response.addProperty("sessionId", query.sessionId());
 		response.addProperty("sessionStartedAtMs", query.sessionStartedAtMs());
 		response.addProperty("latestTick", query.latestTick());
+		response.addProperty("serverTickId", query.serverTickId());
+		response.addProperty("historyWindowTicks", query.historyWindowTicks());
+		response.addProperty("paused", query.paused());
+		response.addProperty("serverClockAvailable", query.serverClockAvailable());
 		response.addProperty("oldestSequence", query.oldestSequence());
 		response.addProperty("latestSequence", query.latestSequence());
 		response.addProperty("truncated", query.truncated());
@@ -321,11 +352,15 @@ public final class DebugDashboardServer {
 
 	private static void writeQueryJson(Writer writer, DashboardObservationStore.Query query) throws IOException {
 		writer.write('{');
-		writer.write("\"schemaVersion\":1,");
+		writer.write("\"schemaVersion\":2,");
 		writer.write("\"sessionId\":");
 		GSON.toJson(query.sessionId(), writer);
 		writer.write(",\"sessionStartedAtMs\":" + query.sessionStartedAtMs());
 		writer.write(",\"latestTick\":" + query.latestTick());
+		writer.write(",\"serverTickId\":" + query.serverTickId());
+		writer.write(",\"historyWindowTicks\":" + query.historyWindowTicks());
+		writer.write(",\"paused\":" + query.paused());
+		writer.write(",\"serverClockAvailable\":" + query.serverClockAvailable());
 		writer.write(",\"oldestSequence\":" + query.oldestSequence());
 		writer.write(",\"latestSequence\":" + query.latestSequence());
 		writer.write(",\"truncated\":" + query.truncated());
@@ -340,23 +375,32 @@ public final class DebugDashboardServer {
 				writer.write(',');
 			}
 			writer.write('{');
-			writeObservationFields(writer, observation);
+			writeObservationFields(writer, observation, false);
 			writer.write('}');
 			first = false;
 		}
 		writer.write("]}");
 	}
 
-	private static void writeObservationFields(Writer writer, DashboardObservation observation) throws IOException {
+	private static void writeObservationFields(Writer writer, DashboardObservation observation, boolean includeImages) throws IOException {
 		writer.write("\"sequence\":" + observation.sequence());
 		writer.write(",\"sessionId\":");
 		GSON.toJson(observation.sessionId(), writer);
 		writer.write(",\"tick\":" + observation.tick());
+		writer.write(",\"serverTickId\":" + observation.serverTickId());
+		writer.write(",\"throughServerTickId\":" + observation.throughServerTickId());
 		writer.write(",\"capturedAtMs\":" + observation.capturedAtMs());
 		writer.write(",\"type\":");
 		GSON.toJson(observation.type(), writer);
 		writer.write(",\"payload\":");
-		writer.write(observation.payloadJson());
+		if (!includeImages && observation.type().equals("visual_frame")) {
+			JsonObject payload = com.google.gson.JsonParser.parseString(observation.payloadJson()).getAsJsonObject();
+			payload.remove("imageBase64");
+			GSON.toJson(payload, writer);
+		}
+		else {
+			writer.write(observation.payloadJson());
+		}
 	}
 
 	private static void writeJsonLine(Writer writer, Object json) throws IOException {
