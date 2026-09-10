@@ -7,6 +7,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PlannerToolCatalogTest {
+	@Test void validatesAcquisitionScopeAcrossIntentLevels() {
+		for (String name : java.util.List.of(PlannerToolCatalog.COLLECT_RESOURCE, PlannerToolCatalog.MINE_BLOCKS, PlannerToolCatalog.ENSURE_BLOCKS_IN_INVENTORY)) {
+			String selector = name.equals(PlannerToolCatalog.COLLECT_RESOURCE) ? "\"resourceKind\":\"WOOD_LOGS\"" : "\"blockIds\":[\"minecraft:oak_log\"]";
+			String args = "{" + selector + ",\"quantity\":2,\"constraints\":{\"surfaceOnly\":true,\"radius\":24,\"center\":{\"x\":1,\"y\":64,\"z\":-3}}}";
+			assertEquals(24, PlannerToolCatalog.parseToolCall(toolCall(name,args)).arguments().getAsJsonObject("constraints").get("radius").getAsInt());
+			assertThrows(RuntimeException.class, () -> PlannerToolCatalog.parseToolCall(toolCall(name, args.replace("24", "33"))));
+			assertThrows(RuntimeException.class, () -> PlannerToolCatalog.parseToolCall(toolCall(name, args.replace("surfaceOnly", "surfaceOnli"))));
+			assertThrows(RuntimeException.class, () -> PlannerToolCatalog.parseToolCall(toolCall(name, args.replace("\"y\":64,", ""))));
+		}
+	}
+
 	@Test
 	void parsesDiscoverToolsWithBoundedResultCount() {
 		PlannerToolCall call = PlannerToolCatalog.parseToolCall(toolCall("""

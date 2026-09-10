@@ -114,9 +114,19 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 		WorldTaskExecutor smelting,
 		WorldTaskExecutor returnToSurface,
 		WorldTaskExecutor blockInteraction,
-		WorldTaskExecutor blockBreak
+		WorldTaskExecutor blockBreak,
+		WorldTaskExecutor acquisition,
+		WorldTaskExecutor underwaterHarvest
 	) {
+		public ExecutorSet(WorldTaskExecutor baritone, WorldTaskExecutor crafting, WorldTaskExecutor dropItems,
+			WorldTaskExecutor entityInteraction, WorldTaskExecutor smelting, WorldTaskExecutor returnToSurface,
+			WorldTaskExecutor blockInteraction, WorldTaskExecutor blockBreak) {
+			this(baritone, crafting, dropItems, entityInteraction, smelting, returnToSurface, blockInteraction, blockBreak, baritone, baritone);
+		}
+
 		public ExecutorSet {
+			Objects.requireNonNull(acquisition, "acquisition");
+			Objects.requireNonNull(underwaterHarvest, "underwaterHarvest");
 			Objects.requireNonNull(baritone, "baritone");
 			Objects.requireNonNull(crafting, "crafting");
 			Objects.requireNonNull(dropItems, "dropItems");
@@ -129,7 +139,9 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 
 		WorldTaskExecutor executorFor(WorldTaskRequest request) {
 			return switch (request.type()) {
-				case FOLLOW, NAVIGATE, MINE, UNDERWATER_HARVEST -> baritone;
+				case FOLLOW, NAVIGATE -> baritone;
+				case MINE -> acquisition;
+				case UNDERWATER_HARVEST -> underwaterHarvest;
 				case CRAFT_RECIPE -> crafting;
 				case DROP_ITEMS -> dropItems;
 				case ATTACK_ENTITY, USE_ENTITY -> entityInteraction;
@@ -149,7 +161,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 				smelting,
 				returnToSurface,
 				blockInteraction,
-				blockBreak
+				blockBreak, acquisition, underwaterHarvest
 			)));
 		}
 	}

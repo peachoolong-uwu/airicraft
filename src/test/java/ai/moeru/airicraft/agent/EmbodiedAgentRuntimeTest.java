@@ -2752,7 +2752,7 @@ class EmbodiedAgentRuntimeTest {
 		));
 		runtime.submitTask(new TaskSpec(TaskType.COLLECT_RESOURCE, TaskResourceKind.WOOD_LOGS, 1), "planner_tool");
 		runtime.onClientTick(null);
-		assertEquals(TaskState.WAITING_FOR_PICKUP, runtime.taskSnapshot().state());
+		assertEquals(TaskState.RUNNING, runtime.taskSnapshot().state());
 
 		String result = runtime.execute(new PlannerToolCall(
 			"call_nav",
@@ -2790,9 +2790,9 @@ class EmbodiedAgentRuntimeTest {
 
 		assertTrue(returnResult.contains("TOOL_ERROR: return_to_surface denied"));
 		assertTrue(returnResult.contains("active_task_in_progress"));
-		assertEquals(TaskState.WAITING_FOR_PICKUP, runtime.taskSnapshot().state());
+		assertEquals(TaskState.RUNNING, runtime.taskSnapshot().state());
 		assertEquals(TaskType.COLLECT_RESOURCE, runtime.taskSnapshot().spec().type());
-		assertTrue(runtime.activeGoal().isEmpty());
+		assertEquals(GoalType.MINE_BLOCKS, runtime.activeGoal().orElseThrow().type());
 	}
 
 	@Test
@@ -2881,7 +2881,7 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
-	void collectResourceTargetMissingEmitsBlockedEventAndPlannerTrigger() {
+	void collectResourceLeavesTargetAndDropDiscoveryToItsExecutor() {
 		FakeWorldTaskExecutor executor = new FakeWorldTaskExecutor();
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(executor);
 		runtime.overrideBlockAcquisitionsForTests(BlockAcquisitionTestFixtures.survival());
@@ -2906,23 +2906,8 @@ class EmbodiedAgentRuntimeTest {
 
 		runtime.onClientTick(null);
 
-		SemanticEvent blockedEvent = runtime.recentEvents(null).events().stream()
-			.filter(event -> "task.blocked".equals(event.type()))
-			.findFirst()
-			.orElseThrow();
-		Map<String, Object> payload = blockedEvent.payload();
-		assertEquals("COLLECT_RESOURCE", payload.get("taskType"));
-		assertEquals("WOOD_LOGS", payload.get("resourceKind"));
-		assertEquals(5, payload.get("quantity"));
-		assertEquals("WAITING_FOR_PICKUP", payload.get("state"));
-		assertEquals("target_missing", payload.get("blockedReason"));
-		assertEquals(0, payload.get("collected"));
-		assertEquals(5, payload.get("remaining"));
-		assertEquals("planner_response", payload.get("source"));
-		assertEquals("task.blocked", runtime.debugEventPipelineState().lastEventType());
-		assertEquals("SYSTEM", runtime.debugEventPipelineState().lastTriggerType());
-		assertTrue(runtime.debugEventPipelineState().lastEmitSemantic());
-		assertTrue(runtime.debugEventPipelineState().lastEmitTrigger());
+		assertTrue(runtime.recentEvents(null).events().stream().noneMatch(event -> "task.blocked".equals(event.type())));
+		assertEquals(ActiveJobStatus.RUNNING, runtime.activeJob().status());
 	}
 
 	@Test

@@ -1,5 +1,7 @@
 package ai.moeru.airicraft.agent;
 
+import ai.moeru.airicraft.agent.goals.AcquisitionConstraints;
+
 import ai.moeru.airicraft.AiricraftConfig;
 import ai.moeru.airicraft.BridgeUnavailableException;
 import ai.moeru.airicraft.FirstPersonScreenshotService;
@@ -508,7 +510,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			taskExecutionSnapshot,
 			worldEvidence,
 			sessionSnapshot.companionActuationAllowed(),
-			hasNearbyTaskResourceTarget(client, activeJobRuntime.current().taskSpec()),
+			true, // The acquisition executor owns scoped discovery, including item drops.
 			tickCount
 		);
 		TaskSnapshot projectedTaskSnapshot = activeJobRuntime.taskSnapshot();
@@ -2247,7 +2249,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				GoalMineSpec mineSpec = goalMineSpec(
 					stringArrayArg(args, "blockIds"),
 					intArg(args, "quantity").orElseThrow(() -> new IllegalArgumentException("quantity is required"))
-				);
+				).withConstraints(acquisitionConstraints(args));
 				Optional<String> validationError = validateMineBlockIds(mineSpec.blockIds());
 				if (validationError.isPresent()) {
 					yield "TOOL_ERROR: mine_blocks " + validationError.get();
@@ -2265,7 +2267,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				GoalMineSpec mineSpec = goalMineSpec(
 					stringArrayArg(args, "blockIds"),
 					intArg(args, "quantity").orElseThrow(() -> new IllegalArgumentException("quantity is required"))
-				);
+				).withConstraints(acquisitionConstraints(args));
 				Optional<String> validationError = validateMineBlockIds(mineSpec.blockIds());
 				if (validationError.isPresent()) {
 					yield "TOOL_ERROR: ensure_blocks_in_inventory " + validationError.get();
@@ -2294,7 +2296,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			case PlannerToolCatalog.COLLECT_RESOURCE -> {
 				TaskResourceKind resourceKind = resourceKindArg(args, "resourceKind");
 				int quantity = intArg(args, "quantity").orElseThrow(() -> new IllegalArgumentException("quantity is required"));
-				applyPlannerJobTool(ActiveJobProposal.collectResource(new TaskSpec(TaskType.COLLECT_RESOURCE, resourceKind, quantity)));
+				applyPlannerJobTool(ActiveJobProposal.collectResource(new TaskSpec(TaskType.COLLECT_RESOURCE, resourceKind, quantity, acquisitionConstraints(args))));
 				yield "Tool result for collect_resource: accepted resourceKind=" + resourceKind.name() + " quantity=" + quantity;
 			}
 			case PlannerToolCatalog.CRAFT_RECIPE -> {
@@ -3129,6 +3131,23 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return List.copyOf(values);
 	}
 
+	private static AcquisitionConstraints acquisitionConstraints(JsonObject args) {
+		JsonObject value = args.has("constraints") ? args.getAsJsonObject("constraints") : new JsonObject();
+		GoalPosition center = null;
+		if (value.has("center")) {
+			JsonObject pos = value.getAsJsonObject("center");
+			center = new GoalPosition(pos.get("x").getAsInt(), pos.get("y").getAsInt(), pos.get("z").getAsInt(), true);
+		}
+		else {
+			var client = MinecraftClient.getInstance();
+			var player = client == null ? null : client.player;
+			if (player != null) center = new GoalPosition(player.getBlockX(), player.getBlockY(), player.getBlockZ(), true);
+		}
+		return new AcquisitionConstraints(center,
+			intArg(value, "radius").orElse(16), intArg(value, "verticalRadius").orElse(16),
+			booleanArg(value, "surfaceOnly").orElse(false));
+	}
+
 	private GoalMineSpec goalMineSpec(List<String> blockIds, int quantity) {
 		BlockAcquisitionIndex index = blockAcquisitions();
 		List<String> matchingItemIds = index.matchingOutputItemIds(blockIds).stream().sorted().toList();
@@ -3371,35 +3390,6 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return Map.copyOf(copy);
 	}
 
-	private boolean hasNearbyTaskResourceTarget(MinecraftClient client, TaskSpec spec) {
-		if (client == null || client.world == null || client.player == null || spec == null) {
-			return false;
-		}
-		List<String> targetBlockIds = ResourceGatheringCatalog.entry(spec.resourceKind())
-			.map(ResourceGatheringCatalog.ResourceEntry::acceptedItemIds)
-			.map(blockAcquisitions()::sourceBlockIdsForOutputs)
-			.orElse(List.of());
-		if (targetBlockIds.isEmpty()) {
-			return false;
-		}
-
-		BlockPos origin = client.player.getBlockPos();
-		for (int dx = -12; dx <= 12; dx++) {
-			for (int dy = -6; dy <= 6; dy++) {
-				for (int dz = -12; dz <= 12; dz++) {
-					BlockPos pos = origin.add(dx, dy, dz);
-					if (!client.world.isChunkLoaded(pos)) {
-						continue;
-					}
-					String blockId = Registries.BLOCK.getId(client.world.getBlockState(pos).getBlock()).toString();
-					if (targetBlockIds.contains(blockId)) {
-						return true;
-					}
-				}
-			}
-		}
-		return false;
-	}
 
 	private Map<String, Integer> collectNearbyBlocks(MinecraftClient client, BlockPos origin) {
 		if (client == null || client.world == null) {

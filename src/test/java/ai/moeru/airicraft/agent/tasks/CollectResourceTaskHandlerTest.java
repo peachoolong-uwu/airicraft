@@ -11,6 +11,14 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class CollectResourceTaskHandlerTest {
+	@Test void carriesScopeIntoSystemOneMiningRequest() {
+		CollectResourceTaskHandler handler = new CollectResourceTaskHandler();
+		handler.updateBlockAcquisitions(BlockAcquisitionIndex.of(List.of(handRule("minecraft:oak_log", "minecraft:oak_log"))));
+		var scope = new ai.moeru.airicraft.agent.goals.AcquisitionConstraints(new ai.moeru.airicraft.agent.goals.GoalPosition(10,64,20,true), 24, 8, true);
+		var goal = handler.start(new TaskSpec(TaskType.COLLECT_RESOURCE, TaskResourceKind.WOOD_LOGS, 3, scope), 10L);
+		assertEquals(scope, goal.mineSpec().constraints());
+	}
+
 	@Test
 	void createsMineBlocksGoalForWoodLogs() {
 		CollectResourceTaskHandler handler = new CollectResourceTaskHandler();

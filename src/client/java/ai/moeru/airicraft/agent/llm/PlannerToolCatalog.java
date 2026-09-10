@@ -63,7 +63,10 @@ public final class PlannerToolCatalog {
 
 	private static final Consumer<JsonObject> NO_ARGUMENT_VALIDATION = arguments -> {
 	};
-	private static final List<BuiltInTool> BUILT_IN_TOOLS = List.of(
+	private static final List<BuiltInTool> BUILT_IN_TOOLS = createBuiltInTools();
+
+	private static List<BuiltInTool> createBuiltInTools() {
+		return List.of(
 		builtInTool(DISCOVER_TOOLS, true, false, tool(DISCOVER_TOOLS, "Discover a small set of specialist tools by capability. The result activates matching full schemas for the next planner request.", properties(
 				prop("query", string("Short capability or tool search, for example smelting, navigation, exact world blocks, or map waypoints.")),
 				prop("maxResults", integer("Maximum concise tool cards to return, from 1 to 5. Defaults to 4."))
@@ -192,22 +195,25 @@ public final class PlannerToolCatalog {
 				prop("useTowering", bool("Whether the executor may build a pillar underfoot while jumping if path navigation cannot return to the surface. Defaults to true when omitted.")),
 				prop("fillerBlockIds", stringArray("Optional namespaced block/item ids to use for towering. Omit to use defaults: " + String.join(", ", ReturnToSurfaceStepArgs.DEFAULT_FILLER_BLOCK_IDS) + "."))
 			), List.of()), PlannerToolCatalog::validateReturnToSurfaceArguments),
-		builtInTool(MINE_BLOCKS, false, tool(MINE_BLOCKS, "Mine matching blocks by block id. Use for an explicit block-mining request or a registered acquisition route, never as a fallback after unknown_acquisition_method. Do not pass item ids from inventory itemCounts. Likely underground work requires at least one torch unless explicitly overridden.", properties(
+		builtInTool(MINE_BLOCKS, false, tool(MINE_BLOCKS, "Acquire matching exposed blocks inside a fixed loaded area, using System 1 target selection and bounded approaches. Use for an explicit block-mining request or a registered acquisition route, never as a fallback after unknown_acquisition_method. Do not pass item ids from inventory itemCounts. Likely underground work requires at least one torch unless explicitly overridden.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("blockIds", stringArray("Namespaced block ids to mine, for example minecraft:iron_ore. These must be block ids, not item ids such as minecraft:raw_iron.")),
 				prop("quantity", integer("Number of blocks to mine.")),
+				prop("constraints", acquisitionConstraintsSchema()),
 				prop("allowUnilluminated", bool("Explicitly allow predicted underground or unilluminated mining with no torches. Default false."))
 			), List.of("blockIds", "quantity")), PlannerToolCatalog::validateMineBlocksArguments),
 		builtInTool(ENSURE_BLOCKS_IN_INVENTORY, false, tool(ENSURE_BLOCKS_IN_INVENTORY, "Ensure the inventory contains at least a target count from mined block drops. Do not pass inventory item ids.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("blockIds", stringArray("Namespaced block ids whose drops count toward the target, for example minecraft:iron_ore. These must be block ids, not item ids such as minecraft:raw_iron.")),
 				prop("quantity", integer("Minimum matching item count required in inventory. Existing inventory and pickups count.")),
+				prop("constraints", acquisitionConstraintsSchema()),
 				prop("allowUnilluminated", bool("Explicitly allow predicted underground or unilluminated mining with no torches. Default false."))
 			), List.of("blockIds", "quantity")), PlannerToolCatalog::validateMineBlocksArguments),
-		builtInTool(COLLECT_RESOURCE, false, tool(COLLECT_RESOURCE, "Collect a supported resource kind.", properties(
+		builtInTool(COLLECT_RESOURCE, false, tool(COLLECT_RESOURCE, "Collect a supported resource kind within a fixed loaded area. System 1 selects targets, approaches, breaks and collects drops. Optional constraints restrict the search; no speculative mining or distant exploration. Use break_blocks for exact coordinates.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 					prop("resourceKind", enumString("Resource kind.", ResourceGatheringCatalog.supportedKindNames())),
-				prop("quantity", integer("Quantity to collect."))
+				prop("quantity", integer("Additional items to collect; completion requires inventory gain.")),
+				prop("constraints", acquisitionConstraintsSchema())
 			), List.of("resourceKind", "quantity")), PlannerToolCatalog::validateCollectResourceArguments),
 		builtInTool(CRAFT_RECIPE, false, tool(CRAFT_RECIPE, "Run a listed crafting recipe, including automatic crafting-table setup for 3x3 recipes.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
@@ -320,6 +326,7 @@ public final class PlannerToolCatalog {
 				prop("minSpacingBlocks", integer("Minimum search radius around the player without an existing torch, from 1 to 16."))
 			), List.of("enabled", "mode", "maxLightLevel", "requireUnderground", "minSpacingBlocks")), PlannerToolCatalog::validateConfigureLightingArguments)
 	);
+	}
 	private static final Map<String, BuiltInTool> BUILT_IN_TOOLS_BY_NAME = builtInToolsByName();
 
 	private PlannerToolCatalog() {
@@ -536,10 +543,34 @@ public final class PlannerToolCatalog {
 	}
 
 	private static void validateMineBlocksArguments(JsonObject arguments) {
+		validateAcquisitionConstraints(arguments);
 		requireStringArray(arguments, "blockIds");
 		requirePositiveInt(arguments, "quantity");
 		if (arguments.has("allowUnilluminated") && !arguments.get("allowUnilluminated").isJsonNull()) {
 			requireBoolean(arguments, "allowUnilluminated");
+		}
+	}
+
+	private static void validateAcquisitionConstraints(JsonObject args) {
+		if (!args.has("constraints")) return;
+		if (!args.get("constraints").isJsonObject()) throw new JsonParseException("constraints must be an object");
+		JsonObject value = args.getAsJsonObject("constraints");
+		for (String key : value.keySet()) {
+			if (!List.of("center", "radius", "verticalRadius", "surfaceOnly").contains(key))
+				throw new JsonParseException("Unknown acquisition constraint: " + key);
+		}
+		for (String key : List.of("radius", "verticalRadius")) {
+			if (value.has(key)) {
+				int n = requireInt(value, key);
+				if (n < 1 || n > 32) throw new JsonParseException("constraints." + key + " must be 1..32");
+			}
+		}
+		if (value.has("surfaceOnly")) requireBoolean(value, "surfaceOnly");
+		if (value.has("center")) {
+			if (!value.get("center").isJsonObject()) throw new JsonParseException("constraints.center must be an object");
+			JsonObject center = value.getAsJsonObject("center");
+			if (!center.keySet().equals(java.util.Set.of("x", "y", "z"))) throw new JsonParseException("constraints.center requires exactly x, y, z");
+			requireInt(center, "x"); requireInt(center, "y"); requireInt(center, "z");
 		}
 	}
 
@@ -553,6 +584,7 @@ public final class PlannerToolCatalog {
 	}
 
 	private static void validateCollectResourceArguments(JsonObject arguments) {
+		validateAcquisitionConstraints(arguments);
 		String kind = requireString(arguments, "resourceKind");
 		if (ResourceGatheringCatalog.entry(kind).isEmpty()) {
 			throw new JsonParseException("Unsupported resourceKind: " + kind);
@@ -1121,6 +1153,18 @@ public final class PlannerToolCatalog {
 		schema.put("description", description);
 		schema.put("items", items);
 		return schema;
+	}
+
+	private static Map<String, Object> acquisitionConstraintsSchema() {
+		return Map.of("type", "object", "additionalProperties", false, "description",
+			"Optional acquisition scope. Defaults: center at submission, radius 16, verticalRadius 16, surfaceOnly false. The center stays fixed during this job.",
+			"properties", properties(
+				prop("center", Map.of("type", "object", "additionalProperties", false,
+					"properties", properties(prop("x", integer("Center x.")), prop("y", integer("Center y.")), prop("z", integer("Center z."))),
+					"required", List.of("x", "y", "z"))),
+				prop("radius", integer("Horizontal search radius, 1..32 blocks.")),
+				prop("verticalRadius", integer("Vertical search radius, 1..32 blocks.")),
+				prop("surfaceOnly", bool("Restrict sources and work positions to the top ground layer or above, ignoring tree logs/leaves as roofs. Stop acquisition if travel leaves this scope; does not override survival reflexes."))));
 	}
 
 	private static Map<String, Object> breakBlockTargetSchema() {

@@ -20,6 +20,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DispatchingWorldTaskExecutorTest {
+	@Test void miningHasItsOwnExecutorAndDoesNotReachTheBaritoneMiningProcess() {
+		var navigation = new RecordingExecutor();
+		var acquisition = new RecordingExecutor();
+		var underwater = new RecordingExecutor();
+		var dispatcher = new DispatchingWorldTaskExecutor(new DispatchingWorldTaskExecutor.ExecutorSet(
+			navigation, navigation, navigation, navigation, navigation, navigation, navigation, navigation, acquisition, underwater), null);
+		dispatcher.tick(snapshot(), Optional.of(WorldTaskRequest.collectMine("mine", "job", miningGoal())));
+		assertEquals(1, acquisition.calls.size());
+		assertTrue(navigation.calls.isEmpty());
+		assertTrue(underwater.calls.isEmpty());
+	}
+
 	@Test
 	void requestEnvelopeNormalizesIdentityAndDerivesVariantMetadata() {
 		GoalSnapshot goal = miningGoal();

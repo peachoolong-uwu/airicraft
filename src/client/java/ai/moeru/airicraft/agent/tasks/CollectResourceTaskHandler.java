@@ -20,7 +20,9 @@ public final class CollectResourceTaskHandler {
 		if (spec.type() != TaskType.COLLECT_RESOURCE) {
 			throw new IllegalArgumentException("Unsupported task spec: " + spec);
 		}
-		return start(spec.resourceKind(), remainingQuantity, tick);
+		GoalSnapshot goal = start(spec.resourceKind(), remainingQuantity, tick);
+		return new GoalSnapshot(goal.type(), goal.targetPlayer(), goal.position(),
+			goal.mineSpec().withConstraints(spec.constraints()), goal.updatedTick(), goal.source());
 	}
 
 	public GoalSnapshot start(TaskResourceKind resourceKind, int remainingQuantity, long tick) {

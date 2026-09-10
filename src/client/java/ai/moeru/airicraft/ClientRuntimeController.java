@@ -1,5 +1,7 @@
 package ai.moeru.airicraft;
 
+import ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor;
+
 import ai.moeru.airicraft.agent.AgentConfig;
 import ai.moeru.airicraft.agent.AgentConfigLoader;
 import ai.moeru.airicraft.agent.EmbodiedAgentRuntime;
@@ -17,8 +19,6 @@ import ai.moeru.airicraft.agent.tasks.CraftingTaskExecutor;
 import ai.moeru.airicraft.agent.tasks.DispatchingWorldTaskExecutor;
 import ai.moeru.airicraft.agent.tasks.DropItemsTaskExecutor;
 import ai.moeru.airicraft.agent.tasks.EntityInteractionTaskExecutor;
-import ai.moeru.airicraft.agent.tasks.HybridMiningTaskExecutor;
-import ai.moeru.airicraft.agent.tasks.LiveHybridMiningEnvironment;
 import ai.moeru.airicraft.agent.tasks.ReturnToSurfaceTaskExecutor;
 import ai.moeru.airicraft.agent.tasks.SmeltingProcessManager;
 import ai.moeru.airicraft.agent.tasks.SmeltingTaskExecutor;
@@ -362,23 +362,17 @@ public final class ClientRuntimeController {
 			baritoneFacade,
 			cameraController
 		);
-		LiveHybridMiningEnvironment miningEnvironment = new LiveHybridMiningEnvironment(baritoneFacade);
-		HybridMiningTaskExecutor miningCoordinator = new HybridMiningTaskExecutor(
-			baritoneTaskExecutor,
-			underwaterHarvestTaskExecutor,
-			miningEnvironment,
-			miningEnvironment,
-			miningEnvironment
-		);
 		WorldTaskExecutor worldTaskExecutor = new DispatchingWorldTaskExecutor(new DispatchingWorldTaskExecutor.ExecutorSet(
-			miningCoordinator,
+			baritoneTaskExecutor,
 			new CraftingTaskExecutor(baritoneFacade, cameraController),
 			new DropItemsTaskExecutor(baritoneFacade),
 			new EntityInteractionTaskExecutor(baritoneFacade, cameraController),
 			new SmeltingTaskExecutor(smeltingProcessManager, baritoneFacade),
 			new ReturnToSurfaceTaskExecutor(baritoneFacade),
 			new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade),
-			new BlockBreakTaskExecutor()
+			new BlockBreakTaskExecutor(),
+			new TargetAcquisitionTaskExecutor(baritoneFacade),
+			underwaterHarvestTaskExecutor
 		),
 			baritoneFacade
 		);

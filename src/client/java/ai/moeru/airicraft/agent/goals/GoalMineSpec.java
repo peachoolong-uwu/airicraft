@@ -7,13 +7,23 @@ public record GoalMineSpec(
 	List<String> blockIds,
 	int quantity,
 	List<String> matchingItemIds,
-	List<String> requiredToolItemIds
+	List<String> requiredToolItemIds,
+	AcquisitionConstraints constraints
 ) {
 	public GoalMineSpec(List<String> blockIds, int quantity) {
 		this(blockIds, quantity, blockIds, List.of());
 	}
 
+	public GoalMineSpec(List<String> blockIds, int quantity, List<String> matchingItemIds, List<String> requiredToolItemIds) {
+		this(blockIds, quantity, matchingItemIds, requiredToolItemIds, AcquisitionConstraints.nearby());
+	}
+
+	public GoalMineSpec withConstraints(AcquisitionConstraints constraints) {
+		return new GoalMineSpec(blockIds, quantity, matchingItemIds, requiredToolItemIds, constraints);
+	}
+
 	public GoalMineSpec {
+		constraints = Objects.requireNonNull(constraints, "constraints");
 		Objects.requireNonNull(blockIds, "blockIds");
 		blockIds = normalizedIds(blockIds);
 		if (blockIds.isEmpty()) {

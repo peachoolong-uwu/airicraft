@@ -529,7 +529,8 @@ public final class ActiveJobRuntime {
 				requestedSpec.blockIds(),
 				absoluteInventoryTarget,
 				requestedSpec.matchingItemIds(),
-				requestedSpec.requiredToolItemIds()
+				requestedSpec.requiredToolItemIds(),
+				requestedSpec.constraints()
 			),
 			tick,
 			activeJob.directGoal().source()
