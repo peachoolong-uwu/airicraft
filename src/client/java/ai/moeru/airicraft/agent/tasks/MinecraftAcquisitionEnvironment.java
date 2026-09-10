@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.tasks;
 
 import ai.moeru.airicraft.agent.goals.AcquisitionConstraints;
+import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
 import ai.moeru.airicraft.agent.goals.GoalMineSpec;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
 import net.minecraft.block.BlockState;
@@ -66,6 +67,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 			if (!world.isChunkLoaded(cursor) || !constraints.contains(position(cursor))) continue;
 			BlockState state = world.getBlockState(cursor);
 			if (spec.blockIds().contains(id(state)) && HarvestableBlocks.ready(state)
+				&& !WorldPlacePreservation.contains(world, cursor)
 				&& inScope(position(cursor), constraints, false)) blocks.add(cursor.toImmutable());
 		}
 		blocks.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())));
@@ -101,7 +103,8 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 	private boolean clearable(BlockPos pos) {
 		var world = client().world;
 		BlockState state = world.getBlockState(pos);
-		return state.getFluidState().isEmpty() && !state.hasBlockEntity()
+		return (state.getCollisionShape(world, pos).isEmpty() || !WorldPlacePreservation.contains(world, pos))
+			&& state.getFluidState().isEmpty() && !state.hasBlockEntity()
 			&& state.getHardness(world, pos) >= 0 && !hazardous(state);
 	}
 
@@ -153,6 +156,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 
 	@Override public boolean targetPresent(Candidate target) {
 		if (target.kind() == Kind.BLOCK) return client().world.isChunkLoaded(block(target.position()))
+			&& !WorldPlacePreservation.contains(client().world, block(target.position()))
 			&& id(client().world.getBlockState(block(target.position()))).equals(target.id())
 			&& HarvestableBlocks.ready(client().world.getBlockState(block(target.position())));
 		return client().world.getEntitiesByClass(ItemEntity.class, new Box(block(target.position())).expand(3),
@@ -171,7 +175,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		if (client.player.currentScreenHandler != client.player.playerScreenHandler
 			|| !client.player.currentScreenHandler.getCursorStack().isEmpty()) return BreakResult.FAILED;
 		BlockHitResult hit = interactionPath(client.player.getEyePos(), block(target.position()));
-		if (hit == null) return BreakResult.FAILED;
+		if (hit == null || WorldPlacePreservation.contains(client.world, hit.getBlockPos())) return BreakResult.FAILED;
 		BlockPos pos = hit.getBlockPos();
 		if (!pos.equals(breaking)) {
 			cancelBreaking();

@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.mixin.client;
 
 import ai.moeru.airicraft.AiricraftClient;
+import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
 import ai.moeru.airicraft.debug.ClientTickPlayerActionEvents;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
@@ -29,13 +30,21 @@ public class ClientPlayerInteractionManagerMixin {
 	@Unique
 	private BlockPos airicraft$breakingBlockPos;
 
-	@Inject(method = "attackBlock", at = @At("HEAD"))
+	@Inject(method = "attackBlock", at = @At("HEAD"), cancellable = true)
 	private void airicraft$captureAttackStart(BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
+		if (WorldPlacePreservation.blocksPathBreaking(pos)) {
+			cir.setReturnValue(false);
+			return;
+		}
 		ClientTickPlayerActionEvents.recordStart("attack");
 	}
 
-	@Inject(method = "updateBlockBreakingProgress", at = @At("HEAD"))
+	@Inject(method = "updateBlockBreakingProgress", at = @At("HEAD"), cancellable = true)
 	private void airicraft$captureBlockBreakStart(BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
+		if (WorldPlacePreservation.blocksPathBreaking(pos)) {
+			cir.setReturnValue(false);
+			return;
+		}
 		ClientPlayerInteractionManagerAccessor accessor = (ClientPlayerInteractionManagerAccessor) (Object) this;
 		if (!accessor.airicraft$breakingBlock()) {
 			ClientTickPlayerActionEvents.recordStart("attack");

@@ -91,7 +91,10 @@ public final class PlaceMemory {
 
 	private record Document(int version, List<Place> places) {}
 
-	public record Place(String name, String dimension, int x, int y, int z, String note) {
+	public record Place(String name, String dimension, int x, int y, int z, String note, PreservedArea preserveArea) {
+		public Place(String name, String dimension, int x, int y, int z, String note) {
+			this(name, dimension, x, y, z, note, null);
+		}
 		public Place {
 			name = checkedText(name, "name", 128, false);
 			dimension = checkedText(dimension, "dimension", 256, false);
@@ -99,6 +102,17 @@ public final class PlaceMemory {
 				throw new IllegalArgumentException("dimension must be a namespaced dimension id");
 			}
 			note = checkedText(note, "note", 2048, true);
+		}
+	}
+
+	/** Inclusive bounds in the remembered place's dimension. Exact construction tools can still edit them. */
+	public record PreservedArea(int x1, int y1, int z1, int x2, int y2, int z2) {
+		public PreservedArea {
+			if (x1 > x2 || y1 > y2 || z1 > z2) throw new IllegalArgumentException("preserveArea minimum must not exceed maximum");
+		}
+
+		public boolean contains(int x, int y, int z) {
+			return x >= x1 && x <= x2 && y >= y1 && y <= y2 && z >= z1 && z <= z2;
 		}
 	}
 

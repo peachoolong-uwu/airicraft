@@ -3412,7 +3412,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					BlockState blockState = client.world.getBlockState(pos);
 					String blockId = Registries.BLOCK.getId(blockState.getBlock()).toString();
 					counts.merge(blockId, 1, Integer::sum);
-					if (ai.moeru.airicraft.agent.tasks.HarvestableBlocks.ready(blockState)) harvestable.merge(blockId, 1, Integer::sum);
+					if (ai.moeru.airicraft.agent.tasks.HarvestableBlocks.ready(blockState)
+						&& !ai.moeru.airicraft.agent.memory.WorldPlacePreservation.contains(client.world, pos)) harvestable.merge(blockId, 1, Integer::sum);
 				}
 			}
 		}

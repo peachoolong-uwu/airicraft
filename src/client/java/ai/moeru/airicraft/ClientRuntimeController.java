@@ -147,6 +147,7 @@ public final class ClientRuntimeController {
 	}
 
 	public void onWorldLeave() {
+		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.clear();
 		dashboardObservationCollector.worldLeft();
 		clientTickDebugRuntime.reset("world_left", "The world closed during a client tick debug capture");
 		screenshotService.failActiveCapture("capture_failed", "Screenshot capture was interrupted");
@@ -156,6 +157,7 @@ public final class ClientRuntimeController {
 	}
 
 	public void onClientTick(MinecraftClient client) {
+		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.tick(client);
 		currentAgentRuntime().onClientTick(client);
 		cameraController.tick(client);
 		highlightManager.tick();

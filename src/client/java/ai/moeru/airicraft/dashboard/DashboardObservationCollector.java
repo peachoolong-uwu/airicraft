@@ -219,6 +219,7 @@ public final class DashboardObservationCollector {
 		payload.put("llmAvailable", runtime.llmAvailable());
 		payload.put("visionAvailable", runtime.visionAvailable());
 		payload.put("world", worldSnapshot(client));
+		payload.put("placePreservation", ai.moeru.airicraft.agent.memory.WorldPlacePreservation.debugSnapshot());
 		return payload;
 	}
 

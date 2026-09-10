@@ -42,6 +42,28 @@ class PlaceMemoryToolProviderTest {
 	}
 
 	@Test
+	void preservedAreaIsPublishedOnlyAfterSuccessfulWritesAndRemovedOnForget() {
+		var changes = new java.util.concurrent.atomic.AtomicInteger();
+		var provider = new PlaceMemoryToolProvider(() -> new PlaceMemoryToolProvider.Context(directory, "minecraft:overworld", 0, 64, 0),
+			Runnable::run, changes::incrementAndGet);
+		String result = call(provider, "remember_place", """
+			{"name":"home","preserveArea":{"x1":254,"y1":62,"z1":478,"x2":258,"y2":65,"z2":482}}
+			""");
+		assertTrue(result.contains("preserveArea"));
+		assertEquals(1, changes.get());
+		assertTrue(call(provider(), "recall_place", "{\"name\":\"home\"}").contains("\"y1\":62"));
+		for (String area : List.of("null", "{}", "{\"x1\":0,\"y1\":0,\"z1\":0,\"x2\":-1,\"y2\":1,\"z2\":1}",
+			"{\"x1\":0.5,\"y1\":0,\"z1\":0,\"x2\":1,\"y2\":1,\"z2\":1}")) {
+			assertTrue(call(provider, "remember_place", "{\"name\":\"home\",\"preserveArea\":" + area + "}").contains("TOOL_ERROR"));
+		}
+		assertEquals(1, changes.get());
+		call(provider, "forget_place", "{\"name\":\"home\"}");
+		assertEquals(2, changes.get());
+		call(provider, "forget_place", "{\"name\":\"home\"}");
+		assertEquals(2, changes.get());
+	}
+
+	@Test
 	void invalidCoordinatesCannotSilentlySaveAnotherPosition() {
 		for (String arguments : List.of(
 			"{\"name\":\"home\",\"position\":{\"x\":1,\"y\":2}}",

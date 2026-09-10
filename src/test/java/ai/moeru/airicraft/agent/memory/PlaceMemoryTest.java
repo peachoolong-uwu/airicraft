@@ -30,6 +30,24 @@ class PlaceMemoryTest {
 	}
 
 	@Test
+	void preservedBoundsSurviveReloadAndOldBookmarksRemainCompatible() throws IOException {
+		Path file = directory.resolve("airicraft/places.json");
+		Files.createDirectories(file.getParent());
+		Files.writeString(file, """
+			{"version":1,"places":[{"name":"old","dimension":"minecraft:overworld","x":1,"y":64,"z":2,"note":""}]}
+			""");
+		PlaceMemory memory = new PlaceMemory(directory);
+		assertNull(memory.recall("old").orElseThrow().preserveArea());
+		var area = new PlaceMemory.PreservedArea(254, 62, 478, 258, 65, 482);
+		memory.remember(new PlaceMemory.Place("home", "minecraft:overworld", 256, 63, 480, "shelter", area));
+		assertEquals(area, new PlaceMemory(directory).recall("home").orElseThrow().preserveArea());
+		assertTrue(area.contains(258, 62, 480), "door support belongs to the protected shell");
+		assertFalse(area.contains(259, 62, 480));
+		memory.remember(new PlaceMemory.Place("home", "minecraft:overworld", 256, 63, 480, "removed preservation"));
+		assertNull(new PlaceMemory(directory).recall("home").orElseThrow().preserveArea());
+	}
+
+	@Test
 	void identicalNamesDoNotLeakAcrossWorldSaves() throws IOException {
 		PlaceMemory first = new PlaceMemory(directory.resolve("first"));
 		PlaceMemory second = new PlaceMemory(directory.resolve("second"));
