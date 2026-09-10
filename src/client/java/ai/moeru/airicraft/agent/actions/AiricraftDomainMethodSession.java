@@ -206,12 +206,12 @@ final class AiricraftDomainMethodSession {
 			int outputCount = Math.max(1, intPayload(recipe, "outputCount", 1));
 			int craftTimes = Math.max(1, (int) Math.ceil(deficitCount / (double) outputCount));
 			String gridKind = scalar(recipe.payload().get("gridKind"), "");
-			Map<String, Integer> effectiveInputCounts = effectiveRecipeInputCounts(outputItemId, inputCounts, gridKind);
+			Map<String, Integer> effectiveInputCounts = effectiveRecipeInputCounts(outputItemId, inputCounts, gridKind, craftTimes);
 			ArrayList<ActionPlanStep> steps = new ArrayList<>();
 			int routeCost = 0;
 			boolean inputsResolved = true;
 			for (Map.Entry<String, Integer> input : effectiveInputCounts.entrySet()) {
-				int requiredCount = input.getValue() * craftTimes;
+				int requiredCount = input.getValue();
 				if (requiredCount <= 0) {
 					continue;
 				}
@@ -259,17 +259,21 @@ final class AiricraftDomainMethodSession {
 	}
 
 	private Map<String, Integer> effectiveRecipeInputCounts(
-		String outputItemId,
-		Map<String, Integer> inputCounts,
-		String gridKind
+		String outputItemId, Map<String, Integer> inputCounts, String gridKind, int craftTimes
 	) {
-		if (!"WORKBENCH_3X3".equals(gridKind)
-			|| "minecraft:crafting_table".equals(outputItemId)
-			|| existingGoalCount(ActionGoal.inventoryItem("minecraft:crafting_table", 1)) >= 1) {
-			return inputCounts;
+		LinkedHashMap<String, Integer> effective = new LinkedHashMap<>();
+		inputCounts.forEach((item, count) -> effective.put(item, count * craftTimes));
+		boolean nearbyWorkbench = facts.query(ActionFactType.WORLD_SITE,
+			Map.of("worldId", context.worldId(), "dimension", context.dimension())).stream()
+			.anyMatch(fact -> "crafting_table".equals(fact.payload().get("kind"))
+				&& context.actorId().equals(fact.payload().get("availableToActor")));
+		if ("WORKBENCH_3X3".equals(gridKind)
+			&& !"minecraft:crafting_table".equals(outputItemId)
+			&& existingGoalCount(ActionGoal.inventoryItem("minecraft:crafting_table", 1)) < 1
+			&& !nearbyWorkbench) {
+			// One portable table serves the entire batch, not one table per recipe run.
+			effective.merge(workbenchSetupPlankItemId(inputCounts), 4, Integer::sum);
 		}
-		LinkedHashMap<String, Integer> effective = new LinkedHashMap<>(inputCounts);
-		effective.merge(workbenchSetupPlankItemId(inputCounts), 4, Integer::sum);
 		return effective;
 	}
 

@@ -572,6 +572,12 @@ public final class CraftingTaskExecutor implements WorldTaskExecutor {
 		return cursorEmpty ? CraftingScreenDisposition.CLOSE_OPEN_SCREEN : CraftingScreenDisposition.FAIL;
 	}
 
+	/** Observe the same usable workbench candidates that execution can open or approach. */
+	public static Optional<BlockPos> nearbyCraftingTablePosition(MinecraftClient client) {
+		if (client == null || client.player == null) return Optional.empty();
+		return findNearbyCraftingTable(client, client.player).map(TableTarget::tablePos);
+	}
+
 	private static Optional<TableTarget> findNearbyCraftingTable(MinecraftClient client, ClientPlayerEntity player) {
 		if (client.world == null) {
 			return Optional.empty();

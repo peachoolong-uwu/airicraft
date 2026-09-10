@@ -26,6 +26,41 @@ class AiricraftProviderPlanningTest {
 		100
 	);
 
+	@Test void nearbyWorkbenchAvoidsPortableTableMaterials() {
+		ActionFactStore facts = bedPlanningFacts(6, 3);
+		facts.upsert(new ActionFact(ActionFactIdentity.worldSite("world-a", "minecraft:overworld", "crafting-table:255,63,481"),
+			Map.of("kind", "crafting_table", "availableToActor", "bot"), ActionFactProvenance.OBSERVED, 100, 101));
+		var result = resolve(facts, BlockAcquisitionIndex.empty(), NearbyBlockAvailability.unknown(), ActionGoal.inventoryItem("minecraft:white_bed", 1));
+		assertTrue(result.resolved());
+		assertEquals(List.of("bed"), result.route().steps().stream().map(step -> step.args().get("recipeId")).toList());
+	}
+
+	@Test void portableTableMaterialsAreReservedOncePerCraftingBatch() {
+		var result = resolve(bedPlanningFacts(10, 6), BlockAcquisitionIndex.empty(), NearbyBlockAvailability.unknown(), ActionGoal.inventoryItem("minecraft:white_bed", 2));
+		assertTrue(result.resolved());
+		assertEquals(List.of("bed"), result.route().steps().stream().map(step -> step.args().get("recipeId")).toList());
+	}
+
+	@Test void staleWorkbenchDoesNotRemovePortableSetupRequirement() {
+		ActionFactStore facts = bedPlanningFacts(6, 3);
+		facts.upsert(new ActionFact(ActionFactIdentity.worldSite("world-a", "minecraft:overworld", "crafting-table:255,63,481"),
+			Map.of("kind", "crafting_table", "availableToActor", "bot"), ActionFactProvenance.OBSERVED, 99, 100));
+		var result = resolve(facts, BlockAcquisitionIndex.empty(), NearbyBlockAvailability.unknown(), ActionGoal.inventoryItem("minecraft:white_bed", 1));
+		assertTrue(result.resolved());
+		assertEquals(List.of("planks", "bed"), result.route().steps().stream().map(step -> step.args().get("recipeId")).toList());
+	}
+
+	private static ActionFactStore bedPlanningFacts(int planks, int wool) {
+		var facts = new ActionFactStore();
+		Map.of("minecraft:pale_oak_planks", planks, "minecraft:white_wool", wool, "minecraft:pale_oak_log", 2).forEach((item, count) ->
+			facts.upsert(new ActionFact(ActionFactIdentity.inventoryItem("world-a", "bot", item), Map.of("count", count), ActionFactProvenance.OBSERVED, 90, ActionFact.NEVER_STALE)));
+		facts.upsert(new ActionFact(ActionFactIdentity.craftRecipe("world-a", "bot", "bed"),
+			Map.of("outputItemId", "minecraft:white_bed", "outputCount", 1, "inputCounts", Map.of("minecraft:pale_oak_planks", 3, "minecraft:white_wool", 3), "gridKind", "WORKBENCH_3X3"),
+			ActionFactProvenance.OBSERVED, 90, ActionFact.NEVER_STALE));
+		addCraftRecipeFact(facts, "planks", "minecraft:pale_oak_planks", 4, Map.of("minecraft:pale_oak_log", 1));
+		return facts;
+	}
+
 	@Test
 	void productionPlanningPlansDiamondFromEmptyInventoryWithFullRecipeNoise() {
 		ActionFactStore facts = new ActionFactStore();

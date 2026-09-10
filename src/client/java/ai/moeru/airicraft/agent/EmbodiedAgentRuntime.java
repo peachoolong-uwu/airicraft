@@ -40,6 +40,7 @@ import ai.moeru.airicraft.agent.actions.ActionGraphPrimitiveDispatch;
 import ai.moeru.airicraft.agent.actions.ActionGraphPrimitiveDispatchResult;
 import ai.moeru.airicraft.agent.actions.ActionGraphPrimitiveMapper;
 import ai.moeru.airicraft.agent.actions.ActionFact;
+import ai.moeru.airicraft.agent.actions.ActionFactProvenance;
 import ai.moeru.airicraft.agent.actions.ActionFactIdentity;
 import ai.moeru.airicraft.agent.actions.ActionFactType;
 import ai.moeru.airicraft.agent.actions.ActionGoal;
@@ -1683,15 +1684,22 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		Map<String, ActionWatchProgressObservation> watchProgress = actionGraphWatchProgress(client, context, agentPosition, pendingWatches);
 		ArrayList<ActionFact> observedFacts = new ArrayList<>(FarmBootstrapFactProvider.fromWorldEvidence(context, worldEvidence));
 		observedFacts.addAll(observeSmeltingProcessFacts(context));
-		boolean discoverNearbyCrops = actionGraphCoordinator.nonterminalExecutions().stream()
+		boolean refreshPlanningObservations = actionGraphCoordinator.nonterminalExecutions().stream()
 			.map(ActionGraphExecutionView::execution)
 			.anyMatch(execution -> execution.state() == ai.moeru.airicraft.agent.actions.ActionGraphExecutionState.RESOLVING
 				|| execution.state() == ai.moeru.airicraft.agent.actions.ActionGraphExecutionState.REPLANNING);
 		List<ActionGraphWatchSnapshot> cropWatches = pendingWatches.stream()
 			.filter(watch -> watch.spec() != null && watch.spec().condition().factType() == ActionFactType.WORLD_CROP_GROUP)
 			.toList();
-		if (discoverNearbyCrops || (!cropWatches.isEmpty() && tickCount % 10L == 0L)) {
-			observedFacts.addAll(observeCropGroupFacts(client, context, cropWatches, discoverNearbyCrops));
+		if (refreshPlanningObservations) {
+			ai.moeru.airicraft.agent.tasks.CraftingTaskExecutor.nearbyCraftingTablePosition(client).ifPresent(pos ->
+				observedFacts.add(new ActionFact(
+					ActionFactIdentity.worldSite(context.worldId(), context.dimension(), "crafting-table:" + pos.getX() + "," + pos.getY() + "," + pos.getZ()),
+					Map.of("kind", "crafting_table", "availableToActor", context.actorId(), "x", pos.getX(), "y", pos.getY(), "z", pos.getZ()),
+					ActionFactProvenance.OBSERVED, context.currentTick(), context.currentTick() + 1)));
+		}
+		if (refreshPlanningObservations || (!cropWatches.isEmpty() && tickCount % 10L == 0L)) {
+			observedFacts.addAll(observeCropGroupFacts(client, context, cropWatches, refreshPlanningObservations));
 		}
 		actionGraphCoordinator.tick(new ActionGraphExecutionInput(
 			context,
