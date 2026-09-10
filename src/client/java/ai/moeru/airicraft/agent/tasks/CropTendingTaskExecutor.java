@@ -100,14 +100,23 @@ public final class CropTendingTaskExecutor implements WorldTaskExecutor {
 		}
 		else if (phase == Phase.HARVEST) {
 			if (environment.state(target(), args) != Cell.MATURE) enter(Phase.SELECT);
-			else if (environment.harvest(target(), args)) { harvested++; enter(Phase.COLLECT); }
+			else if (environment.harvest(target(), args)) { harvested++; work = null; enter(Phase.COLLECT); }
 		}
 		else if (phase == Phase.COLLECT) {
-			if (distanceSquared(environment.position(), target()) <= 2.25) {
+			Optional<GoalPosition> pickup = environment.pickupPosition(target(), args);
+			if (pickup.isEmpty()) {
 				release(session);
 				if (phaseTicks >= 20) enter(Phase.PLANT);
 			}
-			else if (!navigate(target())) return finish(session, false, "crop_pickup_approach_failed");
+			else {
+				if (!pickup.get().equals(work)) {
+					release(session);
+					work = pickup.get();
+				}
+				if (BaritoneReleaseBarrier.released(navigation) || navigationOwned) {
+					if (!navigate(work)) return finish(session, false, "crop_pickup_approach_failed");
+				}
+			}
 		}
 		else if (phase == Phase.PLANT || phase == Phase.PLANTING) {
 			if (!BaritoneReleaseBarrier.released(navigation) && navigationOwned) {
@@ -201,6 +210,7 @@ public final class CropTendingTaskExecutor implements WorldTaskExecutor {
 		GoalPosition workPosition(GoalPosition crop);
 		boolean canHarvest(GoalPosition crop);
 		boolean harvest(GoalPosition crop, CropTendingStepArgs args);
+		Optional<GoalPosition> pickupPosition(GoalPosition crop, CropTendingStepArgs args);
 		int seedCount(String seedItemId);
 	}
 }

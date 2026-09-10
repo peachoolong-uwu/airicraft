@@ -5,17 +5,21 @@ import ai.moeru.airicraft.agent.goals.GoalPosition;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.CropBlock;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.BlockItem;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
 import java.util.Comparator;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.StreamSupport;
 
 import static ai.moeru.airicraft.agent.tasks.CropTendingTaskExecutor.Cell;
@@ -106,5 +110,19 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 			if (Registries.ITEM.getId(stack.getItem()).toString().equals(seedItemId)) count += stack.getCount();
 		}
 		return count;
+	}
+
+	@Override public Optional<GoalPosition> pickupPosition(GoalPosition crop, CropTendingStepArgs args) {
+		Set<String> drops = switch (args.seedItemId()) {
+			case "minecraft:wheat_seeds" -> Set.of(args.seedItemId(), "minecraft:wheat");
+			case "minecraft:beetroot_seeds" -> Set.of(args.seedItemId(), "minecraft:beetroot");
+			case "minecraft:potato" -> Set.of(args.seedItemId(), "minecraft:poisonous_potato");
+			default -> Set.of(args.seedItemId());
+		};
+		return client().world.getEntitiesByClass(ItemEntity.class, new Box(block(crop)).expand(3),
+			item -> item.isAlive() && drops.contains(Registries.ITEM.getId(item.getStack().getItem()).toString()))
+			.stream().min(Comparator.comparingDouble(item -> item.squaredDistanceTo(client().player)))
+			// Drops on farmland rest just below integer feet Y; keep the crop's walking level.
+			.map(item -> new GoalPosition(item.getBlockX(), crop.y(), item.getBlockZ(), true));
 	}
 }

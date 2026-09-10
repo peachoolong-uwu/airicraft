@@ -9,6 +9,35 @@ import static org.junit.jupiter.api.Assertions.*;
 import static ai.moeru.airicraft.agent.tasks.CropTendingTaskExecutor.Cell;
 
 class CropTendingTaskExecutorTest {
+	@Test void nearbyCropIsNotProofThatItsScatteredDropsWereCollected() {
+		Fixture f = new Fixture();
+		f.env.cells.put(pos(0), Cell.MATURE);
+		f.env.drop = pos(1);
+		f.tick(40);
+		assertTrue(f.planting.planted.isEmpty(), "Do not replant while harvest drops remain nearby");
+		assertTrue(f.nav.goals.contains(pos(1)));
+		assertTrue(f.events.isEmpty());
+		// The first pile is picked up, but a second pile remains on the other side.
+		f.env.drop = pos(-1);
+		f.tick(4);
+		assertTrue(f.nav.goals.contains(pos(-1)));
+		assertTrue(f.planting.planted.isEmpty());
+		f.env.drop = null;
+		f.tick(30);
+		assertEquals(List.of(pos(0)), f.planting.planted);
+		assertEquals(TaskExecutionState.COMPLETED, f.events.getFirst().terminalState());
+	}
+
+	@Test void uncollectedDropsTimeOutInsteadOfReportingHarvestSuccess() {
+		Fixture f = new Fixture();
+		f.env.cells.put(pos(0), Cell.MATURE);
+		f.env.drop = pos(1);
+		f.tick(250);
+		assertTrue(f.planting.planted.isEmpty());
+		assertEquals(TaskExecutionState.FAILED, f.events.getFirst().terminalState());
+		assertFalse(f.nav.active);
+	}
+
 	@Test void harvestsReplantsAndUsesSurplusSeedsOnEmptyFarmlandInOnePass() {
 		Fixture f = new Fixture();
 		f.env.cells.put(pos(0), Cell.MATURE);
@@ -106,6 +135,8 @@ class CropTendingTaskExecutorTest {
 		int seeds;
 		boolean reachable = true;
 		String validationError;
+		GoalPosition drop;
+		public Optional<GoalPosition> pickupPosition(GoalPosition crop, CropTendingStepArgs args) { return Optional.ofNullable(drop); }
 		public String validate(CropTendingStepArgs args) { return validationError; }
 		public Cell state(GoalPosition pos, CropTendingStepArgs args) { return cells.getOrDefault(pos, Cell.OTHER); }
 		public GoalPosition position() { return pos(0); }
