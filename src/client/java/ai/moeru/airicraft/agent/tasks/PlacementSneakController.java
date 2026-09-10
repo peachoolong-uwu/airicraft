@@ -23,6 +23,10 @@ final class PlacementSneakController {
 	}
 
 	static Preparation preparation(boolean ownsSneakKey, boolean sneakKeyPressed, boolean playerSneaking) {
+		// Navigation release can clear keys after placement first presses them.
+		if (ownsSneakKey && !sneakKeyPressed) {
+			return Preparation.PRESS_AND_WAIT;
+		}
 		if (playerSneaking) {
 			return Preparation.READY;
 		}

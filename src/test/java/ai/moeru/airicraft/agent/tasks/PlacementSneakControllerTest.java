@@ -26,6 +26,19 @@ class PlacementSneakControllerTest {
 	}
 
 	@Test
+	void restoresOwnedSneakInputClearedDuringNavigationRelease() {
+		assertEquals(
+			PlacementSneakController.Preparation.PRESS_AND_WAIT,
+			PlacementSneakController.preparation(true, false, false)
+		);
+		// The player flag can still reflect the preceding tick after the key was cleared.
+		assertEquals(
+			PlacementSneakController.Preparation.PRESS_AND_WAIT,
+			PlacementSneakController.preparation(true, false, true)
+		);
+	}
+
+	@Test
 	void placementIsReadyOnlyAfterPlayerIsSneaking() {
 		assertEquals(
 			PlacementSneakController.Preparation.READY,
