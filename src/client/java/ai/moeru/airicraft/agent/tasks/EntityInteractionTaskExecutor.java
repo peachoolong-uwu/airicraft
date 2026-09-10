@@ -44,6 +44,7 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	private boolean landedAttack;
 	private int outOfRangeTicks;
 	private int busyStateTicks;
+	private int attackHotbarSlot = -1;
 	private GoalPosition chaseGoal;
 	private int chaseGoalRefreshTicks;
 	private TaskExecutionSnapshot snapshot = TaskExecutionSnapshot.idle();
@@ -113,6 +114,9 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "interaction_busy"));
 		}
 		busyStateTicks = 0;
+		if (request.type() == WorldTaskType.ATTACK_ENTITY && attackHotbarSlot < 0) {
+			attackHotbarSlot = player.getInventory().getSelectedSlot();
+		}
 
 		Selection selection = resolveSelection(client, player, interaction(request).selector());
 		if (selection.status() != EntitySelectorResolver.SelectionStatus.SELECTED) {
@@ -189,6 +193,9 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	) {
 		movementController.stop(client);
 		cancelBaritoneChase();
+		// Chase navigation may select tools or building blocks. Restore the hand
+		// chosen for this attack before evaluating its cooldown or sending a hit.
+		player.getInventory().setSelectedSlot(attackHotbarSlot);
 		if (player.getAttackCooldownProgress(0.0F) < ATTACK_READY_THRESHOLD) {
 			snapshot = snapshot(TaskExecutionState.RUNNING, request, "attack_cooldown");
 			return Optional.empty();
@@ -496,6 +503,7 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private void reset() {
+		attackHotbarSlot = -1;
 		appliedTask = null;
 		terminalEventEmitted = false;
 		landedAttack = false;

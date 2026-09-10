@@ -35,3 +35,17 @@ These checkpoints guide testing; they are not claims of completion.
 Use existing structured feature/block queries to locate a suitable surface camp with soil and water, then exercise food and shelter. The existing mining proof already covers buried coal and iron. Do not require returning to the old underground furnace before making progress: its location is recorded, and a new furnace is cheap from the carried cobblestone. Revisit route failure if it blocks useful travel or can be minimized during the run.
 
 Next: inspect available feature-query contracts, find surface opportunities, and select a camp using explicit coordinates and named-place memory.
+
+### D002 — First food loop and attack-hand ownership
+
+- The forest feature's explicit stand coordinate `(203,98,446)` was reachable. A high-level inventory goal crafted a stone axe, including ingredients and workstation use, in one request (`action-graph-2dd5d0f0-0747-4450-8fd9-618a77f7d9da`). It used two logs; optimization of recipe yield/replanning is not yet justified by this single run.
+- Equipped the axe, then killed pig `a1643344` through `attack_entity`. The recorder shows `minecraft:cobblestone` held during repeated `attack_cooldown` snapshots and the landed hit at tick 13010: chase navigation selected a building block and the attack executor never restored the chosen hand. This is a confirmed execution inefficiency, not a lethal mob-reflex result.
+- Narrow fix: capture the selected hotbar slot when an attack begins and restore it before cooldown checks and hits. Existing focused entity-interaction tests pass; live second-hunt validation pending. HotSwap applied without restarting the client.
+- Pork pickup required a separate explicit navigation to the observed drop at `(218,104,453)`; inventory confirmed three porkchops. This matches the attack tool's kill contract, but repeated hunt/pickup overhead may justify a food-acquisition primitive after more evidence.
+- Started a high-level cooked-porkchop inventory goal. Raw evidence: `run/playtest/2026-09-11/{axe-graph,hunt-pig,pork-pickup}-status.txt`, `hunt-weapon.jsonl`, `events-first-food.txt`.
+
+D002 outcome: the cooked-porkchop goal succeeded and inventory confirmed one cooked porkchop (two raw retained). The second hunt (`b9933ea1`) succeeded after HotSwap; recorder snapshots at ticks 13756/13761 show the stone axe during attack cooldown, and the target died at 13788 with the axe selected. This validates hand restoration live, not a controlled speed benchmark across identical terrain. Evidence: `hunt-hand-fixed.jsonl`. No production logging or new test-only abstractions were added; existing entity-interaction regressions passed.
+
+### D003 — Surface-filtered feature queries
+
+The current water feature search has no surface constraint. Its nearest results from the initial position offered water around Y=42–62 while our useful terrain was near Y=98–110, requiring extra inspection to distinguish caves from river/lake shores. Add optional `surfaceOnly` to the existing query, filtering target and standing positions while preserving the connected-water evidence. Use the same ground classification as acquisition (ignore logs/leaves as roofs). This is a focused observation enhancement driven by camp/farm selection, not a general map or memory rewrite.
