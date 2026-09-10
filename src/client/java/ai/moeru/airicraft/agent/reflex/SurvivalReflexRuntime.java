@@ -372,7 +372,7 @@ public final class SurvivalReflexRuntime {
 		if (snapshot.action() != SurvivalReflexAction.DEFEND) {
 			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
 		}
-		equipBestCombatHotbarItem(player);
+		equipBestCombatItem(client, player);
 		attemptCloseQuarterAttack(client, player, threats, tick);
 		SecurityKind security = assessMobSecurity(player, threats, tick);
 		if (security == SecurityKind.SEALED) {
@@ -497,6 +497,7 @@ public final class SurvivalReflexRuntime {
 		player.swingHand(Hand.MAIN_HAND);
 		pendingEvents.add(new SurvivalReflexEvent("reflex.close_quarter_attack", mapOfNullable(
 			"threatUuid", threat.observed().uuid(),
+			"weaponItemId", Registries.ITEM.getId(player.getMainHandStack().getItem()).toString(),
 			"entityTypeId", threat.observed().entityTypeId(),
 			"distance", threat.distance(),
 			"action", snapshot.action() == null ? null : snapshot.action().name(),
@@ -504,26 +505,41 @@ public final class SurvivalReflexRuntime {
 		)));
 	}
 
-	private static void equipBestCombatHotbarItem(ClientPlayerEntity player) {
-		if (player == null) {
+	private static void equipBestCombatItem(MinecraftClient client, ClientPlayerEntity player) {
+		List<String> itemIds = new ArrayList<>();
+		for (int slot = 0; slot < net.minecraft.entity.player.PlayerInventory.MAIN_SIZE; slot++)
+			itemIds.add(Registries.ITEM.getId(player.getInventory().getStack(slot).getItem()).toString());
+		int bestSlot = bestCombatInventorySlot(itemIds);
+		if (bestSlot < 0) return;
+		if (bestSlot < 9) {
+			player.getInventory().setSelectedSlot(bestSlot);
 			return;
 		}
+		if (client.interactionManager == null) return;
+		// Match backing inventory indices, since an interrupted task may have a container open.
+		for (var slot : player.currentScreenHandler.slots) {
+			if (slot.inventory == player.getInventory() && slot.getIndex() == bestSlot) {
+				client.interactionManager.clickSlot(player.currentScreenHandler.syncId, slot.id,
+					player.getInventory().getSelectedSlot(), net.minecraft.screen.slot.SlotActionType.SWAP, player);
+				return;
+			}
+		}
+	}
+
+	static int bestCombatInventorySlot(List<String> itemIds) {
 		int bestSlot = -1;
 		int bestRank = Integer.MAX_VALUE;
-		for (int slot = 0; slot < 9; slot++) {
-			String itemId = Registries.ITEM.getId(player.getInventory().getStack(slot).getItem()).toString();
-			int rank = combatHotbarRank(itemId);
+		for (int slot = 0; slot < Math.min(net.minecraft.entity.player.PlayerInventory.MAIN_SIZE, itemIds.size()); slot++) {
+			int rank = combatItemRank(itemIds.get(slot));
 			if (rank < bestRank) {
 				bestRank = rank;
 				bestSlot = slot;
 			}
 		}
-		if (bestSlot >= 0 && player.getInventory().getSelectedSlot() != bestSlot) {
-			player.getInventory().setSelectedSlot(bestSlot);
-		}
+		return bestSlot;
 	}
 
-	static int combatHotbarRank(String itemId) {
+	static int combatItemRank(String itemId) {
 		return switch (itemId == null ? "" : itemId) {
 			case "minecraft:netherite_sword" -> 0;
 			case "minecraft:diamond_sword" -> 1;

@@ -15,6 +15,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void combatCanRetrieveSwordFromMainInventory() {
+		var inventory = new java.util.ArrayList<>(java.util.Collections.nCopies(36, "minecraft:air"));
+		inventory.set(6, "minecraft:iron_pickaxe");
+		inventory.set(27, "minecraft:iron_sword");
+		assertEquals(27, SurvivalReflexRuntime.bestCombatInventorySlot(inventory));
+		inventory.set(2, "minecraft:iron_sword");
+		assertEquals(2, SurvivalReflexRuntime.bestCombatInventorySlot(inventory));
+		assertEquals(-1, SurvivalReflexRuntime.bestCombatInventorySlot(java.util.List.of("minecraft:dirt")));
+	}
+
 	@Test
 	void drowningStartsAtLowAirThresholdOrFromDrowningDamage() {
 		assertTrue(SurvivalReflexRuntime.shouldStartDrowning(true, 100, 100, false));
@@ -118,11 +128,11 @@ class SurvivalReflexRuntimeTest {
 
 	@Test
 	void ranksCombatHotbarItemsAheadOfIncidentalBlocks() {
-		assertTrue(SurvivalReflexRuntime.combatHotbarRank("minecraft:stone_pickaxe")
-			< SurvivalReflexRuntime.combatHotbarRank("minecraft:leaf_litter"));
-		assertTrue(SurvivalReflexRuntime.combatHotbarRank("minecraft:iron_sword")
-			< SurvivalReflexRuntime.combatHotbarRank("minecraft:stone_pickaxe"));
-		assertEquals(Integer.MAX_VALUE, SurvivalReflexRuntime.combatHotbarRank("minecraft:dirt"));
+		assertTrue(SurvivalReflexRuntime.combatItemRank("minecraft:stone_pickaxe")
+			< SurvivalReflexRuntime.combatItemRank("minecraft:leaf_litter"));
+		assertTrue(SurvivalReflexRuntime.combatItemRank("minecraft:iron_sword")
+			< SurvivalReflexRuntime.combatItemRank("minecraft:stone_pickaxe"));
+		assertEquals(Integer.MAX_VALUE, SurvivalReflexRuntime.combatItemRank("minecraft:dirt"));
 	}
 
 	@Test
