@@ -4,6 +4,7 @@ import ai.moeru.airicraft.agent.goals.AcquisitionConstraints;
 import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
 import ai.moeru.airicraft.agent.goals.GoalMineSpec;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
+import baritone.api.BaritoneAPI;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.ItemEntity;
@@ -29,7 +30,9 @@ import static ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor.*;
 final class MinecraftAcquisitionEnvironment implements Environment {
 	private BlockPos breaking;
 	private MinecraftClient client() { return MinecraftClient.getInstance(); }
-	@Override public GoalPosition position() { return position(client().player.getBlockPos()); }
+	@Override public GoalPosition position() {
+		return position(BaritoneAPI.getProvider().getPrimaryBaritone().getPlayerContext().playerFeet());
+	}
 	@Override public int inventoryCount(GoalMineSpec spec) {
 		int count = 0;
 		var inventory = client().player.getInventory();
