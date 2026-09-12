@@ -5,6 +5,16 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SmeltingTaskExecutorTest {
+	@Test void confirmedOpenFurnaceRequiresTheSameScreenAndDimension() {
+		var key = new SmeltingStationKey("minecraft:overworld#open_screen", 4, 0, 0);
+		assertEquals(true, SmeltingTaskExecutor.canCollectFromCurrentScreen(key, "minecraft:overworld", 4, true));
+		assertEquals(false, SmeltingTaskExecutor.canCollectFromCurrentScreen(key, "minecraft:overworld", 5, true));
+		assertEquals(false, SmeltingTaskExecutor.canCollectFromCurrentScreen(key, "minecraft:the_nether", 4, true));
+		assertEquals(false, SmeltingTaskExecutor.canCollectFromCurrentScreen(key, "minecraft:overworld", 4, false));
+		assertEquals(false, SmeltingTaskExecutor.canCollectFromCurrentScreen(null, "minecraft:overworld", 4, true));
+		assertEquals(false, SmeltingTaskExecutor.canCollectFromCurrentScreen(new SmeltingStationKey("minecraft:overworld", 4, 0, 0), "minecraft:overworld", 4, true));
+	}
+
 	@Test
 	void fuelItemsNeededRoundsUpCookTime() {
 		assertEquals(0, SmeltingTaskExecutor.fuelItemsNeeded(0, 1600));

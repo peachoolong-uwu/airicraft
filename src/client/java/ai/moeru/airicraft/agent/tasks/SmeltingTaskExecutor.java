@@ -158,16 +158,15 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		SmeltingStationKey key = processId == null
 			? processManager.confirmedCollectionStationKey(args.confirmationToken())
 			: processManager.processStationKey(processId);
-		BlockPos stationPos = stationPos(key);
-		if (stationPos == null) {
-			return fail(request, TaskFailure.of(TaskFailureCode.UNKNOWN, "station_unavailable"));
-		}
-		StationReadiness stationReadiness = ensureExistingStationOpen(request, client, player, stationPos);
-		if (stationReadiness.failure() != null) {
-			return fail(request, stationReadiness.failure());
-		}
-		if (!stationReadiness.ready()) {
-			return Optional.empty();
+		if (canCollectFromCurrentScreen(key, client.world.getRegistryKey().getValue().toString(),
+			player.currentScreenHandler.syncId, player.currentScreenHandler instanceof AbstractFurnaceScreenHandler)) {
+			openedStationForTask = true;
+		} else {
+			BlockPos stationPos = stationPos(key);
+			if (stationPos == null) return fail(request, TaskFailure.of(TaskFailureCode.ENVIRONMENT_CHANGED, "confirmed_furnace_screen_unavailable"));
+			StationReadiness stationReadiness = ensureExistingStationOpen(request, client, player, stationPos);
+			if (stationReadiness.failure() != null) return fail(request, stationReadiness.failure());
+			if (!stationReadiness.ready()) return Optional.empty();
 		}
 		if (!(player.currentScreenHandler instanceof AbstractFurnaceScreenHandler handler)) {
 			return fail(request, TaskFailure.of(TaskFailureCode.UNKNOWN, "furnace_screen_not_open"));
@@ -178,7 +177,10 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 			snapshot = snapshot(TaskExecutionState.RUNNING, request, "waiting_for_output");
 			return Optional.empty();
 		}
+		if (!handler.getCursorStack().isEmpty()) return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "cursor_not_empty"));
 		client.interactionManager.clickSlot(handler.syncId, 2, 0, SlotActionType.QUICK_MOVE, player);
+		if (!handler.getSlot(2).getStack().isEmpty())
+			return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "inventory_full remainingOutput=" + handler.getSlot(2).getStack().getCount()));
 		if (processId != null) {
 			processManager.cancel(processId);
 		}
@@ -580,6 +582,10 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 
 	private static boolean withinInteractionRange(ClientPlayerEntity player, BlockPos pos) {
 		return player.squaredDistanceTo(Vec3d.ofCenter(pos)) <= INTERACTION_RANGE_SQUARED;
+	}
+
+	static boolean canCollectFromCurrentScreen(SmeltingStationKey key, String dimension, int syncId, boolean furnaceScreen) {
+		return key != null && furnaceScreen && key.dimensionId().equals(dimension + "#open_screen") && key.x() == syncId;
 	}
 
 	private static BlockPos stationPos(SmeltingStationKey key) {
