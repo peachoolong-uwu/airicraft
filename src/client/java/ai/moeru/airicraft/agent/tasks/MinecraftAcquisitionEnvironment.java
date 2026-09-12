@@ -10,6 +10,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
@@ -54,7 +55,10 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 	@Override public boolean inScope(GoalPosition position, AcquisitionConstraints constraints, boolean standing) {
 		BlockPos pos = block(position);
 		if (!constraints.contains(position) || !client().world.isChunkLoaded(pos)) return false;
-		return !constraints.surfaceOnly() || pos.getY() >= surfaceGroundY(pos) + (standing ? 1 : 0);
+		if (!constraints.surfaceOnly()) return true;
+		int groundY = surfaceGroundY(pos);
+		boolean waterSurface = client().world.getFluidState(new BlockPos(pos.getX(), groundY, pos.getZ())).isIn(FluidTags.WATER);
+		return SurfaceTerrain.isSurfacePosition(pos.getY(), groundY, standing, waterSurface);
 	}
 
 	private int surfaceGroundY(BlockPos column) {

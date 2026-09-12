@@ -11,6 +11,11 @@ import net.minecraft.world.World;
 public final class SurfaceTerrain {
 	private SurfaceTerrain() {}
 
+	public static boolean isSurfacePosition(int y, int groundY, boolean standing, boolean waterSurface) {
+		// Swimming feet and floating drops occupy the top water block, not the air above it.
+		return y >= groundY + (standing && !waterSurface ? 1 : 0);
+	}
+
 	public static int groundY(World world, BlockPos column) {
 		int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, column.getX(), column.getZ()) - 1;
 		while (y > world.getBottomY()) {

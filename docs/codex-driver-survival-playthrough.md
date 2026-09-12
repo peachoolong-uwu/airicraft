@@ -298,3 +298,7 @@ Confirmed, bypassable: navigation from the shelter reopened the new barrel after
 ### 2026-09-13: Mixed fuel requires separate cooking batches
 
 Bypassable limitation: four raw porkchops and enough combined wood fuel were carried, but `check_smeltables` reported no automatic fuel for the full batch because selection uses one fuel type. Two spare doors cooked two porkchops; three slabs cooked the other two in a second batch. All four outputs were collected and one stored with a verified logbook entry. See D061. No progression blocker or furnace fix is claimed.
+
+### 2026-09-13: Surface swimming rejected by resource scope
+
+Confirmed and fixed: collecting shore logs with `surfaceOnly=true` failed when feet entered the top water block at Y62. The scope check required Y63 as though water were solid ground. Preserve the dry-ground boundary, but admit feet and floating drops in the top water layer while still excluding deeper positions. The identical one-log request failed immediately before the patch and completed after HotSwap, raising oak logs two to three. Focused regression/acquisition tests and full build passed. See D064 and `surface-water-fixed.jsonl`.
