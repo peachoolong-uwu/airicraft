@@ -9,6 +9,7 @@ import baritone.api.event.events.PathEvent;
 import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalNear;
+import baritone.api.pathing.goals.GoalXZ;
 import baritone.api.process.IBaritoneProcess;
 import net.minecraft.util.math.BlockPos;
 
@@ -94,7 +95,9 @@ public final class LiveBaritoneFacade implements BaritoneFacade {
 			return;
 		}
 		beginOperation();
-		baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(position.x(), position.y(), position.z()));
+		baritone.getCustomGoalProcess().setGoalAndPath(position.exactY()
+			? new GoalBlock(position.x(), position.y(), position.z())
+			: new GoalXZ(position.x(), position.z()));
 	}
 
 	@Override
@@ -223,7 +226,6 @@ public final class LiveBaritoneFacade implements BaritoneFacade {
 				&& playerBlockPos.getZ() == position.z();
 		}
 		return playerBlockPos.getX() == position.x()
-			&& playerBlockPos.getZ() == position.z()
-			&& Math.abs(playerBlockPos.getY() - position.y()) <= 1;
+			&& playerBlockPos.getZ() == position.z();
 	}
 }

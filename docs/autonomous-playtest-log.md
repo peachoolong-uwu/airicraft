@@ -368,3 +368,17 @@ Surface observations returned water hazards and standing candidates. With breaki
 The return to remembered `(263,65,471)` completed with excavation and placement still disabled. This validates a bounded passage visit and return, not natural-cave discovery or ore acquisition. Deeper natural-cave exploration remains the next live acceptance boundary.
 
 Final checkpoint: return to shore shelter `(257,63,480)` also completed. Restored `allowBreak=true` and `allowPlace=true`, closed and inspected the door, and confirmed health/food 20, shield 332/336, five torches and fifteen free storage slots. `read_logbook` still returned the dated home chest stock (89 cobblestone and the other stored supplies). Paused under debug session `4bb2a732-8469-40f2-a162-1b7b2dbb5ad4`, epoch 1. `final-home.jsonl` contains 1,479 observations with frames, not truncated. The live client remains paused for the next session.
+
+### D046 — Furnace insertion and cave resupply
+
+Resumed the continuing playtest goal from the paused home checkpoint. Started charcoal process `smelt-process-fff382e7-e515-4b9b-ae82-3839e179ef9b` in the home furnace `(255,63,479)`, using two carried oak logs and two dark-oak planks as fuel. Server history recorded both exact insertions and the stock snapshot (`charcoal-insertion-logbook.txt`). Collection completed with two charcoal in inventory; `charcoal-collected-logbook.txt` records the withdrawal and empty furnace observation. This closes the prior furnace-insertion live evidence gap.
+
+Crafted two charcoal-and-stick recipe runs, increasing torches from 5 to 13. Kept digging/placement disabled and began searching beyond the already visited workstation passage for a natural cave. The shoreline ledge only exposed water and steep dirt; continue from the remembered forest station instead of repeating its unhelpful survey points.
+
+### D047 — Honor horizontal navigation instead of digging for Y
+
+The forest search requested `(215,103,416)` with `exactY=false`. It arrived at `(215,97,416)` but reported CALC_FAILED. Paused immediately and exported `horizontal-arrival.jsonl` (2,841 observations with frames, not truncated), plus status/inventory/events. This freshly reproduces the older `exactY:false` contract defect: `startNavigate` always constructed `GoalBlock`, and completion only relaxed height by one block. Disabling excavation prevented this trial from digging toward the irrelevant Y.
+
+Added an injected-facade regression using the observed coordinates. It failed against the original code. Horizontal goals now use `GoalXZ` and X/Z-only completion; exact goals retain `GoalBlock` and exact completion. Workbench standing positions and exact surface-return refinement explicitly retain their required Y. Near-interaction routes still use their existing three-dimensional `GoalNear`. Clarified both public tool descriptions. Focused navigation/crafting/surface tests and the full build passed.
+
+HotSwapped three runtime classes. Retrying the original request completed at the same arrival point. A fresh 24-block northward request `(215,103,392,false)` then completed at `(215,93,392)` with health 20 and excavation/placement disabled (`horizontal-new-route-{status,inventory}.txt`). This verifies actual travel across elevation changes, not just completion reconciliation. Continuing the cave search along the hill edge.

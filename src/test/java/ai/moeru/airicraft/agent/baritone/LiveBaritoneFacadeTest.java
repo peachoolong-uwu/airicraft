@@ -12,6 +12,7 @@ import baritone.api.event.listener.IEventBus;
 import baritone.api.pathing.calc.IPathingControlManager;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalNear;
+import baritone.api.pathing.goals.GoalXZ;
 import baritone.api.process.ICustomGoalProcess;
 import baritone.api.process.IFollowProcess;
 import baritone.api.process.IMineProcess;
@@ -56,6 +57,23 @@ class LiveBaritoneFacadeTest {
 		assertEquals(12, goal.x);
 		assertEquals(64, goal.y);
 		assertEquals(-8, goal.z);
+	}
+
+	@Test
+	void horizontalNavigationIgnoresHeightInBothPathAndCompletion() {
+		RecordingBaritoneHarness harness = new RecordingBaritoneHarness();
+		LiveBaritoneFacade facade = new LiveBaritoneFacade(harness.baritone(), () -> {});
+		GoalPosition destination = new GoalPosition(215, 103, 416, false);
+		facade.startNavigate(destination);
+		GoalXZ goal = assertInstanceOf(GoalXZ.class, harness.navigateCalls.getFirst());
+		assertTrue(goal.isInGoal(215, 97, 416));
+		assertTrue(goal.isInGoal(215, 120, 416));
+		assertFalse(goal.isInGoal(214, 97, 416));
+		harness.feet.set(new BetterBlockPos(215, 97, 416));
+		assertTrue(facade.navigationGoalReached(destination));
+		assertFalse(facade.navigationGoalReached(new GoalPosition(215, 103, 416, true)));
+		harness.feet.set(new BetterBlockPos(214, 97, 416));
+		assertFalse(facade.navigationGoalReached(destination));
 	}
 
 	@Test

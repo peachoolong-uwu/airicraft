@@ -57,7 +57,7 @@ public final class PrimitiveActionRegistry {
 				"x", param("integer", true, "Block x coordinate."),
 				"y", param("integer", true, "Block y coordinate."),
 				"z", param("integer", true, "Block z coordinate."),
-				"exactY", param("boolean", false, "Whether y must match exactly.")
+				"exactY", param("boolean", false, "True requires exact x/y/z; false navigates to x/z at any height and ignores y.")
 			),
 			List.of(),
 			List.of(),

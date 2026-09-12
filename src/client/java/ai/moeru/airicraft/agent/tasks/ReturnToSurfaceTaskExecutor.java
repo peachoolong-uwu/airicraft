@@ -247,7 +247,7 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 		WorldTaskRequest request,
 		GoalPosition targetPosition
 	) {
-		baritoneFacade.startNavigate(targetPosition);
+		baritoneFacade.startNavigate(new GoalPosition(targetPosition.x(), targetPosition.y(), targetPosition.z(), true));
 		navigationStarted = true;
 		exactSurfaceNavigationStarted = true;
 		snapshot = snapshot(TaskExecutionState.RUNNING, request, "navigating_exact_surface_target");

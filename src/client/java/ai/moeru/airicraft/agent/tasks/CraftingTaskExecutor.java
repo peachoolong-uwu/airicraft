@@ -628,7 +628,7 @@ public final class CraftingTaskExecutor implements WorldTaskExecutor {
 			}
 			double distance = current.getSquaredDistance(candidate);
 			if (distance < bestDistance) {
-				best = new GoalPosition(candidate.getX(), candidate.getY(), candidate.getZ(), false);
+				best = new GoalPosition(candidate.getX(), candidate.getY(), candidate.getZ(), true);
 				bestDistance = distance;
 			}
 		}

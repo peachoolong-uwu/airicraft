@@ -212,7 +212,7 @@ public final class PlannerToolCatalog {
 				prop("x", number("Block x coordinate.")),
 				prop("y", number("Block y coordinate.")),
 				prop("z", number("Block z coordinate.")),
-				prop("exactY", bool("Whether y must match exactly."))
+				prop("exactY", bool("True requires the exact x/y/z block; false navigates to x/z at any height and ignores y."))
 			), List.of("x", "y", "z", "exactY")), PlannerToolCatalog::validateNavigateToArguments),
 		builtInTool(RETURN_TO_SURFACE, false, tool(RETURN_TO_SURFACE, "Return to the remembered surface or last safe ground after mining. Optionally tower upward with filler blocks if trapped in a shaft.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
