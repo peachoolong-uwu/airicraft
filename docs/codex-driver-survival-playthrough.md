@@ -306,3 +306,9 @@ Confirmed and fixed: collecting shore logs with `surfaceOnly=true` failed when f
 ### 2026-09-13: Charcoal smelting double-counts input logs
 
 Confirmed and fixed: the preview counted input logs again as fuel. A live one-log automatic batch then moved its sole log to the fuel slot and failed `insufficient_input`, despite six available planks. Reserve required inputs before automatic/manual fuel selection and in the preview. After HotSwap, the same automatic batch used one plank and produced one charcoal; an impossible manual shared-log request failed before moving items. Smelting regression tests and full build passed. See D065–D066, `fuel-overlap.jsonl` and `fuel-reservation-fixed.jsonl`.
+
+### 2026-09-13: Exact cave waypoints can become occupied
+
+Bypassable stale memory: return target `(216,67,401)` failed with digging disabled because its feet space now contains dirt. Paused inspection established the obstruction. The adjacent step `(215,67,400)` and updated feet position `(216,68,401)` completed, followed by the short surface route. World bookmarks were corrected. This is not evidence of an A* defect; resample footing when a remembered exact waypoint fails. See D067 and `coal-survey-trip.jsonl`.
+
+Efficiency follow-up: survey-led mining collected eleven coal without selecting hidden ores, but repeated manual approaches and drop-pit navigation were expensive. Reuse System 1 acquisition with an observed/visible target constraint instead of inventing a separate cave mining executor. Fully buried mining should remain available separately.
