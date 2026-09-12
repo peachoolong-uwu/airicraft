@@ -258,7 +258,14 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			}
 			GoalPosition nextChaseGoal = chaseGoalFor(target);
 			if (shouldRefreshChaseGoal(chaseGoal, nextChaseGoal, chaseGoalRefreshTicks)) {
-				navigationFacade.startNavigateNear(nextChaseGoal, BARITONE_CHASE_RADIUS_BLOCKS);
+				if (hasLineOfSight) {
+					navigationFacade.startNavigateNear(nextChaseGoal, BARITONE_CHASE_RADIUS_BLOCKS);
+				}
+				else {
+					// A nearby goal can already be satisfied on the wrong side of an obstruction.
+					// The small feet offset also accounts for shortened support blocks such as farmland.
+					navigationFacade.startNavigate(new GoalPosition(nextChaseGoal.x(), (int) Math.floor(target.getY() + 0.125D), nextChaseGoal.z(), true));
+				}
 				chaseGoal = nextChaseGoal;
 				chaseGoalRefreshTicks = 0;
 			}

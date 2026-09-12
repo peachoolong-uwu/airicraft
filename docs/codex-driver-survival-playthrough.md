@@ -340,3 +340,7 @@ A horizontal dirt platform extension placed its first row but could not find a d
 Confirmed and fixed in a natural pillager encounter: three arrows hit one tick after shield raise. Crossbows wait after charging; the live client exposed a loaded arrow while isUsingItem=false, so the old using-item trigger dropped its guard too early. Guard loaded crossbows, approach melee range while guarding arrows, and counterattack during confirmed reloads without incoming-projectile/ready-weapon/fusing-creeper priority. Preserve shooter-facing and bow release-gap behavior. Same-fight HotSwap verification cleared both pillagers with no further player damage after the first patch. See D073 and `pillager-reload-window-fixed.jsonl`.
 
 D072 bread follow-up: the next hungry request consumed one loaf normally. The server inventory probe established the starting count, but the bounded consumption watch captured no calls. Earlier double decrease remains unexplained; no eating patch.
+
+### 2026-09-13: Nearby interaction stalled behind an obstruction
+
+Confirmed and fixed: use_entity stayed RUNNING beside a chicken because LOS was blocked while its three-block Baritone goal was already satisfied. The live probe reported distance2.1146, LOS=false and no active navigation. An exact feet approach for occluded targets completed the same task twelve ticks after HotSwap. Subsequent feeding produced a third chicken. Existing interaction tests/build passed; see D075 and `chicken-approach-fixed.jsonl`.
