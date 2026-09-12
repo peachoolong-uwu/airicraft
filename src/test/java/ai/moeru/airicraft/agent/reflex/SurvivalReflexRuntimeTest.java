@@ -15,6 +15,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void blocksAnApproachingCreeperBlastBeforeShieldStartupDelay() {
+		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(3.03, 1, 0.35F, false));
+		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(8, 1, 0.8F, true));
+		assertFalse(SurvivalReflexRuntime.shouldBlockCreeper(8, 1, 0.8F, false));
+		assertFalse(SurvivalReflexRuntime.shouldBlockCreeper(3, -1, 0.35F, false));
+		assertFalse(SurvivalReflexRuntime.shouldBlockCreeper(3, 1, 0.1F, false));
+	}
+
 	@Test void combatRoutingPreservesConfiguredPathConstraintsOnStartAndReplan() {
 		var settingsResets = new java.util.concurrent.atomic.AtomicInteger();
 		var routes = new java.util.ArrayList<ai.moeru.airicraft.agent.goals.GoalPosition>();

@@ -380,7 +380,7 @@ public final class SurvivalReflexRuntime {
 			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
 		}
 		equipBestCombatItem(client, player);
-		if (blockProjectileThreat(client, player, threats, tick)) {
+		if (blockShieldThreat(client, player, threats, tick)) {
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
 			return;
 		}
@@ -414,7 +414,7 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
-	private boolean blockProjectileThreat(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+	private boolean blockShieldThreat(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
 		if (client.interactionManager == null) return false;
 		// Resolve the backing inventory index: combat may interrupt an open container.
 		if (!player.getOffHandStack().isOf(net.minecraft.item.Items.SHIELD)) {
@@ -432,7 +432,17 @@ public final class SurvivalReflexRuntime {
 		net.minecraft.util.math.Vec3d aim = null;
 		String source = null;
 		double earliest = Double.POSITIVE_INFINITY;
-		for (var projectile : client.world.getEntitiesByClass(net.minecraft.entity.projectile.PersistentProjectileEntity.class,
+		Float fuseProgress = null;
+		for (ResolvedThreat threat : threats) {
+			if (threat.entity() instanceof net.minecraft.entity.mob.CreeperEntity creeper
+				&& threat.lineOfSight() && shouldBlockCreeper(threat.distance(), creeper.getFuseSpeed(), creeper.getLerpedFuseTime(1), creeper.isCharged())) {
+				aim = shieldFacingPoint(player.getEyePos(), creeper.getPos(), Vec3d.ZERO);
+				source = creeper.getUuidAsString();
+				fuseProgress = creeper.getLerpedFuseTime(1);
+				break;
+			}
+		}
+		if (aim == null) for (var projectile : client.world.getEntitiesByClass(net.minecraft.entity.projectile.PersistentProjectileEntity.class,
 			player.getBoundingBox().expand(24), Entity::isAlive)) {
 			if (projectile.getOwner() == player) continue;
 			var relative = player.getBoundingBox().getCenter().subtract(projectile.getPos());
@@ -467,11 +477,17 @@ public final class SurvivalReflexRuntime {
 		client.options.useKey.setPressed(true);
 		if (!shieldUseOwned) pendingEvents.add(new SurvivalReflexEvent("reflex.shield_raised", mapOfNullable(
 			"sourceUuid", shieldGuard.source(), "incomingProjectile", Double.isFinite(earliest),
+			"creeperFuseProgress", fuseProgress,
 			"shieldDamage", player.getOffHandStack().getDamage(), "health", player.getHealth(), "tick", tick)));
 		shieldUseOwned = true;
 		if (!player.isUsingItem() || player.getActiveHand() != Hand.OFF_HAND)
 			client.interactionManager.interactItem(player, Hand.OFF_HAND);
 		return true;
+	}
+
+	static boolean shouldBlockCreeper(double distance, int fuseSpeed, float fuseProgress, boolean charged) {
+		// Start before the final rush: the vanilla shield needs five ticks to become active.
+		return fuseSpeed > 0 && fuseProgress >= 0.3F && distance <= (charged ? 12 : 6);
 	}
 
 	record ShieldGuard(Vec3d facing, String source, long throughTick) {}
