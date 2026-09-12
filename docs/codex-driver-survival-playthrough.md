@@ -334,3 +334,9 @@ Bypassable fuel-selection inefficiency: the three-iron preview preferred two dar
 One eat_food bread request at hunger15 reduced carried bread3→1 while hunger rose to20; one food.eaten event was emitted. Recorder and settled chest inventory confirm the decrease. Cause and instrumented repeat remain open; no eating patch. See D072 and `bread-use-count.jsonl`.
 
 A horizontal dirt platform extension placed its first row but could not find a dry stance to see the side face for the next row. Reordering alone failed; a water-side approach ultimately completed the second row, with drowning-reflex interruptions and an explicit return to land. Treat as a bypassable construction-stance limitation, not efficient or automatically safe bridging. See D072 and `farm-side-placement.jsonl` / `farm-water-approach.jsonl`.
+
+### 2026-09-13: Loaded crossbows outlasted the shield hold
+
+Confirmed and fixed in a natural pillager encounter: three arrows hit one tick after shield raise. Crossbows wait after charging; the live client exposed a loaded arrow while isUsingItem=false, so the old using-item trigger dropped its guard too early. Guard loaded crossbows, approach melee range while guarding arrows, and counterattack during confirmed reloads without incoming-projectile/ready-weapon/fusing-creeper priority. Preserve shooter-facing and bow release-gap behavior. Same-fight HotSwap verification cleared both pillagers with no further player damage after the first patch. See D073 and `pillager-reload-window-fixed.jsonl`.
+
+D072 bread follow-up: the next hungry request consumed one loaf normally. The server inventory probe established the starting count, but the bounded consumption watch captured no calls. Earlier double decrease remains unexplained; no eating patch.

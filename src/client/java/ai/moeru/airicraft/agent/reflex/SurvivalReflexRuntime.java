@@ -458,21 +458,43 @@ public final class SurvivalReflexRuntime {
 			}
 		}
 		if (aim == null) {
+			boolean reloadingCrossbow = false;
+			boolean otherRangedThreat = false;
 			for (ResolvedThreat threat : threats) {
 				var entity = threat.entity();
-				if (threat.lineOfSight() && entity.isUsingItem()
-					&& (entity.getActiveItem().isOf(net.minecraft.item.Items.BOW)
-						|| entity.getActiveItem().isOf(net.minecraft.item.Items.CROSSBOW))) {
+				if (!threat.lineOfSight()) continue;
+				boolean drawingBow = entity.isUsingItem() && entity.getActiveItem().isOf(net.minecraft.item.Items.BOW);
+				// Crossbows fire after item use ends. Guard the loaded weapon, leaving reload time for counterattacks.
+				var mainHand = entity.getMainHandStack();
+				var offHand = entity.getOffHandStack();
+				boolean loadedCrossbow = (mainHand.isOf(net.minecraft.item.Items.CROSSBOW) && net.minecraft.item.CrossbowItem.isCharged(mainHand))
+					|| (offHand.isOf(net.minecraft.item.Items.CROSSBOW) && net.minecraft.item.CrossbowItem.isCharged(offHand));
+				if (drawingBow || loadedCrossbow) {
 					aim = shieldFacingPoint(player.getEyePos(), entity.getPos(), Vec3d.ZERO);
 					source = entity.getUuidAsString();
 					break;
 				}
+				if (mainHand.isOf(net.minecraft.item.Items.CROSSBOW) || offHand.isOf(net.minecraft.item.Items.CROSSBOW)) {
+					boolean reloading = entity.isUsingItem() && entity.getActiveItem().isOf(net.minecraft.item.Items.CROSSBOW);
+					reloadingCrossbow |= reloading;
+					otherRangedThreat |= !reloading;
+				}
+				otherRangedThreat |= mainHand.isOf(net.minecraft.item.Items.BOW) || offHand.isOf(net.minecraft.item.Items.BOW);
 			}
+			// A confirmed reload cannot fire. Incoming arrows and other ready weapons still take priority above.
+			if (aim == null && reloadingCrossbow && !otherRangedThreat) shieldGuard = null;
 		}
 		shieldGuard = nextShieldGuard(shieldGuard, aim, source, tick);
 		if (shieldGuard == null) return false;
-		stopCombatNavigation();
 		movementController.stop(client);
+		ResolvedThreat approach = threats.isEmpty() ? null : closestVisibleThreat(threats);
+		if (fuseProgress == null && approach != null && approach.distance() > MELEE_ATTACK_DISTANCE
+			&& baritone != null && baritone.isLoaded()) {
+			updateCombatNavigation(goal(approach.entity().getBlockPos()), tick);
+		}
+		else {
+			stopCombatNavigation();
+		}
 		cameraController.lookAtNow(client, new Vec3d(shieldGuard.facing().x, player.getEyeY(), shieldGuard.facing().z));
 		client.options.useKey.setPressed(true);
 		if (!shieldUseOwned) pendingEvents.add(new SurvivalReflexEvent("reflex.shield_raised", mapOfNullable(
