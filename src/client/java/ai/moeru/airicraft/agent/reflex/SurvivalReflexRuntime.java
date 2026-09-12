@@ -21,6 +21,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,6 +59,7 @@ public final class SurvivalReflexRuntime {
 	private GoalPosition combatTarget;
 	private long combatRouteTick;
 	private boolean shieldUseOwned;
+	private ShieldGuard shieldGuard;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
 		this(config, new MovementController(), new CameraController(), null);
@@ -101,6 +103,7 @@ public final class SurvivalReflexRuntime {
 		evidence.put("snapshot", snapshot);
 		evidence.put("combatTarget", combatTarget);
 		evidence.put("shieldUseOwned", shieldUseOwned);
+		evidence.put("shieldGuard", shieldGuard);
 		evidence.put("secureEscapeTicks", secureEscapeTicks);
 		evidence.put("mobRoutesTick", mobRoutesTick);
 		evidence.put("mobRoutes", Map.copyOf(mobRoutes));
@@ -436,9 +439,12 @@ public final class SurvivalReflexRuntime {
 			var velocity = projectile.getVelocity();
 			double arrival = incomingProjectileTicks(relative, velocity);
 			if (arrival < earliest) {
+				Entity shooter = projectile.getOwner();
+				Vec3d facing = shieldFacingPoint(player.getEyePos(), shooter == null ? null : shooter.getPos(), velocity);
+				if (facing == null) continue;
 				earliest = arrival;
-				aim = projectile.getPos();
-				source = projectile.getUuidAsString();
+				aim = facing;
+				source = shooter == null ? null : shooter.getUuidAsString();
 			}
 		}
 		if (aim == null) {
@@ -447,24 +453,39 @@ public final class SurvivalReflexRuntime {
 				if (threat.lineOfSight() && entity.isUsingItem()
 					&& (entity.getActiveItem().isOf(net.minecraft.item.Items.BOW)
 						|| entity.getActiveItem().isOf(net.minecraft.item.Items.CROSSBOW))) {
-					aim = entity.getBoundingBox().getCenter();
+					aim = shieldFacingPoint(player.getEyePos(), entity.getPos(), Vec3d.ZERO);
 					source = entity.getUuidAsString();
 					break;
 				}
 			}
 		}
-		if (aim == null) return false;
+		shieldGuard = nextShieldGuard(shieldGuard, aim, source, tick);
+		if (shieldGuard == null) return false;
 		stopCombatNavigation();
 		movementController.stop(client);
-		cameraController.lookAtNow(client, aim);
+		cameraController.lookAtNow(client, new Vec3d(shieldGuard.facing().x, player.getEyeY(), shieldGuard.facing().z));
 		client.options.useKey.setPressed(true);
 		if (!shieldUseOwned) pendingEvents.add(new SurvivalReflexEvent("reflex.shield_raised", mapOfNullable(
-			"sourceUuid", source, "incomingProjectile", Double.isFinite(earliest),
+			"sourceUuid", shieldGuard.source(), "incomingProjectile", Double.isFinite(earliest),
 			"shieldDamage", player.getOffHandStack().getDamage(), "health", player.getHealth(), "tick", tick)));
 		shieldUseOwned = true;
 		if (!player.isUsingItem() || player.getActiveHand() != Hand.OFF_HAND)
 			client.interactionManager.interactItem(player, Hand.OFF_HAND);
 		return true;
+	}
+
+	record ShieldGuard(Vec3d facing, String source, long throughTick) {}
+
+	static ShieldGuard nextShieldGuard(ShieldGuard previous, Vec3d facing, String source, long tick) {
+		if (facing != null) return new ShieldGuard(facing, source, tick + 20);
+		return previous != null && tick <= previous.throughTick() ? previous : null;
+	}
+
+	/** Shield coverage needs a heading toward the shooter, not an aim lock on an arrow. */
+	static Vec3d shieldFacingPoint(Vec3d eye, Vec3d shooter, Vec3d projectileVelocity) {
+		if (shooter != null) return new Vec3d(shooter.x, eye.y, shooter.z);
+		Vec3d incomingDirection = new Vec3d(-projectileVelocity.x, 0, -projectileVelocity.z);
+		return incomingDirection.lengthSquared() < 0.0001 ? null : eye.add(incomingDirection.normalize().multiply(8));
 	}
 
 	/** Closest approach within the next eight ticks; ignore stopped, receding and passing arrows. */
@@ -478,6 +499,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void releaseShield(MinecraftClient client) {
+		shieldGuard = null;
 		if (!shieldUseOwned) return;
 		shieldUseOwned = false;
 		if (client == null) return;

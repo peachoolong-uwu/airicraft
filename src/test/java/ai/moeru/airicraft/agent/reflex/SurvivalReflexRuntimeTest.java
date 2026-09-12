@@ -15,6 +15,28 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void shieldFacesTheShooterAtEyeLevelInsteadOfTrackingArrowPosition() {
+		var eye = new net.minecraft.util.math.Vec3d(146, 33, 401);
+		var shooter = new net.minecraft.util.math.Vec3d(141, 41, 397);
+		var heading = new net.minecraft.util.math.Vec3d(141, 33, 397);
+		assertEquals(heading, SurvivalReflexRuntime.shieldFacingPoint(eye, shooter, new net.minecraft.util.math.Vec3d(1, -2, 1)));
+		assertEquals(heading, SurvivalReflexRuntime.shieldFacingPoint(eye, shooter, new net.minecraft.util.math.Vec3d(2, -3, 2)));
+		assertEquals(new net.minecraft.util.math.Vec3d(138, 33, 401),
+			SurvivalReflexRuntime.shieldFacingPoint(eye, null, new net.minecraft.util.math.Vec3d(2, -1, 0)));
+		assertNull(SurvivalReflexRuntime.shieldFacingPoint(eye, null, new net.minecraft.util.math.Vec3d(0, -1, 0)));
+	}
+
+	@Test void retainsRaisedShieldAcrossTheRecordedBowReleaseGap() {
+		var shooter = new net.minecraft.util.math.Vec3d(141, 38, 397);
+		var guard = SurvivalReflexRuntime.nextShieldGuard(null, shooter, "skeleton", 14962);
+		guard = SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 14963);
+		assertNotNull(guard, "Releasing here restarts shield startup before the incoming arrow");
+		assertEquals(shooter, guard.facing());
+		guard = SurvivalReflexRuntime.nextShieldGuard(guard, shooter, "skeleton", 14981);
+		assertNotNull(SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 14986));
+		assertNull(SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 15002), "Eventually release to advance and attack");
+	}
+
 	@Test void incomingArrowsExcludeRecedingStoppedAndPassingProjectiles() {
 		var ahead = new net.minecraft.util.math.Vec3d(0, 0, 12);
 		assertEquals(4.0, SurvivalReflexRuntime.incomingProjectileTicks(ahead, new net.minecraft.util.math.Vec3d(0, 0, 3)));
