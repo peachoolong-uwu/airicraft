@@ -122,7 +122,12 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 		return client().world.getEntitiesByClass(ItemEntity.class, new Box(block(crop)).expand(3),
 			item -> item.isAlive() && drops.contains(Registries.ITEM.getId(item.getStack().getItem()).toString()))
 			.stream().min(Comparator.comparingDouble(item -> item.squaredDistanceTo(client().player)))
-			// Drops on farmland rest just below integer feet Y; keep the crop's walking level.
-			.map(item -> new GoalPosition(item.getBlockX(), crop.y(), item.getBlockZ(), true));
+			.map(item -> pickupGoal(item.getBlockPos(), client().world.getBlockState(item.getBlockPos()).isOf(Blocks.FARMLAND)));
+	}
+
+	static GoalPosition pickupGoal(BlockPos drop, boolean onFarmland) {
+		// Farmland's shortened collision box puts resting drops in the soil block.
+		// Elsewhere (including irrigation water), follow the drop's actual level.
+		return new GoalPosition(drop.getX(), drop.getY() + (onFarmland ? 1 : 0), drop.getZ(), true);
 	}
 }
