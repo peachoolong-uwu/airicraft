@@ -60,9 +60,12 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 		var world = client().world;
 		BlockPos target = block(crop);
 		return StreamSupport.stream(BlockPos.iterate(target.add(-3, -1, -3), target.add(3, 1, 3)).spliterator(), false)
-			.filter(pos -> world.isChunkLoaded(pos) && world.getBlockState(pos).isAir() && world.getBlockState(pos.up()).isAir()
-				&& world.getBlockState(pos.down()).isSideSolidFullSquare(world, pos.down(), Direction.UP)
-				&& !world.getBlockState(pos.down()).isOf(Blocks.FARMLAND)
+			.filter(pos -> world.isChunkLoaded(pos)
+				&& world.getBlockState(pos).getCollisionShape(world, pos).isEmpty()
+				&& world.getBlockState(pos.up()).getCollisionShape(world, pos.up()).isEmpty()
+				&& world.getFluidState(pos).isEmpty() && world.getFluidState(pos.up()).isEmpty()
+				&& (world.getBlockState(pos.down()).isSideSolidFullSquare(world, pos.down(), Direction.UP)
+					|| world.getBlockState(pos.down()).isOf(Blocks.FARMLAND))
 				&& visible(Vec3d.ofBottomCenter(pos).add(0, 1.62, 0), target))
 			.map(BlockPos::toImmutable).min(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())))
 			.map(MinecraftCropTendingEnvironment::position).orElse(null);

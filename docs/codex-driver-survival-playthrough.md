@@ -284,3 +284,5 @@ The first-leg flee proposal above is historical: the later user-directed policy 
 
 - Confirmed irrigation pickup bug: crop tending forced floating seed drops to crop Y=63, while navigation to their actual Y=62 succeeded and collected four seeds. Fixed pickup height with a farmland-only offset; tests/build passed and hot reloaded. Retry harvested/replanted nine crops.
 - Confirmed remaining limitation: crop work-position search excludes farmland and crop-occupied feet blocks, so an irrigated farm can fail `crop_has_no_reachable_work_position`. Starting from shore bypassed the initial failure, but the outer cells failed mid-pass. Recorder evidence and exact coordinates are in autonomous playtest decision D054. Whole-plot completion remains pending.
+
+The stance limitation above is now fixed: accept collision-free crop feet space over farmland. After hot reload, the previously failing farm pass completed, all 15 farm cells held wheat, and five bread were crafted at home. Existing crop tests/full build and live recorder `farm-complete.jsonl` passed; see D055.
