@@ -88,9 +88,11 @@ public final class NearbyEntityService {
 			double distance = Math.sqrt(candidate.squaredDistanceTo(self.getX(), self.getY(), self.getZ()));
 			Float health = null;
 			Float maxHealth = null;
+			Boolean baby = null;
 			if (entity instanceof LivingEntity livingEntity) {
 				health = livingEntity.getHealth();
 				maxHealth = livingEntity.getMaxHealth();
+				baby = livingEntity.isBaby();
 			}
 			snapshots.add(new NearbyEntitySnapshot(
 				candidate.entityId(),
@@ -104,6 +106,7 @@ public final class NearbyEntityService {
 				candidate.alive(),
 				health,
 				maxHealth,
+				baby,
 				entity instanceof PlayerEntity
 			));
 		}
@@ -194,6 +197,7 @@ public final class NearbyEntityService {
 		boolean alive,
 		Float health,
 		Float maxHealth,
+		Boolean baby,
 		boolean isPlayer
 	) {
 		public String compactDescription() {
@@ -215,6 +219,9 @@ public final class NearbyEntityService {
 			}
 			if (maxHealth != null) {
 				builder.append(", maxHealth=").append(format(maxHealth.doubleValue()));
+			}
+			if (baby != null) {
+				builder.append(", baby=").append(baby);
 			}
 			builder.append(", pos=")
 				.append(format(x)).append(',')

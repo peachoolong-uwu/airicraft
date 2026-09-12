@@ -77,6 +77,7 @@ class CurrentInventoryServiceTest {
 				true,
 				4.0F,
 				4.0F,
+				false,
 				false
 			),
 			new NearbyEntityService.NearbyEntitySnapshot(
@@ -91,6 +92,7 @@ class CurrentInventoryServiceTest {
 				true,
 				4.0F,
 				4.0F,
+				false,
 				false
 			)
 		));

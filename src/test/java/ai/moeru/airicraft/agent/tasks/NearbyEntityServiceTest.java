@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class NearbyEntityServiceTest {
 	@Test void filtersBeforeLimitingAndKeepsNearestMatch() {
@@ -14,7 +16,16 @@ class NearbyEntityServiceTest {
 			.map(NearbyEntityService.NearbyEntitySnapshot::entityId).toList());
 	}
 
+	@Test void reportsVisibleAgeWithoutInventingAgeForNonlivingEntities() {
+		var chick = new NearbyEntityService.NearbyEntitySnapshot(1, "chick", "Chicken", "minecraft:chicken", 0, 64, 0, 1, true, 4F, 4F, true, false);
+		var adult = entity(2, "minecraft:chicken", 2);
+		var item = new NearbyEntityService.NearbyEntitySnapshot(3, "item", "Egg", "minecraft:item", 0, 64, 0, 3, true, null, null, null, false);
+		assertTrue(chick.compactDescription().contains("baby=true"));
+		assertTrue(adult.compactDescription().contains("baby=false"));
+		assertFalse(item.compactDescription().contains("baby="));
+	}
+
 	private static NearbyEntityService.NearbyEntitySnapshot entity(int id, String type, double distance) {
-		return new NearbyEntityService.NearbyEntitySnapshot(id, "uuid-" + id, type, type, distance, 64, 0, distance, true, 10F, 10F, false);
+		return new NearbyEntityService.NearbyEntitySnapshot(id, "uuid-" + id, type, type, distance, 64, 0, distance, true, 10F, 10F, false, false);
 	}
 }
