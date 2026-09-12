@@ -154,6 +154,18 @@ public final class BaritonePathfindSettings {
 		return ApplyResult.accepted(changed);
 	}
 
+	public static Map<String, Object> inspect(List<String> names) {
+		Settings settings = BaritoneAPI.getSettings();
+		Map<String, Object> result = new LinkedHashMap<>();
+		for (String name : names) {
+			Settings.Setting<?> setting = settings.byLowerName.get(name.toLowerCase(Locale.ROOT));
+			if (setting == null || setting.isJavaOnly()) throw new IllegalArgumentException("unknown_or_java_only_setting " + name);
+			result.put(setting.getName(), Map.of("value", SettingsUtil.settingValueToString(setting),
+				"default", SettingsUtil.settingDefaultToString(setting)));
+		}
+		return result;
+	}
+
 	static String parserSettingName(String settingName) {
 		return Objects.requireNonNull(settingName, "settingName").toLowerCase(Locale.ROOT);
 	}
@@ -163,8 +175,7 @@ public final class BaritonePathfindSettings {
 		schema.put("type", schemaType(setting));
 		schema.put("description", descriptionFor(setting)
 			+ " Default: " + SettingsUtil.settingDefaultToString(setting)
-			+ ". Current: " + SettingsUtil.settingValueToString(setting)
-			+ ".");
+			+ ". Read live values with inspect_pathfind.");
 		return schema;
 	}
 

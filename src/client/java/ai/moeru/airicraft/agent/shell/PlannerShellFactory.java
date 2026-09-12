@@ -182,6 +182,7 @@ public final class PlannerShellFactory {
 			PlaceMemoryToolProvider.forClient(),
 			new ai.moeru.airicraft.agent.memory.InteractionLogbookToolProvider(),
 			new ai.moeru.airicraft.agent.llm.CaveSurveyToolProvider(effectiveWorldReadObserver),
+			new ai.moeru.airicraft.agent.llm.PathfindSettingsToolProvider(),
 			new ReiRecipeSearchToolProvider(),
 			new MapPlannerToolProvider(MapIntegrationBridge::registry)
 		);
