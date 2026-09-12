@@ -328,3 +328,9 @@ Observed efficiency issue: a two-skeleton/four-zombie fight cleared, with eight 
 Confirmed and fixed: `equip_item shield` returned already_equipped while a fresh336-durability shield was carried and the offhand shield had57. Select the shield with most remaining durability, keeping the equipped one on ties. Same-inventory HotSwap retry swapped the fresh shield to offhand and preserved the old one; a repeat remained stable. See D071 and `shield-replacement-fixed.jsonl`.
 
 Bypassable fuel-selection inefficiency: the three-iron preview preferred two dark oak logs over available planks/leaf litter. Explicit six-leaf-litter fuel smelted the batch successfully. No ranking fix yet; see D070.
+
+### 2026-09-13: Bread count and platform approach observations
+
+One eat_food bread request at hunger15 reduced carried bread3→1 while hunger rose to20; one food.eaten event was emitted. Recorder and settled chest inventory confirm the decrease. Cause and instrumented repeat remain open; no eating patch. See D072 and `bread-use-count.jsonl`.
+
+A horizontal dirt platform extension placed its first row but could not find a dry stance to see the side face for the next row. Reordering alone failed; a water-side approach ultimately completed the second row, with drowning-reflex interruptions and an explicit return to land. Treat as a bypassable construction-stance limitation, not efficient or automatically safe bridging. See D072 and `farm-side-placement.jsonl` / `farm-water-approach.jsonl`.
