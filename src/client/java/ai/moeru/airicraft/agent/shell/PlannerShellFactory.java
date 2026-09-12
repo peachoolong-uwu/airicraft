@@ -181,6 +181,7 @@ public final class PlannerShellFactory {
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),
 			new ai.moeru.airicraft.agent.memory.InteractionLogbookToolProvider(),
+			new ai.moeru.airicraft.agent.llm.CaveSurveyToolProvider(effectiveWorldReadObserver),
 			new ReiRecipeSearchToolProvider(),
 			new MapPlannerToolProvider(MapIntegrationBridge::registry)
 		);

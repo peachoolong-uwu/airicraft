@@ -269,3 +269,13 @@ Prioritize this narrow part of the ranged-reflex concern over a broad readiness 
 This is a source-supported failure path, **not yet a reproduced current gameplay blocker**. Existing escalation tests cover completed legs and close contacts; they do not exercise repeated first-target selection failure in a world.
 
 Reproduction acceptance: use a disposable controlled world, one visible skeleton outside melee range, low enough player health to select FLEE, and terrain with no eligible first flee target. Record the exact terrain, inventory and initial health; observe repeated `reflex.actuator_failed` with `safe_flee_target_unavailable`, the same ACTIVE safety epoch, zero completed legs, and a rejected crafting action. Include a control with an eligible escape target. Distinguish normal tick progress from bridge stalls, and stop before death using server-owned pause. Only then choose a bounded recovery change; do not simply release the safety gate into an unsafe situation.
+
+## Follow-up acceptance — 2026-09-13
+
+The first-leg flee proposal above is historical: the later user-directed policy prefers fighting. Current evidence and decisions are recorded in [the autonomous playtest log](autonomous-playtest-log.md), especially D041–D045.
+
+- Shield preparation and reactive blocking passed a natural skeleton encounter: `Not Today, Thank You`, health remaining 20, shield durability 336→332, and sword counterattacks before the threat cleared. This does not establish mixed-mob or low-health reliability.
+- Chest crafting, placement, exact deposit/withdrawal, settled stock inspection, close, and saved-client restart passed. Unloading restored 20 free slots. The automatic logbook retained crafting, drops, container transfers and dated home stock across restart.
+- Confirmed open-furnace output collection failed with `station_unavailable`. Exact screen-identity handling was fixed and HotSwapped; retry recovered all three ingots and recorded their withdrawal. This was a reproduced progression defect with a successful live retry.
+- Exact navigation near the furnace and inside a cramped underground workstation room failed at the final stance. Interaction from the nearby stance and return through the existing passage succeeded. These remain bypassable endpoint failures, not proven general route defects; avoid retrying the same point without new evidence.
+- The new visible cave survey and return-memory procedure passed a bounded existing-passage visit with digging/placement disabled. Natural-cave discovery and exposed-ore collection using this procedure remain unverified.
