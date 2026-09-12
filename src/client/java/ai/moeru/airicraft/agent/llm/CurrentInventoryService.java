@@ -107,7 +107,7 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 	}
 
 	@Override
-	public CompletableFuture<String> checkCraftables(String prompt) {
+	public CompletableFuture<String> checkCraftables(com.google.gson.JsonObject arguments) {
 		MinecraftClient client = clientSupplier.get();
 		if (client == null || client.world == null || client.player == null) {
 			return CompletableFuture.completedFuture("CRAFTABLES_UNAVAILABLE: world_not_loaded");
@@ -116,6 +116,17 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 		List<CraftingOpportunity> opportunities = CraftingOpportunityResolver.availableCrafts(client.player);
 		Map<String, Integer> itemCounts = itemCounter.count(client.player.getInventory());
 		CraftingTableAccess tableAccess = craftingTableAccess(client, itemCounts);
+		String outputItemId = arguments.has("outputItemId") ? arguments.get("outputItemId").getAsString() : null;
+		return CompletableFuture.completedFuture(formatCraftables(opportunities, tableAccess, outputItemId));
+	}
+
+	static String formatCraftables(List<CraftingOpportunity> opportunities, CraftingTableAccess tableAccess, String outputItemId) {
+		Map<String, CraftingOpportunity> unique = new LinkedHashMap<>();
+		for (CraftingOpportunity opportunity : opportunities) {
+			if (outputItemId == null || outputItemId.equals(opportunity.outputItemId()))
+				unique.putIfAbsent(opportunity.recipeId(), opportunity);
+		}
+		opportunities = List.copyOf(unique.values());
 		List<CraftingOpportunity> craftableNow = opportunities.stream()
 			.filter(opportunity -> opportunity.gridKind() == CraftingGridKind.PLAYER_2X2 || tableAccess == CraftingTableAccess.OPEN)
 			.limit(MAX_RECIPE_RESULTS)
@@ -136,15 +147,16 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 			: executable.stream()
 				.map(CraftingOpportunity::recipeId)
 				.collect(Collectors.joining(", ", "[", "]"));
-		return CompletableFuture.completedFuture(
-			"Tool result for check_craftables: "
+		int returned = craftableNow.size() + craftableWithSetup.size() + blockedByTable.size();
+		return "Tool result for check_craftables: "
 				+ "craftableNow=" + formatCrafts(craftableNow)
 				+ ", craftableWithSetup=" + formatCrafts(craftableWithSetup)
 				+ ", blocked=" + formatCrafts(blockedByTable)
 				+ ", exactRecipeIds=" + exactItemIds
+				+ ", matchedRecipes=" + unique.size() + ", returnedRecipes=" + returned
+				+ ", truncated=" + (returned < unique.size())
 				+ ", craftingTableAccess=" + tableAccess.name().toLowerCase(java.util.Locale.ROOT)
-				+ ", note=Use exactRecipeIds for CRAFT_RECIPE.recipeId. times means recipe runs, not output item count. 3x3 workbench recipes can automatically navigate to a nearby crafting table within 10 blocks, place one from inventory, or craft one from planks."
-		);
+				+ ", note=Use exactRecipeIds for CRAFT_RECIPE.recipeId. times means recipe runs, not output item count. 3x3 workbench recipes can automatically navigate to a nearby crafting table within 10 blocks, place one from inventory, or craft one from planks. If truncated, supply outputItemId to filter before the result limit.";
 	}
 
 	@Override

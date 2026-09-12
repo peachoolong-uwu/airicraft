@@ -12,3 +12,5 @@ The world automatically keeps significant server-observed interactions in `airic
 ```
 
 Optional filters: exact `place` bookmark (with `radius`, default 16), exact `itemId`, `action` (`crafted`, `dropped`, `container_put`, `container_take`, `container_observed`), and `limit` 1–100. Entries carry world time, actor, dimension and interaction coordinates. A container observation describes its contents at that time; other actors, hoppers, smelting and later unobserved changes can invalidate it. Reopen a container to confirm current stock. No pre-installation history is fabricated. Persistence/querying currently requires a locally hosted world save.
+
+When preparing storage or other crafted items, `check_craftables` accepts an exact output filter, for example `{"outputItemId":"minecraft:barrel"}`. The filter runs before the result limit. Recipe IDs are deduplicated, and `matchedRecipes`, `returnedRecipes`, and `truncated` distinguish absent recipes from omitted results. A valid mix of wood species can produce one concrete recipe ID.

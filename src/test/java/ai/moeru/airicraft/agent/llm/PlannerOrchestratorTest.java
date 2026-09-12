@@ -3521,7 +3521,7 @@ class PlannerOrchestratorTest {
 		}
 
 		@Override
-		public CompletableFuture<String> checkCraftables(String prompt) {
+		public CompletableFuture<String> checkCraftables(com.google.gson.JsonObject arguments) {
 			craftablesRequestCount++;
 			return CompletableFuture.completedFuture(craftablesResult);
 		}

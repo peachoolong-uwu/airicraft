@@ -143,10 +143,13 @@ public final class PlannerToolCatalog {
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("prompt", string("Optional inventory question."))
 			), List.of()), NO_ARGUMENT_VALIDATION),
-		builtInTool(CHECK_CRAFTABLES, true, tool(CHECK_CRAFTABLES, "Check currently executable crafting options.", properties(
+		builtInTool(CHECK_CRAFTABLES, true, tool(CHECK_CRAFTABLES, "Check currently executable crafting options. Optionally filter by exact outputItemId before the bounded result limit; truncation is reported.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
-				prop("prompt", string("Optional crafting question."))
-			), List.of()), NO_ARGUMENT_VALIDATION),
+				prop("prompt", string("Optional crafting question.")),
+				prop("outputItemId", optionalString("Exact output item id, for example minecraft:barrel. Omit to list all currently craftable outputs."))
+			), List.of()), args -> {
+				if (args.has("outputItemId")) requireString(args, "outputItemId");
+			}),
 		builtInTool(CHECK_SMELTABLES, true, tool(CHECK_SMELTABLES, "Check currently executable smelting options and ranked furnace candidates.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("prompt", string("Optional smelting question."))

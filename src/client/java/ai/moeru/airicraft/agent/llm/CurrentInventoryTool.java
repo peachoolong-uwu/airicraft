@@ -5,7 +5,7 @@ import java.util.concurrent.CompletableFuture;
 public interface CurrentInventoryTool {
 	CompletableFuture<String> inspectInventory(String prompt);
 
-	CompletableFuture<String> checkCraftables(String prompt);
+	CompletableFuture<String> checkCraftables(com.google.gson.JsonObject arguments);
 
 	CompletableFuture<String> inspectNearbyEntities(com.google.gson.JsonObject arguments);
 
@@ -17,7 +17,7 @@ public interface CurrentInventoryTool {
 			}
 
 			@Override
-			public CompletableFuture<String> checkCraftables(String prompt) {
+			public CompletableFuture<String> checkCraftables(com.google.gson.JsonObject arguments) {
 				return CompletableFuture.completedFuture("CRAFTABLES_UNAVAILABLE: inventory_tool_disabled");
 			}
 

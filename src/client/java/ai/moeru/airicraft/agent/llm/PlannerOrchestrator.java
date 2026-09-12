@@ -1138,7 +1138,7 @@ public final class PlannerOrchestrator {
 			case PlannerToolCatalog.DISCOVER_TOOLS -> CompletableFuture.completedFuture(new TextToolExecutionOutcome(discoverToolsResult(toolCall)));
 			case VISUAL_TOOL_NAME -> preserveImageAttachment ? requestNativeVisionTool(toolCall) : requestVisionTool(toolCall);
 			case INVENTORY_TOOL_NAME -> inventoryTool.inspectInventory(toolPrompt(toolCall)).thenApply(TextToolExecutionOutcome::new);
-			case CRAFTABLES_TOOL_NAME -> inventoryTool.checkCraftables(toolPrompt(toolCall)).thenApply(TextToolExecutionOutcome::new);
+			case CRAFTABLES_TOOL_NAME -> inventoryTool.checkCraftables(toolCall.arguments()).thenApply(TextToolExecutionOutcome::new);
 			case NEARBY_ENTITIES_TOOL_NAME -> inventoryTool.inspectNearbyEntities(toolCall.arguments()).thenApply(TextToolExecutionOutcome::new);
 			default -> {
 				CompletableFuture<ToolExecutionOutcome> providerToolFuture = toolRegistry.providerFor(toolCall.name())
