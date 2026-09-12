@@ -302,3 +302,7 @@ Bypassable limitation: four raw porkchops and enough combined wood fuel were car
 ### 2026-09-13: Surface swimming rejected by resource scope
 
 Confirmed and fixed: collecting shore logs with `surfaceOnly=true` failed when feet entered the top water block at Y62. The scope check required Y63 as though water were solid ground. Preserve the dry-ground boundary, but admit feet and floating drops in the top water layer while still excluding deeper positions. The identical one-log request failed immediately before the patch and completed after HotSwap, raising oak logs two to three. Focused regression/acquisition tests and full build passed. See D064 and `surface-water-fixed.jsonl`.
+
+### 2026-09-13: Charcoal fuel preview double-counts input logs
+
+Confirmed preview inconsistency, bypassable: six oak logs plus twelve planks produced a six-log charcoal option recommending four oak logs as fuel. Those requirements exceed the six available logs. Explicitly selecting four planks as fuel successfully cooked and collected all six charcoal. Automatic execution with shared input/fuel has not been reproduced; do not list an execution failure as verified. See D065 and `charcoal-options-before.txt`.
