@@ -303,6 +303,6 @@ Bypassable limitation: four raw porkchops and enough combined wood fuel were car
 
 Confirmed and fixed: collecting shore logs with `surfaceOnly=true` failed when feet entered the top water block at Y62. The scope check required Y63 as though water were solid ground. Preserve the dry-ground boundary, but admit feet and floating drops in the top water layer while still excluding deeper positions. The identical one-log request failed immediately before the patch and completed after HotSwap, raising oak logs two to three. Focused regression/acquisition tests and full build passed. See D064 and `surface-water-fixed.jsonl`.
 
-### 2026-09-13: Charcoal fuel preview double-counts input logs
+### 2026-09-13: Charcoal smelting double-counts input logs
 
-Confirmed preview inconsistency, bypassable: six oak logs plus twelve planks produced a six-log charcoal option recommending four oak logs as fuel. Those requirements exceed the six available logs. Explicitly selecting four planks as fuel successfully cooked and collected all six charcoal. Automatic execution with shared input/fuel has not been reproduced; do not list an execution failure as verified. See D065 and `charcoal-options-before.txt`.
+Confirmed and fixed: the preview counted input logs again as fuel. A live one-log automatic batch then moved its sole log to the fuel slot and failed `insufficient_input`, despite six available planks. Reserve required inputs before automatic/manual fuel selection and in the preview. After HotSwap, the same automatic batch used one plank and produced one charcoal; an impossible manual shared-log request failed before moving items. Smelting regression tests and full build passed. See D065–D066, `fuel-overlap.jsonl` and `fuel-reservation-fixed.jsonl`.

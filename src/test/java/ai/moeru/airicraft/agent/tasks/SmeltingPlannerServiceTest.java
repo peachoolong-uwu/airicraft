@@ -4,11 +4,26 @@ import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SmeltingPlannerServiceTest {
+	@Test void charcoalPreviewReservesLogsBeforeChoosingFuel() {
+		var fuel = new SmeltingPlannerService.FuelInventorySummary(Map.of(
+			"log", new SmeltingPlannerService.FuelItemSummary("log", 6, 300),
+			"planks", new SmeltingPlannerService.FuelItemSummary("planks", 12, 300)));
+		assertEquals("planksx4", fuel.bestFuelFor("log", 6, 200));
+		assertEquals("logx2", fuel.bestFuelFor("log", 3, 200));
+	}
+
+	@Test void charcoalPreviewCannotCountTheOnlyLogTwice() {
+		var fuel = new SmeltingPlannerService.FuelInventorySummary(Map.of(
+			"log", new SmeltingPlannerService.FuelItemSummary("log", 1, 300)));
+		assertEquals("missing", fuel.bestFuelFor("log", 1, 200));
+	}
+
 	@Test
 	void effectiveCookTimeKeepsFurnaceRecipesAtFullFurnaceDuration() {
 		assertEquals(200, SmeltingPlannerService.effectiveCookTimeTicks(100, SmeltingStationKind.FURNACE));

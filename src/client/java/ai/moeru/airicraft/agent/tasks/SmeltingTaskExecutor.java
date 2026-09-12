@@ -133,7 +133,12 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		long tick
 	) {
 		SmeltItemsStepArgs args = smeltArgs(request);
-		FuelSelection fuel = fuelSelection(client, player, handler, option, args).orElse(null);
+		int reservedInput = remainingItemsToMove(itemId(handler.getSlot(0).getStack()),
+			handler.getSlot(0).getStack().getCount(), option.inputItemId(), args.inputQuantity());
+		if (reservedInput < 0 || sourceItemCount(handler, option.inputItemId()) < reservedInput) {
+			return fail(request, TaskFailure.of(TaskFailureCode.UNKNOWN, "insufficient_input"));
+		}
+		FuelSelection fuel = fuelSelection(client, handler, option, args, reservedInput).orElse(null);
 		if (fuel == null) {
 			return fail(request, TaskFailure.of(TaskFailureCode.UNKNOWN, "insufficient_fuel"));
 		}
@@ -257,14 +262,14 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 
 	private Optional<FuelSelection> fuelSelection(
 		MinecraftClient client,
-		ClientPlayerEntity player,
 		ScreenHandler handler,
 		SmeltingOption option,
-		SmeltItemsStepArgs args
+		SmeltItemsStepArgs args,
+		int reservedInput
 	) {
 		int requiredFuelTicks = args.inputQuantity() * option.cookTimeTicks();
 		if (args.fuelMode() == SmeltingFuelMode.MANUAL) {
-			return manualFuelSelection(client, handler, args, requiredFuelTicks);
+			return manualFuelSelection(client, handler, args, requiredFuelTicks, option.inputItemId(), reservedInput);
 		}
 		ItemStack existingFuel = handler.getSlot(1).getStack();
 		if (existingFuel.isEmpty() && furnaceBurning(handler)) {
@@ -279,7 +284,8 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 			if (existingFuel.getCount() >= needed) {
 				return Optional.of(new FuelSelection(null, 0));
 			}
-			if (existingFuel.getCount() + sourceItemCount(handler, existingFuelItemId) >= needed) {
+			if (existingFuel.getCount() + fuelCountAfterReservingInput(existingFuelItemId,
+				sourceItemCount(handler, existingFuelItemId), option.inputItemId(), reservedInput) >= needed) {
 				return Optional.of(new FuelSelection(existingFuelItemId, needed));
 			}
 			return Optional.empty();
@@ -298,7 +304,7 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		FuelSelection best = null;
 		for (Map.Entry<String, Integer> entry : availableFuelCounts.entrySet()) {
 			int needed = fuelItemsNeeded(requiredFuelTicks, fuelTicksByItemId.getOrDefault(entry.getKey(), 0));
-			if (needed > 0 && entry.getValue() >= needed) {
+			if (needed > 0 && fuelCountAfterReservingInput(entry.getKey(), entry.getValue(), option.inputItemId(), reservedInput) >= needed) {
 				if (best == null || needed < best.quantity()) {
 					best = new FuelSelection(entry.getKey(), needed);
 				}
@@ -311,7 +317,9 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		MinecraftClient client,
 		ScreenHandler handler,
 		SmeltItemsStepArgs args,
-		int requiredFuelTicks
+		int requiredFuelTicks,
+		String inputItemId,
+		int reservedInput
 	) {
 		if (client == null || client.world == null || args.fuelItemId() == null || args.fuelItemId().isBlank()) {
 			return Optional.empty();
@@ -346,9 +354,13 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		if (!fuelQuantityCoversCookTime(1, requiredFuelTicks, fuelTicksPerItem, args.fuelQuantity())) {
 			return Optional.empty();
 		}
-		return matchingFuelCount >= args.fuelQuantity()
+		return fuelCountAfterReservingInput(requestedFuelItemId, matchingFuelCount, inputItemId, reservedInput) >= args.fuelQuantity()
 			? Optional.of(new FuelSelection(requestedFuelItemId, args.fuelQuantity()))
 			: Optional.empty();
+	}
+
+	static int fuelCountAfterReservingInput(String fuelItemId, int fuelCount, String inputItemId, int reservedInput) {
+		return fuelItemId.equals(inputItemId) ? Math.max(0, fuelCount - reservedInput) : fuelCount;
 	}
 
 	static int fuelItemsNeeded(int requiredFuelTicks, int fuelTicksPerItem) {

@@ -5,6 +5,14 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SmeltingTaskExecutorTest {
+	@Test void reservesOnlyInputsStillNeededFromInventory() {
+		assertEquals(0, SmeltingTaskExecutor.fuelCountAfterReservingInput("log", 1, "log", 1));
+		assertEquals(4, SmeltingTaskExecutor.fuelCountAfterReservingInput("log", 10, "log", 6));
+		assertEquals(12, SmeltingTaskExecutor.fuelCountAfterReservingInput("planks", 12, "log", 6));
+		int reserved = SmeltingTaskExecutor.remainingItemsToMove("log", 2, "log", 3);
+		assertEquals(1, SmeltingTaskExecutor.fuelCountAfterReservingInput("log", 2, "log", reserved));
+	}
+
 	@Test void confirmedOpenFurnaceRequiresTheSameScreenAndDimension() {
 		var key = new SmeltingStationKey("minecraft:overworld#open_screen", 4, 0, 0);
 		assertEquals(true, SmeltingTaskExecutor.canCollectFromCurrentScreen(key, "minecraft:overworld", 4, true));

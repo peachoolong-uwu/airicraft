@@ -665,7 +665,7 @@ public final class SmeltingPlannerService {
 				.append(" stationSource=")
 				.append(option.stationCandidate().source().name())
 				.append(" autoFuelForMaxInput=")
-				.append(fuelSummary.bestFuelFor(option.maxInputQuantity(), option.cookTimeTicks()))
+				.append(fuelSummary.bestFuelFor(option.inputItemId(), option.maxInputQuantity(), option.cookTimeTicks()))
 				.append(" confirmationRequired=")
 				.append(option.stationCandidate().confirmationRequired());
 		}
@@ -725,7 +725,7 @@ public final class SmeltingPlannerService {
 	) {
 	}
 
-	private record FuelInventorySummary(Map<String, FuelItemSummary> fuels) {
+	record FuelInventorySummary(Map<String, FuelItemSummary> fuels) {
 		FuelInventorySummary {
 			fuels = fuels == null ? Map.of() : Map.copyOf(fuels);
 		}
@@ -744,12 +744,12 @@ public final class SmeltingPlannerService {
 				.toString();
 		}
 
-		String bestFuelFor(int inputQuantity, int cookTimeTicks) {
+		String bestFuelFor(String inputItemId, int inputQuantity, int cookTimeTicks) {
 			FuelItemSummary best = null;
 			int bestQuantity = Integer.MAX_VALUE;
 			for (FuelItemSummary fuel : fuels.values()) {
 				int needed = SmeltingTaskExecutor.fuelItemsNeeded(inputQuantity * cookTimeTicks, fuel.fuelTicksPerItem());
-				if (needed <= 0 || fuel.count() < needed) {
+				if (needed <= 0 || SmeltingTaskExecutor.fuelCountAfterReservingInput(fuel.itemId(), fuel.count(), inputItemId, inputQuantity) < needed) {
 					continue;
 				}
 				if (needed < bestQuantity || needed == bestQuantity && (best == null || fuel.itemId().compareTo(best.itemId()) < 0)) {
@@ -765,6 +765,6 @@ public final class SmeltingPlannerService {
 		}
 	}
 
-	private record FuelItemSummary(String itemId, int count, int fuelTicksPerItem) {
+	record FuelItemSummary(String itemId, int count, int fuelTicksPerItem) {
 	}
 }
