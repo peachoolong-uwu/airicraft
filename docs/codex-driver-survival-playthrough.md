@@ -290,3 +290,7 @@ The stance limitation above is now fixed: accept collision-free crop feet space 
 ### 2026-09-13: Shield combat efficiency observation
 
 A skeleton at full health during repeated blocking initially looked stalled. Paused recorder review showed it spent most of the encounter outside melee range, followed by four sword attacks and normal `threats_clear` resolution. Permanent attack starvation is unconfirmed and must not be listed as a verified bug. Slow terrain-heavy closing remains an efficiency concern (D057, `close-skeleton-stall.jsonl`).
+
+### 2026-09-13: Container reopened while leaving shelter
+
+Confirmed, bypassable: navigation from the shelter reopened the new barrel after `close_container` had succeeded. A later crop pass waited in HARVEST and timed out because a container remained open. Flight recorder shows the screen transition during navigation; exact input-order cause remains unproven. Closing the empty-cursor barrel and retrying at the same position completed the crop pass (one harvested/replanted, fourteen growing). See D060 and `farm-harvest-stall.jsonl`.
