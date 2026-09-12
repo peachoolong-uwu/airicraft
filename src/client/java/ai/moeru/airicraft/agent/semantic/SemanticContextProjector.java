@@ -193,7 +193,7 @@ public final class SemanticContextProjector {
 			}
 			if (strategy == AggregationStrategy.SUM_LIGHTING_BY_POLICY) {
 				payload.put("count", countValue(payload.getOrDefault("count", 1)) + 1);
-				for (String key : List.of("x", "y", "z", "offhandCount", "lightLevelBefore", "side", "facing")) {
+				for (String key : List.of("x", "y", "z", "offhandCount", "torchCount", "activity", "lightLevelBefore", "side", "facing")) {
 					if (event.payload().containsKey(key)) {
 						payload.put(key, event.payload().get(key));
 					}

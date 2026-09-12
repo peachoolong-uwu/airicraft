@@ -1,21 +1,25 @@
 package ai.moeru.airicraft.agent.lighting;
 
+import ai.moeru.airicraft.agent.tasks.WorldTaskType;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.WallTorchBlock;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.LightType;
+import net.minecraft.world.RaycastContext;
 
 import java.util.List;
 import java.util.Map;
@@ -25,7 +29,6 @@ public final class LightingRuntime {
 	private static final long ATTEMPT_INTERVAL_TICKS = 10L;
 	private static final long CONFIRMATION_TIMEOUT_TICKS = 20L;
 	private static final double MAX_REACH_SQUARED = 4.5D * 4.5D;
-	private static final int OFFHAND_SWAP_BUTTON = 40;
 
 	private LightingPolicy policy = LightingPolicy.disabled();
 	private PendingPlacement pendingPlacement;
@@ -50,7 +53,7 @@ public final class LightingRuntime {
 		return policy;
 	}
 
-	public Optional<PlacementEvent> tick(MinecraftClient client, boolean miningActive, long tick) {
+	public Optional<PlacementEvent> tick(MinecraftClient client, WorldTaskType activity, long tick) {
 		if (client == null || client.world == null || client.player == null || client.interactionManager == null) {
 			pendingPlacement = null;
 			return Optional.empty();
@@ -62,12 +65,16 @@ public final class LightingRuntime {
 		nextAttemptTick = tick + ATTEMPT_INTERVAL_TICKS;
 
 		ClientPlayerEntity player = client.player;
+		if (!LightingPolicyEvaluator.supportsActivity(activity) || !policy.enabled()
+			|| player.isUsingItem() || client.interactionManager.isBreakingBlock()
+			|| player.currentScreenHandler != player.playerScreenHandler
+			|| !player.currentScreenHandler.getCursorStack().isEmpty()) return Optional.empty();
 		BlockPos origin = player.getBlockPos();
 		boolean nearbyTorch = hasNearbyTorch(client, origin, policy.minSpacingBlocks());
 		boolean placementRequired = LightingPolicyEvaluator.shouldPlace(
 			policy,
-			miningActive,
 			true,
+			torchCount(player) > 0,
 			client.world.isSkyVisible(origin.up()),
 			client.world.getLightLevel(origin),
 			client.world.getLightLevel(LightType.BLOCK, origin),
@@ -76,15 +83,8 @@ public final class LightingRuntime {
 		if (!placementRequired) {
 			return Optional.empty();
 		}
-		if (!player.getOffHandStack().isOf(Items.TORCH)) {
-			if (player.getOffHandStack().isEmpty()) {
-				moveTorchToOffhand(client, player);
-			}
-			return Optional.empty();
-		}
-
 		for (PlacementCandidate candidate : placementCandidates(player.getBlockPos(), player.getHorizontalFacing())) {
-			if (tryPlace(client, player, candidate, tick)) {
+			if (tryPlace(client, player, candidate, activity, tick)) {
 				break;
 			}
 		}
@@ -116,10 +116,10 @@ public final class LightingRuntime {
 				"y", confirmed.target().getY(),
 				"z", confirmed.target().getZ(),
 				"lightLevelBefore", confirmed.lightLevelBefore(),
-				"offhandCount", client.player.getOffHandStack().getCount(),
+				"torchCount", torchCount(client.player),
 				"side", confirmed.side(),
 				"facing", confirmed.face().asString(),
-				"miningActive", true
+				"activity", confirmed.activity().name().toLowerCase(java.util.Locale.ROOT)
 			)));
 		}
 		if (tick - pendingPlacement.startedTick() > CONFIRMATION_TIMEOUT_TICKS) {
@@ -128,7 +128,7 @@ public final class LightingRuntime {
 		return Optional.empty();
 	}
 
-	private boolean tryPlace(MinecraftClient client, ClientPlayerEntity player, PlacementCandidate candidate, long tick) {
+	private boolean tryPlace(MinecraftClient client, ClientPlayerEntity player, PlacementCandidate candidate, WorldTaskType activity, long tick) {
 		BlockPos target = candidate.target();
 		if (!client.world.isChunkLoaded(target)) {
 			return false;
@@ -137,7 +137,8 @@ public final class LightingRuntime {
 		BlockState torchState = candidate.surface() == PlacementSurface.WALL
 			? Blocks.WALL_TORCH.getDefaultState().with(WallTorchBlock.FACING, candidate.face())
 			: Blocks.TORCH.getDefaultState();
-		if (!(targetState.isAir() || targetState.isReplaceable()) || !torchState.canPlaceAt(client.world, target)) {
+		if (!(targetState.isAir() || targetState.isReplaceable()) || !client.world.getFluidState(target).isEmpty()
+			|| !torchState.canPlaceAt(client.world, target)) {
 			return false;
 		}
 		Vec3d hit = Vec3d.ofCenter(candidate.support()).add(
@@ -148,23 +149,25 @@ public final class LightingRuntime {
 		if (player.getEyePos().squaredDistanceTo(hit) > MAX_REACH_SQUARED) {
 			return false;
 		}
-		ActionResult result = client.interactionManager.interactBlock(
-			player,
-			Hand.OFF_HAND,
-			new BlockHitResult(hit, candidate.face(), candidate.support(), false)
-		);
+		// Ray ends just inside the support face, avoiding boundary misses and through-wall clicks.
+		Vec3d inside = hit.subtract(Vec3d.of(candidate.face().getVector()).multiply(0.001));
+		var visible = client.world.raycast(new RaycastContext(player.getEyePos(), inside,
+			RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, player));
+		if (visible.getType() != HitResult.Type.BLOCK || !visible.getBlockPos().equals(candidate.support())) return false;
+		int lightBefore = client.world.getLightLevel(target);
+		ActionResult result = placeWithTorch(client, player, new BlockHitResult(hit, candidate.face(), candidate.support(), false));
 		if (!result.isAccepted()) {
 			return false;
 		}
-		player.swingHand(Hand.OFF_HAND);
 		pendingPlacement = new PendingPlacement(
 			target.toImmutable(),
 			tick,
 			policy.revision(),
 			policy.mode(),
-			client.world.getLightLevel(target),
+			lightBefore,
 			candidate.side(),
-			candidate.face()
+			candidate.face(),
+			activity
 		);
 		return true;
 	}
@@ -226,18 +229,36 @@ public final class LightingRuntime {
 		return false;
 	}
 
-	private static void moveTorchToOffhand(MinecraftClient client, ClientPlayerEntity player) {
-		if (player.currentScreenHandler != player.playerScreenHandler) {
-			return;
+	private static int torchCount(ClientPlayerEntity player) {
+		return player.getInventory().count(Items.TORCH);
+	}
+
+	private static ActionResult placeWithTorch(MinecraftClient client, ClientPlayerEntity player, BlockHitResult hit) {
+		if (player.getOffHandStack().isOf(Items.TORCH)) {
+			ActionResult result = client.interactionManager.interactBlock(player, Hand.OFF_HAND, hit);
+			if (result.isAccepted()) player.swingHand(Hand.OFF_HAND);
+			return result;
 		}
 		ScreenHandler handler = player.currentScreenHandler;
 		for (int slot = PlayerScreenHandler.INVENTORY_START; slot < PlayerScreenHandler.HOTBAR_END; slot++) {
-			if (!handler.getSlot(slot).getStack().isOf(Items.TORCH)) {
-				continue;
+			if (!handler.getSlot(slot).getStack().isOf(Items.TORCH)) continue;
+			int previousSlot = player.getInventory().getSelectedSlot();
+			boolean swap = slot < PlayerScreenHandler.HOTBAR_START;
+			int torchSlot = swap ? previousSlot : slot - PlayerScreenHandler.HOTBAR_START;
+			if (swap) client.interactionManager.clickSlot(handler.syncId, slot, torchSlot, SlotActionType.SWAP, player);
+			player.getInventory().setSelectedSlot(torchSlot);
+			try {
+				ActionResult result = client.interactionManager.interactBlock(player, Hand.MAIN_HAND, hit);
+				if (result.isAccepted()) player.swingHand(Hand.MAIN_HAND);
+				return result;
 			}
-			client.interactionManager.clickSlot(handler.syncId, slot, OFFHAND_SWAP_BUTTON, SlotActionType.SWAP, player);
-			return;
+			finally {
+				if (swap) client.interactionManager.clickSlot(handler.syncId, slot, torchSlot, SlotActionType.SWAP, player);
+				player.getInventory().setSelectedSlot(previousSlot);
+				player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(previousSlot));
+			}
 		}
+		return ActionResult.PASS;
 	}
 
 	public record PlacementEvent(Map<String, Object> payload) {
@@ -258,7 +279,8 @@ public final class LightingRuntime {
 		LightingPolicy.Mode mode,
 		int lightLevelBefore,
 		String side,
-		Direction face
+		Direction face,
+		WorldTaskType activity
 	) {
 	}
 }

@@ -3,6 +3,7 @@ package ai.moeru.airicraft.agent.lighting;
 import org.junit.jupiter.api.Test;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import ai.moeru.airicraft.agent.tasks.WorldTaskType;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -10,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LightingPolicyEvaluatorTest {
 	@Test
-	void darknessPolicyRequiresMiningOffhandAndUndergroundWhenConfigured() {
+	void darknessPolicyRequiresSupportedActivityTorchAndUndergroundWhenConfigured() {
 		LightingPolicy policy = new LightingPolicy(true, LightingPolicy.Mode.DARKNESS, 2, true, 6, 1L);
 
 		assertTrue(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 2, 0, false));
@@ -18,6 +19,15 @@ class LightingPolicyEvaluatorTest {
 		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, false, false, 0, 0, false));
 		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, true, 0, 0, false));
 		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 3, 0, false));
+	}
+
+	@Test
+	void lightingAccompaniesTravelAndMiningButNotOtherInteractionOwners() {
+		for (WorldTaskType activity : WorldTaskType.values()) {
+			assertEquals(activity == WorldTaskType.MINE || activity == WorldTaskType.NAVIGATE,
+				LightingPolicyEvaluator.supportsActivity(activity), activity.name());
+		}
+		assertFalse(LightingPolicyEvaluator.supportsActivity(null));
 	}
 
 	@Test

@@ -347,9 +347,9 @@ public final class PlannerToolCatalog {
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("settings", BaritonePathfindSettings.plannerSettingsSchema())
 			), List.of("settings")), PlannerToolCatalog::validateConfigurePathfindArguments),
-		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic offhand torch placement while mining. This sets policy only: placement runs without changing camera direction or the selected main-hand slot, and confirmed placements are batched into the next planner window.", properties(
+		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic torch placement while mining or navigating. Keeps offhand equipment such as a shield, temporarily uses a carried torch and restores the held item. Does not interrupt combat, item use or active block breaking. Confirmed placements are batched into the next planner window.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
-				prop("enabled", bool("Whether automatic offhand torch placement is enabled.")),
+				prop("enabled", bool("Whether automatic torch placement is enabled.")),
 				prop("mode", enumString("Lighting rule. darkness uses combined light; spawn_proof uses block light.", List.of("darkness", "spawn_proof"))),
 				prop("maxLightLevel", integer("Place when the selected light value is at or below this threshold, from 0 to 15.")),
 				prop("requireUnderground", bool("Whether sky-visible positions must be excluded.")),
