@@ -1,7 +1,11 @@
 package ai.moeru.airicraft.agent.goals;
 
 /** A fixed, loaded search volume. Surface excludes terrain below the top ground layer. */
-public record AcquisitionConstraints(GoalPosition center, int radius, int verticalRadius, boolean surfaceOnly) {
+public record AcquisitionConstraints(GoalPosition center, int radius, int verticalRadius, boolean surfaceOnly, boolean visibleOnly) {
+	public AcquisitionConstraints(GoalPosition center, int radius, int verticalRadius, boolean surfaceOnly) {
+		this(center, radius, verticalRadius, surfaceOnly, false);
+	}
+
 	public AcquisitionConstraints {
 		if (radius < 1 || radius > 32) throw new IllegalArgumentException("constraints.radius must be 1..32");
 		if (verticalRadius < 1 || verticalRadius > 32) throw new IllegalArgumentException("constraints.verticalRadius must be 1..32");
@@ -12,7 +16,7 @@ public record AcquisitionConstraints(GoalPosition center, int radius, int vertic
 	}
 
 	public AcquisitionConstraints anchoredAt(GoalPosition position) {
-		return center == null ? new AcquisitionConstraints(java.util.Objects.requireNonNull(position), radius, verticalRadius, surfaceOnly) : this;
+		return center == null ? new AcquisitionConstraints(java.util.Objects.requireNonNull(position), radius, verticalRadius, surfaceOnly, visibleOnly) : this;
 	}
 
 	public boolean contains(GoalPosition position) {

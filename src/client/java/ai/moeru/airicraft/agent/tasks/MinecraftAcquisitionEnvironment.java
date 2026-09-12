@@ -18,6 +18,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import ai.moeru.airicraft.agent.spatial.SurfaceTerrain;
+import ai.moeru.airicraft.agent.spatial.VisibleSurfaceSampler;
 import net.minecraft.world.RaycastContext;
 
 import java.util.ArrayList;
@@ -78,8 +79,13 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 			if (!rejected.contains(drop.key())) result.add(drop);
 		}
 		List<BlockPos> blocks = new ArrayList<>();
-		for (BlockPos cursor : BlockPos.iterate(center.add(-constraints.radius(), -constraints.verticalRadius(), -constraints.radius()),
-			center.add(constraints.radius(), constraints.verticalRadius(), constraints.radius()))) {
+		Iterable<BlockPos> sources = constraints.visibleOnly()
+			? VisibleSurfaceSampler.sample(client().player.getEyePos(), 24, (eye, end) -> world.raycast(
+				new RaycastContext(eye, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.ANY, client().player)))
+				.stream().map(hit -> hit.getBlockPos().toImmutable()).distinct().toList()
+			: BlockPos.iterate(center.add(-constraints.radius(), -constraints.verticalRadius(), -constraints.radius()),
+				center.add(constraints.radius(), constraints.verticalRadius(), constraints.radius()));
+		for (BlockPos cursor : sources) {
 			if (!world.isChunkLoaded(cursor) || !constraints.contains(position(cursor))) continue;
 			BlockState state = world.getBlockState(cursor);
 			if (spec.blockIds().contains(id(state)) && HarvestableBlocks.ready(state)

@@ -1,5 +1,6 @@
 package ai.moeru.airicraft.agent.llm;
 
+import ai.moeru.airicraft.agent.spatial.VisibleSurfaceSampler;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -28,7 +29,7 @@ public final class CaveSurveyToolProvider implements PlannerToolProvider {
 	}
 	@Override public void validateArguments(String name, JsonObject args) { radius(args); }
 	@Override public String promptInstructions() {
-		return "For cave exploration, prepare shield, food, usable pickaxes, torches and free inventory space. Remember the chosen entrance and home before descending. Use survey_cave for compact visible passage/ore observations; select short standing waypoints, navigate and survey again. Configure pathfinding allowBreak=false and allowPlace=false during passage exploration so a blocked route cannot turn into strip mining or bridging. Restore previous settings when leaving this exploration intent. Standing candidates are observations, not guaranteed reachable paths. Remember junctions, tried branches and return waypoints with place memory to avoid repeating dead ends. Maintain lighting; stop at unlit or hazardous drops, replenish supplies and return along remembered waypoints. For ore, re-survey after approaching and use break_blocks on exact returned exposed coordinates, then survey newly revealed faces. Do not use hidden-block scans or unrestricted mining to select veins. Logbook stock helps plan resupply, but reopen containers to confirm it. A survey can miss small surfaces; no reported ore or waypoint is not proof of absence.";
+		return "For cave exploration, prepare shield, food, usable pickaxes, torches and free inventory space. Remember the chosen entrance and home before descending. Use survey_cave for compact visible passage/ore observations; select short standing waypoints, navigate and survey again. Configure pathfinding allowBreak=false and allowPlace=false during passage exploration so a blocked route cannot turn into strip mining or bridging. Restore previous settings when leaving this exploration intent. Standing candidates are observations, not guaranteed reachable paths. Remember junctions, tried branches and return waypoints with place memory to avoid repeating dead ends. Maintain lighting; stop at unlit or hazardous drops, replenish supplies and return along remembered waypoints. For ore, use mine_blocks or collect_resource with constraints.visibleOnly=true and a small fixed scope so System 1 approaches visible sources, mines newly exposed faces and collects drops. Keep scope around the chosen vein. Use break_blocks for exact edits already in reach. visibleOnly uses the same sparse first-hit rays as this survey; it does not discover buried sources or change pathfinding terrain permissions. Do not use hidden-block scans or unrestricted mining to select veins. Logbook stock helps plan resupply, but reopen containers to confirm it. A survey can miss small surfaces; no reported ore or waypoint is not proof of absence.";
 	}
 	@Override public CompletableFuture<String> execute(PlannerToolCall call) {
 		CompletableFuture<String> result = new CompletableFuture<>();
@@ -47,29 +48,24 @@ public final class CaveSurveyToolProvider implements PlannerToolProvider {
 		Map<BlockPos, String> resources = new LinkedHashMap<>();
 		Map<BlockPos, String> hazards = new LinkedHashMap<>();
 		List<BlockPos> floors = new ArrayList<>();
-		for (int yaw = 0; yaw < 360; yaw += 8) {
-			for (int elevation = -75; elevation <= 75; elevation += 15) {
-				double y = Math.toRadians(yaw), pitch = Math.toRadians(elevation);
-				Vec3d direction = new Vec3d(Math.cos(y) * Math.cos(pitch), Math.sin(pitch), Math.sin(y) * Math.cos(pitch));
-				var hit = world.raycast(new RaycastContext(eye, eye.add(direction.multiply(radius)),
-					RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.ANY, player));
-				if (hit.getType() != HitResult.Type.BLOCK || !world.isChunkLoaded(hit.getBlockPos())) continue;
-				BlockPos pos = hit.getBlockPos().toImmutable();
-				var state = world.getBlockState(pos);
-				String id = Registries.BLOCK.getId(state.getBlock()).toString();
-				if (id.endsWith("_ore")) resources.put(pos, id);
-				if (!state.getFluidState().isEmpty() || dangerous(id)) hazards.put(pos, id);
-				if (hit.getSide() != Direction.UP || dangerous(id) || !state.getFluidState().isEmpty()
-					|| !state.isSideSolidFullSquare(world, pos, Direction.UP)) continue;
-				BlockPos feet = pos.up();
-				if (dangerous(Registries.BLOCK.getId(world.getBlockState(feet).getBlock()).toString())
-					|| dangerous(Registries.BLOCK.getId(world.getBlockState(feet.up()).getBlock()).toString())
-					|| !world.getBlockState(feet).getCollisionShape(world, feet).isEmpty()
-					|| !world.getBlockState(feet.up()).getCollisionShape(world, feet.up()).isEmpty()
-					|| !world.getFluidState(feet).isEmpty() || !world.getFluidState(feet.up()).isEmpty()) continue;
-				if (clearRay(client, eye, Vec3d.ofBottomCenter(feet).add(0, 0.2, 0))
-					&& clearRay(client, eye, Vec3d.ofBottomCenter(feet).add(0, 1.62, 0))) floors.add(feet);
-			}
+		for (var hit : VisibleSurfaceSampler.sample(eye, radius, (start, end) ->
+			world.raycast(new RaycastContext(start, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.ANY, player)))) {
+			if (hit.getType() != HitResult.Type.BLOCK || !world.isChunkLoaded(hit.getBlockPos())) continue;
+			BlockPos pos = hit.getBlockPos().toImmutable();
+			var state = world.getBlockState(pos);
+			String id = Registries.BLOCK.getId(state.getBlock()).toString();
+			if (id.endsWith("_ore")) resources.put(pos, id);
+			if (!state.getFluidState().isEmpty() || dangerous(id)) hazards.put(pos, id);
+			if (hit.getSide() != Direction.UP || dangerous(id) || !state.getFluidState().isEmpty()
+				|| !state.isSideSolidFullSquare(world, pos, Direction.UP)) continue;
+			BlockPos feet = pos.up();
+			if (dangerous(Registries.BLOCK.getId(world.getBlockState(feet).getBlock()).toString())
+				|| dangerous(Registries.BLOCK.getId(world.getBlockState(feet.up()).getBlock()).toString())
+				|| !world.getBlockState(feet).getCollisionShape(world, feet).isEmpty()
+				|| !world.getBlockState(feet.up()).getCollisionShape(world, feet.up()).isEmpty()
+				|| !world.getFluidState(feet).isEmpty() || !world.getFluidState(feet.up()).isEmpty()) continue;
+			if (clearRay(client, eye, Vec3d.ofBottomCenter(feet).add(0, 0.2, 0))
+				&& clearRay(client, eye, Vec3d.ofBottomCenter(feet).add(0, 1.62, 0))) floors.add(feet);
 		}
 		List<BlockPos> waypoints = selectWaypoints(player.getBlockPos(), floors);
 		List<Map<String, Object>> ores = records(resources, 16), dangers = records(hazards, 12);

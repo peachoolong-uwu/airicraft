@@ -3170,7 +3170,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		}
 		return new AcquisitionConstraints(center,
 			intArg(value, "radius").orElse(16), intArg(value, "verticalRadius").orElse(16),
-			booleanArg(value, "surfaceOnly").orElse(false));
+			booleanArg(value, "surfaceOnly").orElse(false), booleanArg(value, "visibleOnly").orElse(false));
 	}
 
 	private GoalMineSpec goalMineSpec(List<String> blockIds, int quantity) {

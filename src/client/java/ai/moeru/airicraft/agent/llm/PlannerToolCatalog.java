@@ -602,7 +602,7 @@ public final class PlannerToolCatalog {
 		if (!args.get("constraints").isJsonObject()) throw new JsonParseException("constraints must be an object");
 		JsonObject value = args.getAsJsonObject("constraints");
 		for (String key : value.keySet()) {
-			if (!List.of("center", "radius", "verticalRadius", "surfaceOnly").contains(key))
+			if (!List.of("center", "radius", "verticalRadius", "surfaceOnly", "visibleOnly").contains(key))
 				throw new JsonParseException("Unknown acquisition constraint: " + key);
 		}
 		for (String key : List.of("radius", "verticalRadius")) {
@@ -612,6 +612,9 @@ public final class PlannerToolCatalog {
 			}
 		}
 		if (value.has("surfaceOnly")) requireBoolean(value, "surfaceOnly");
+		if (value.has("visibleOnly") && (!value.get("visibleOnly").isJsonPrimitive()
+			|| !value.getAsJsonPrimitive("visibleOnly").isBoolean()))
+			throw new JsonParseException("visibleOnly must be boolean");
 		if (value.has("center")) {
 			if (!value.get("center").isJsonObject()) throw new JsonParseException("constraints.center must be an object");
 			JsonObject center = value.getAsJsonObject("center");
@@ -1203,13 +1206,14 @@ public final class PlannerToolCatalog {
 
 	private static Map<String, Object> acquisitionConstraintsSchema() {
 		return Map.of("type", "object", "additionalProperties", false, "description",
-			"Optional acquisition scope. Defaults: center at submission, radius 16, verticalRadius 16, surfaceOnly false. The center stays fixed during this job.",
+			"Optional acquisition scope. Defaults: center at submission, radius 16, verticalRadius 16, surfaceOnly false, visibleOnly false. The center stays fixed during this job.",
 			"properties", properties(
 				prop("center", Map.of("type", "object", "additionalProperties", false,
 					"properties", properties(prop("x", integer("Center x.")), prop("y", integer("Center y.")), prop("z", integer("Center z."))),
 					"required", List.of("x", "y", "z"))),
 				prop("radius", integer("Horizontal search radius, 1..32 blocks.")),
 				prop("verticalRadius", integer("Vertical search radius, 1..32 blocks.")),
+				prop("visibleOnly", bool("Select block sources from sparse first-hit rays within 24 blocks of the current player instead of searching buried blocks. Re-sample after mining and movement. Drops are still collected in scope. May miss visible sources; false preserves loaded-block excavation. Does not change pathfinding terrain permissions.")),
 				prop("surfaceOnly", bool("Restrict sources and work positions to the top ground layer or above, ignoring tree logs/leaves as roofs. Stop acquisition if travel leaves this scope; does not override survival reflexes."))));
 	}
 

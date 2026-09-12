@@ -9,6 +9,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor.*;
 
 class TargetAcquisitionTaskExecutorTest {
+	@Test void anchoringPreservesVisibleDiscoveryAndLegacyDefaults() {
+		var constraints = new AcquisitionConstraints(null, 8, 4, false, true).anchoredAt(pos(1, 64, 2));
+		assertTrue(constraints.visibleOnly());
+		assertEquals(pos(1,64,2), constraints.center());
+		assertFalse(AcquisitionConstraints.nearby().visibleOnly());
+		assertFalse(new AcquisitionConstraints(null, 8, 4, true).visibleOnly());
+	}
+
 	@Test void losingTheRequiredToolDuringApproachFailsWithoutRetryingOtherTargets() {
 		Fixture f = new Fixture();
 		f.tick(2);
