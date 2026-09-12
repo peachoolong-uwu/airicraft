@@ -294,3 +294,7 @@ A skeleton at full health during repeated blocking initially looked stalled. Pau
 ### 2026-09-13: Container reopened while leaving shelter
 
 Confirmed, bypassable: navigation from the shelter reopened the new barrel after `close_container` had succeeded. A later crop pass waited in HARVEST and timed out because a container remained open. Flight recorder shows the screen transition during navigation; exact input-order cause remains unproven. Closing the empty-cursor barrel and retrying at the same position completed the crop pass (one harvested/replanted, fourteen growing). See D060 and `farm-harvest-stall.jsonl`.
+
+### 2026-09-13: Mixed fuel requires separate cooking batches
+
+Bypassable limitation: four raw porkchops and enough combined wood fuel were carried, but `check_smeltables` reported no automatic fuel for the full batch because selection uses one fuel type. Two spare doors cooked two porkchops; three slabs cooked the other two in a second batch. All four outputs were collected and one stored with a verified logbook entry. See D061. No progression blocker or furnace fix is claimed.
