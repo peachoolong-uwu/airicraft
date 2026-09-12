@@ -15,6 +15,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void incomingArrowsExcludeRecedingStoppedAndPassingProjectiles() {
+		var ahead = new net.minecraft.util.math.Vec3d(0, 0, 12);
+		assertEquals(4.0, SurvivalReflexRuntime.incomingProjectileTicks(ahead, new net.minecraft.util.math.Vec3d(0, 0, 3)));
+		assertEquals(Double.POSITIVE_INFINITY, SurvivalReflexRuntime.incomingProjectileTicks(ahead, new net.minecraft.util.math.Vec3d(0, 0, -3)));
+		assertEquals(Double.POSITIVE_INFINITY, SurvivalReflexRuntime.incomingProjectileTicks(ahead, net.minecraft.util.math.Vec3d.ZERO));
+		assertEquals(Double.POSITIVE_INFINITY, SurvivalReflexRuntime.incomingProjectileTicks(new net.minecraft.util.math.Vec3d(3, 0, 12), new net.minecraft.util.math.Vec3d(0, 0, 3)));
+		assertEquals(Double.POSITIVE_INFINITY, SurvivalReflexRuntime.incomingProjectileTicks(ahead, new net.minecraft.util.math.Vec3d(0, 0, 1)));
+	}
+
 	@Test void combatCanRetrieveSwordFromMainInventory() {
 		var inventory = new java.util.ArrayList<>(java.util.Collections.nCopies(36, "minecraft:air"));
 		inventory.set(6, "minecraft:iron_pickaxe");

@@ -57,6 +57,7 @@ public final class SurvivalReflexRuntime {
 	private CompletableFuture<Set<String>> aggroQuery;
 	private GoalPosition combatTarget;
 	private long combatRouteTick;
+	private boolean shieldUseOwned;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
 		this(config, new MovementController(), new CameraController(), null);
@@ -99,6 +100,7 @@ public final class SurvivalReflexRuntime {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("snapshot", snapshot);
 		evidence.put("combatTarget", combatTarget);
+		evidence.put("shieldUseOwned", shieldUseOwned);
 		evidence.put("secureEscapeTicks", secureEscapeTicks);
 		evidence.put("mobRoutesTick", mobRoutesTick);
 		evidence.put("mobRoutes", Map.copyOf(mobRoutes));
@@ -157,6 +159,7 @@ public final class SurvivalReflexRuntime {
 		}
 
 		if (drowningDanger || snapshot.cause() == SurvivalReflexCause.DROWNING) {
+			releaseShield(client);
 			tickDrowning(client, player, drowningDanger, threats, tick);
 		}
 		else {
@@ -216,6 +219,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	public void reset(MinecraftClient client) {
+		releaseShield(client);
 		movementController.stop(client);
 		observedThreats.clear();
 		drowningDamageObserved = false;
@@ -373,6 +377,11 @@ public final class SurvivalReflexRuntime {
 			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
 		}
 		equipBestCombatItem(client, player);
+		if (blockProjectileThreat(client, player, threats, tick)) {
+			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
+			return;
+		}
+		releaseShield(client);
 		attemptCloseQuarterAttack(client, player, threats, tick);
 		SecurityKind security = assessMobSecurity(player, threats, tick);
 		if (security == SecurityKind.SEALED) {
@@ -400,6 +409,85 @@ public final class SurvivalReflexRuntime {
 			recordActuatorFailure("defend", exception, tick);
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, failureText(exception));
 		}
+	}
+
+	private boolean blockProjectileThreat(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+		if (client.interactionManager == null) return false;
+		// Resolve the backing inventory index: combat may interrupt an open container.
+		if (!player.getOffHandStack().isOf(net.minecraft.item.Items.SHIELD)) {
+			for (var slot : player.currentScreenHandler.slots) {
+				if (slot.inventory == player.getInventory() && slot.getIndex() < 36
+					&& slot.getStack().isOf(net.minecraft.item.Items.SHIELD)) {
+					client.interactionManager.clickSlot(player.currentScreenHandler.syncId, slot.id, 40,
+						net.minecraft.screen.slot.SlotActionType.SWAP, player);
+					break;
+				}
+			}
+		}
+		if (!player.getOffHandStack().isOf(net.minecraft.item.Items.SHIELD)
+			|| player.getItemCooldownManager().isCoolingDown(player.getOffHandStack())) return false;
+		net.minecraft.util.math.Vec3d aim = null;
+		String source = null;
+		double earliest = Double.POSITIVE_INFINITY;
+		for (var projectile : client.world.getEntitiesByClass(net.minecraft.entity.projectile.PersistentProjectileEntity.class,
+			player.getBoundingBox().expand(24), Entity::isAlive)) {
+			if (projectile.getOwner() == player) continue;
+			var relative = player.getBoundingBox().getCenter().subtract(projectile.getPos());
+			var velocity = projectile.getVelocity();
+			double arrival = incomingProjectileTicks(relative, velocity);
+			if (arrival < earliest) {
+				earliest = arrival;
+				aim = projectile.getPos();
+				source = projectile.getUuidAsString();
+			}
+		}
+		if (aim == null) {
+			for (ResolvedThreat threat : threats) {
+				var entity = threat.entity();
+				if (threat.lineOfSight() && entity.isUsingItem()
+					&& (entity.getActiveItem().isOf(net.minecraft.item.Items.BOW)
+						|| entity.getActiveItem().isOf(net.minecraft.item.Items.CROSSBOW))) {
+					aim = entity.getBoundingBox().getCenter();
+					source = entity.getUuidAsString();
+					break;
+				}
+			}
+		}
+		if (aim == null) return false;
+		stopCombatNavigation();
+		movementController.stop(client);
+		cameraController.lookAtNow(client, aim);
+		client.options.useKey.setPressed(true);
+		if (!shieldUseOwned) pendingEvents.add(new SurvivalReflexEvent("reflex.shield_raised", mapOfNullable(
+			"sourceUuid", source, "incomingProjectile", Double.isFinite(earliest),
+			"shieldDamage", player.getOffHandStack().getDamage(), "health", player.getHealth(), "tick", tick)));
+		shieldUseOwned = true;
+		if (!player.isUsingItem() || player.getActiveHand() != Hand.OFF_HAND)
+			client.interactionManager.interactItem(player, Hand.OFF_HAND);
+		return true;
+	}
+
+	/** Closest approach within the next eight ticks; ignore stopped, receding and passing arrows. */
+	static double incomingProjectileTicks(net.minecraft.util.math.Vec3d relative, net.minecraft.util.math.Vec3d velocity) {
+		double speedSquared = velocity.lengthSquared();
+		if (speedSquared < 0.01D) return Double.POSITIVE_INFINITY;
+		double ticks = relative.dotProduct(velocity) / speedSquared;
+		if (ticks < 0 || ticks > 8) return Double.POSITIVE_INFINITY;
+		return relative.subtract(velocity.multiply(ticks)).lengthSquared() <= 2.25D
+			? ticks : Double.POSITIVE_INFINITY;
+	}
+
+	private void releaseShield(MinecraftClient client) {
+		if (!shieldUseOwned) return;
+		shieldUseOwned = false;
+		if (client == null) return;
+		client.options.useKey.setPressed(false);
+		if (client.player != null) pendingEvents.add(new SurvivalReflexEvent("reflex.shield_lowered", mapOfNullable(
+			"shieldDamage", client.player.getOffHandStack().getDamage(), "health", client.player.getHealth(),
+			"wasBlocking", client.player.isBlocking())));
+		if (client.player != null && client.interactionManager != null && client.player.isUsingItem()
+			&& client.player.getActiveItem().isOf(net.minecraft.item.Items.SHIELD))
+			client.interactionManager.stopUsingItem(client.player);
 	}
 
 	private void defend(MinecraftClient client, ClientPlayerEntity player, ResolvedThreat threat, long tick) {
@@ -443,6 +531,7 @@ public final class SurvivalReflexRuntime {
 		String reason,
 		boolean keepSafetyHold
 	) {
+		releaseShield(client);
 		underwaterEscape.reset(client);
 		stopCombatNavigation();
 		movementController.stop(client);

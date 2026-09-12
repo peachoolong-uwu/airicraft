@@ -24,6 +24,18 @@ final class PlayerItemUseController {
 
 	String equip(MinecraftClient client, String itemId) {
 		ClientPlayerEntity player = requirePlayer(client);
+		if ("minecraft:shield".equals(itemId)) {
+			if (player.getOffHandStack().isOf(net.minecraft.item.Items.SHIELD))
+				return "Tool result for equip_item: already_equipped itemId=" + itemId + " equipmentSlot=offhand";
+			if (client.interactionManager == null) throw new IllegalStateException("interaction_manager_unavailable");
+			for (var slot : player.currentScreenHandler.slots) {
+				if (slot.inventory == player.getInventory() && slot.getIndex() < 36 && slot.getStack().isOf(net.minecraft.item.Items.SHIELD)) {
+					client.interactionManager.clickSlot(player.currentScreenHandler.syncId, slot.id, 40, SlotActionType.SWAP, player);
+					return "Tool result for equip_item: accepted itemId=" + itemId + " equipmentSlot=offhand";
+				}
+			}
+			throw new IllegalArgumentException("item_not_found itemId=" + itemId);
+		}
 		ItemStack stack = selectItem(client, player, itemId);
 		EquippableComponent equippable = stack.get(DataComponentTypes.EQUIPPABLE);
 		if (equippable != null) {
