@@ -25,15 +25,25 @@ final class PlayerItemUseController {
 	String equip(MinecraftClient client, String itemId) {
 		ClientPlayerEntity player = requirePlayer(client);
 		if ("minecraft:shield".equals(itemId)) {
-			if (player.getOffHandStack().isOf(net.minecraft.item.Items.SHIELD))
-				return "Tool result for equip_item: already_equipped itemId=" + itemId + " equipmentSlot=offhand";
-			if (client.interactionManager == null) throw new IllegalStateException("interaction_manager_unavailable");
+			ItemStack offhand = player.getOffHandStack();
+			int bestRemaining = offhand.isOf(net.minecraft.item.Items.SHIELD) ? offhand.getMaxDamage() - offhand.getDamage() : -1;
+			int bestSlot = -1;
 			for (var slot : player.currentScreenHandler.slots) {
 				if (slot.inventory == player.getInventory() && slot.getIndex() < 36 && slot.getStack().isOf(net.minecraft.item.Items.SHIELD)) {
-					client.interactionManager.clickSlot(player.currentScreenHandler.syncId, slot.id, 40, SlotActionType.SWAP, player);
-					return "Tool result for equip_item: accepted itemId=" + itemId + " equipmentSlot=offhand";
+					int remaining = slot.getStack().getMaxDamage() - slot.getStack().getDamage();
+					if (remaining > bestRemaining) {
+						bestRemaining = remaining;
+						bestSlot = slot.id;
+					}
 				}
 			}
+			if (bestSlot >= 0) {
+				if (client.interactionManager == null) throw new IllegalStateException("interaction_manager_unavailable");
+				client.interactionManager.clickSlot(player.currentScreenHandler.syncId, bestSlot, 40, SlotActionType.SWAP, player);
+				return "Tool result for equip_item: accepted itemId=" + itemId + " equipmentSlot=offhand";
+			}
+			if (offhand.isOf(net.minecraft.item.Items.SHIELD))
+				return "Tool result for equip_item: already_equipped itemId=" + itemId + " equipmentSlot=offhand";
 			throw new IllegalArgumentException("item_not_found itemId=" + itemId);
 		}
 		ItemStack stack = selectItem(client, player, itemId);

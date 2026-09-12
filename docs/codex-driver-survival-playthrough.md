@@ -317,3 +317,14 @@ Efficiency follow-up: survey-led mining collected eleven coal without selecting 
 ### 2026-09-13: Baritone replaces food in hotbar slot 0
 
 Confirmed: with inventory access enabled, eating from slot0 timed out while stationary. Recorder snapshots show food replaced by the iron pickaxe before the timeout. Baritone's periodic inventory housekeeping always restores its best pick to slot0 and did not respect active item use. Eating from slot6 succeeded. A narrow mixin now defers that housekeeping during item use. Full build passed. The stationary slot0 live retry with allowInventory=true consumed pork, raised hunger18→20, and only then let Baritone restore the pickaxe to0. See D069, `eat-before-navigation.jsonl` and `eat-slot-zero-fixed.jsonl`.
+
+
+### 2026-09-13: Mixed ranged/melee combat is costly
+
+Observed efficiency issue: a two-skeleton/four-zombie fight cleared, with eight arrow blocks, but repeated shield holds spaced some close melee attacks roughly50 ticks apart while zombies kept hitting. Thirteen damage events were attributed to zombies and one lacked attribution; no confirmed arrow damage. It consumed both bread to recover afterward. No combat patch yet: preserve the existing release-gap protection when investigating melee counterattack opportunities. See D070 and `deep-iron-combat.jsonl`. The driver also underprepared food and torch reserves for a long cave trip.
+
+### 2026-09-13: Replacing an equipped worn shield
+
+Confirmed and fixed: `equip_item shield` returned already_equipped while a fresh336-durability shield was carried and the offhand shield had57. Select the shield with most remaining durability, keeping the equipped one on ties. Same-inventory HotSwap retry swapped the fresh shield to offhand and preserved the old one; a repeat remained stable. See D071 and `shield-replacement-fixed.jsonl`.
+
+Bypassable fuel-selection inefficiency: the three-iron preview preferred two dark oak logs over available planks/leaf litter. Explicit six-leaf-litter fuel smelted the batch successfully. No ranking fix yet; see D070.
