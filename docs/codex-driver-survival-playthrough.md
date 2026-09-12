@@ -344,3 +344,11 @@ D072 bread follow-up: the next hungry request consumed one loaf normally. The se
 ### 2026-09-13: Nearby interaction stalled behind an obstruction
 
 Confirmed and fixed: use_entity stayed RUNNING beside a chicken because LOS was blocked while its three-block Baritone goal was already satisfied. The live probe reported distance2.1146, LOS=false and no active navigation. An exact feet approach for occluded targets completed the same task twelve ticks after HotSwap. Subsequent feeding produced a third chicken. Existing interaction tests/build passed; see D075 and `chicken-approach-fixed.jsonl`.
+
+### 2026-09-13: Hunting and husbandry efficiency
+
+Two adult pig kills yielded five porkchops after separate dropped-item queries and navigation. Cooking and storing two, with three carried, were verified against settled slots and the server logbook. `attack_entity` correctly reports the kill; a higher-level food action would need to own drop collection as well. See D077.
+
+Seed luring works with short waypoints and catch-up waits, but combat scatters followers and stale-coordinate approaches miss moving animals. A bounded playtest helper reduced manual pacing. A two-by-two pen interior was too shallow: the chicken stopped just outside the gate, about two blocks from the held seeds. Paused recorder evidence preserved in `pen-gate-standoff.jsonl`; extending the interior is a layout correction, not a mod fix. See D078 for the containment result.
+
+Two observed placement sites near mushrooms, `(212,104,494)` and `(213,105,493)`, returned `CALC_FAILED` as navigation goals. Previously traveled positions bypassed that section. Preserve the observations without claiming an A* defect: a standable placement site does not establish a traversable route. See D078, `lure-short-route-failed.jsonl` and `lure-bypass-failed.jsonl`.
