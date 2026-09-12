@@ -521,20 +521,22 @@ public final class SurvivalReflexRuntime {
 		}
 		if (baritone != null && baritone.isLoaded()) {
 			movementController.stop(client);
-			GoalPosition target = goal(threat.entity().getBlockPos());
-			if (combatTarget == null || tick - combatRouteTick >= 20L
-				&& (!target.equals(combatTarget) || !baritone.processActive())) {
-				baritone.applySettings();
-				baritone.startNavigateNear(target, 2);
-				combatTarget = target;
-				combatRouteTick = tick;
-			}
+			updateCombatNavigation(goal(threat.entity().getBlockPos()), tick);
 		}
 		else if (threat.lineOfSight()) {
 			movementController.moveDirectional(client, true, false, false, false, true, false, tick);
 		}
 		else {
 			movementController.stop(client);
+		}
+	}
+
+	void updateCombatNavigation(GoalPosition target, long tick) {
+		if (combatTarget == null || tick - combatRouteTick >= 20L
+			&& (!target.equals(combatTarget) || !baritone.processActive())) {
+			baritone.startNavigateNear(target, 2);
+			combatTarget = target;
+			combatRouteTick = tick;
 		}
 	}
 

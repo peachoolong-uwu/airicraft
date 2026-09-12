@@ -15,6 +15,31 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void combatRoutingPreservesConfiguredPathConstraintsOnStartAndReplan() {
+		var settingsResets = new java.util.concurrent.atomic.AtomicInteger();
+		var routes = new java.util.ArrayList<ai.moeru.airicraft.agent.goals.GoalPosition>();
+		var facade = (ai.moeru.airicraft.agent.baritone.BaritoneFacade) java.lang.reflect.Proxy.newProxyInstance(
+			getClass().getClassLoader(), new Class<?>[]{ai.moeru.airicraft.agent.baritone.BaritoneFacade.class},
+			(proxy, method, args) -> {
+				switch (method.getName()) {
+					case "applySettings" -> { settingsResets.incrementAndGet(); return null; }
+					case "startNavigateNear" -> { routes.add((ai.moeru.airicraft.agent.goals.GoalPosition) args[0]); return null; }
+					case "processActive" -> { return true; }
+					default -> throw new AssertionError("Unexpected call: " + method.getName());
+				}
+			});
+		var runtime = new SurvivalReflexRuntime(null,
+			new ai.moeru.airicraft.agent.control.MovementController(),
+			new ai.moeru.airicraft.agent.control.CameraController(), facade);
+		var first = new ai.moeru.airicraft.agent.goals.GoalPosition(10, 64, 10, true);
+		var second = new ai.moeru.airicraft.agent.goals.GoalPosition(12, 64, 10, true);
+		runtime.updateCombatNavigation(first, 100);
+		runtime.updateCombatNavigation(first, 110);
+		runtime.updateCombatNavigation(second, 120);
+		assertEquals(List.of(first, second), routes);
+		assertEquals(0, settingsResets.get(), "Combat must not replace runtime constraints with startup defaults");
+	}
+
 	@Test void shieldFacesTheShooterAtEyeLevelInsteadOfTrackingArrowPosition() {
 		var eye = new net.minecraft.util.math.Vec3d(146, 33, 401);
 		var shooter = new net.minecraft.util.math.Vec3d(141, 41, 397);
