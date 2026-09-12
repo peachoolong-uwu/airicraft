@@ -4,6 +4,7 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"BaritoneCalculationContextMixin",
+		"BaritoneInventoryBehaviorMixin",
 		"BaritoneMobAvoidanceMixin",
 		"ClientPlayNetworkHandlerMixin",
 		"ClientPlayerInteractionManagerMixin",

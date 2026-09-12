@@ -312,3 +312,8 @@ Confirmed and fixed: the preview counted input logs again as fuel. A live one-lo
 Bypassable stale memory: return target `(216,67,401)` failed with digging disabled because its feet space now contains dirt. Paused inspection established the obstruction. The adjacent step `(215,67,400)` and updated feet position `(216,68,401)` completed, followed by the short surface route. World bookmarks were corrected. This is not evidence of an A* defect; resample footing when a remembered exact waypoint fails. See D067 and `coal-survey-trip.jsonl`.
 
 Efficiency follow-up: survey-led mining collected eleven coal without selecting hidden ores, but repeated manual approaches and drop-pit navigation were expensive. Reuse System 1 acquisition with an observed/visible target constraint instead of inventing a separate cave mining executor. Fully buried mining should remain available separately.
+
+
+### 2026-09-13: Baritone replaces food in hotbar slot 0
+
+Confirmed: with inventory access enabled, eating from slot0 timed out while stationary. Recorder snapshots show food replaced by the iron pickaxe before the timeout. Baritone's periodic inventory housekeeping always restores its best pick to slot0 and did not respect active item use. Eating from slot6 succeeded. A narrow mixin now defers that housekeeping during item use; full build passed, but the post-change slot0 live retry remains pending hunger loss. Until verified, disabling allowInventory or eating from another slot is a bypass. See D069 and `eat-before-navigation.jsonl`.
