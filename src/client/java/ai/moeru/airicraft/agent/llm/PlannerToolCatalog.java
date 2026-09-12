@@ -24,6 +24,9 @@ public final class PlannerToolCatalog {
 	public static final String DISCOVER_TOOLS = "discover_tools";
 	public static final String TAKE_A_LOOK = "take_a_look";
 	public static final String INSPECT_WORLD = "inspect_world";
+	public static final String CLOSE_CONTAINER = "close_container";
+	public static final String INSPECT_CONTAINER = "inspect_container";
+	public static final String TRANSFER_CONTAINER = "transfer_container";
 	public static final String INSPECT_INVENTORY = "inspect_inventory";
 	public static final String CHECK_CRAFTABLES = "check_craftables";
 	public static final String CHECK_SMELTABLES = "check_smeltables";
@@ -119,6 +122,23 @@ public final class PlannerToolCatalog {
 				prop("nearbyRequiredHorizontalRadius", integer("Horizontal radius for nearbyRequiredBlockIds. Default 4, maximum 16.")),
 				prop("nearbyRequiredVerticalRadius", integer("Vertical radius for nearbyRequiredBlockIds. Default 1, maximum 8."))
 			), List.of("mode", "scope")), PlannerToolCatalog::validateInspectWorldArguments),
+		builtInTool(CLOSE_CONTAINER, false, tool(CLOSE_CONTAINER,
+			"Close the current chest or barrel after transfers. Refuses a nonempty cursor. Use before resuming travel or other work.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
+		builtInTool(INSPECT_CONTAINER, true, tool(INSPECT_CONTAINER,
+			"Inspect the currently open chest or barrel, including its syncId, slots and carried storage. Open an observed chest with use_block first. No remote or unopened inventory access.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
+		builtInTool(TRANSFER_CONTAINER, false, tool(TRANSFER_CONTAINER,
+			"Deposit or withdraw an exact item quantity in the currently open chest/barrel. Copy syncId from inspect_container. Preflights source quantity and destination space; preserves stack components and leaves cursor empty. Result is submitted client prediction: inspect_container again to verify settled counts.", properties(
+				prop("syncId", integer("Open container syncId from inspect_container; stale windows are rejected.")),
+				prop("direction", enumString("Transfer direction.", List.of("deposit", "withdraw"))),
+				prop("itemId", string("Exact item ID to transfer; equipped armor and offhand are excluded.")),
+				prop("quantity", integer("Exact quantity, 1 to 2304."))
+			), List.of("syncId", "direction", "itemId", "quantity")), args -> {
+				requireInt(args, "syncId");
+				requireString(args, "itemId");
+				if (!List.of("deposit", "withdraw").contains(requireString(args, "direction"))) throw new JsonParseException("direction must be deposit or withdraw");
+				int quantity = requireInt(args, "quantity");
+				if (quantity < 1 || quantity > 2304) throw new JsonParseException("quantity must be 1..2304");
+			}),
 		builtInTool(INSPECT_INVENTORY, true, tool(INSPECT_INVENTORY, "Inspect current inventory counts.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("prompt", string("Optional inventory question."))

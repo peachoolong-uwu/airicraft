@@ -2387,6 +2387,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				boolean cancelled = smeltingProcessManager.cancel(processId);
 				yield "Tool result for cancel_smelting: accepted processId=" + processId + " tracked=" + cancelled;
 			}
+			case PlannerToolCatalog.CLOSE_CONTAINER -> ContainerInventoryController.close(MinecraftClient.getInstance());
+			case PlannerToolCatalog.INSPECT_CONTAINER -> ContainerInventoryController.inspect(MinecraftClient.getInstance());
+			case PlannerToolCatalog.TRANSFER_CONTAINER -> ContainerInventoryController.transfer(MinecraftClient.getInstance(),
+				intArg(args, "syncId").orElseThrow(), stringArg(args, "direction").orElseThrow(),
+				stringArg(args, "itemId").orElseThrow(), intArg(args, "quantity").orElseThrow());
 			case PlannerToolCatalog.EQUIP_ITEM -> {
 				String itemId = stringArg(args, "itemId").orElseThrow(() -> new IllegalArgumentException("itemId is required"));
 				yield playerItemUseController.equip(MinecraftClient.getInstance(), itemId);

@@ -3,7 +3,10 @@
 	"package": "ai.moeru.airicraft.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"MinecraftServerTickDebugMixin"
+		"MinecraftServerTickDebugMixin",
+		"ScreenHandlerLogbookMixin",
+		"ServerInteractionLogbookMixin",
+		"ServerPlayerLogbookMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -19,6 +19,11 @@ public class Airicraft implements ModInitializer {
 		// However, some things (like resources) may still be uninitialized.
 		// Proceed with mild caution.
 
-		LOGGER.info("Hello Fabric world!");
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(
+			ai.moeru.airicraft.memory.InteractionLogbookRecorder::flushTick);
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			ai.moeru.airicraft.memory.InteractionLogbookRecorder.flushTick(server);
+			ai.moeru.airicraft.memory.InteractionLogbook.flush();
+		});
 	}
 }
