@@ -286,3 +286,7 @@ The first-leg flee proposal above is historical: the later user-directed policy 
 - Confirmed remaining limitation: crop work-position search excludes farmland and crop-occupied feet blocks, so an irrigated farm can fail `crop_has_no_reachable_work_position`. Starting from shore bypassed the initial failure, but the outer cells failed mid-pass. Recorder evidence and exact coordinates are in autonomous playtest decision D054. Whole-plot completion remains pending.
 
 The stance limitation above is now fixed: accept collision-free crop feet space over farmland. After hot reload, the previously failing farm pass completed, all 15 farm cells held wheat, and five bread were crafted at home. Existing crop tests/full build and live recorder `farm-complete.jsonl` passed; see D055.
+
+### 2026-09-13: Shield combat efficiency observation
+
+A skeleton at full health during repeated blocking initially looked stalled. Paused recorder review showed it spent most of the encounter outside melee range, followed by four sword attacks and normal `threats_clear` resolution. Permanent attack starvation is unconfirmed and must not be listed as a verified bug. Slow terrain-heavy closing remains an efficiency concern (D057, `close-skeleton-stall.jsonl`).
