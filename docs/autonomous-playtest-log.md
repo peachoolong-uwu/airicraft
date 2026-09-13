@@ -1133,3 +1133,17 @@ D116 live verification: after the support-direction guidance, controller jobbd48
 ### D117 — Provider security checkpoint interrupts the lit-shelter run
 
 After the two torch successes, events480/482 returned HTTP403 HTML titled Vercel Security Checkpoint; event483 entered degraded mode. This differs from the earlier429 Retry-After incident. Paused client96634/server96359, sessionf1e65071-3292-49a9-8ec9-dfdaf10746fa epoch1, and saved torch-live-provider-checkpoint.jsonl (truncated), with screenshot in/tmp/shelter-torches-provider-pause.png. Keep this incident separate from gameplay failure; no bypass, automatic403 retry policy, or repeated reset. The actual planner needs normal provider access restored before play can resume. Shelter entry/exit, remaining enclosure gaps and floor holes still need verification; no completed shelter claim. The goal remains active.
+
+### D118 — Paused-world shelter checkpoint while provider remains unavailable
+
+Revalidated the live bridge: same paused sessionf1e65071-3292-49a9-8ec9-dfdaf10746fa, client96634/server96359, actual controller degraded. A normal unauthenticated GET to the configured provider's /v1/models again returned403/Vercel Security Checkpoint. No reset, alternate route or gameplay mutation. This is the second consecutive goal turn encountering this provider condition; the previous turn made verified gameplay/code progress.
+
+Saved a complete125-cell authoritative scan to run/playtest/2026-09-13/shelter-checkpoint-blocks.txt (x=-4..0,y133..137,z2..6). All9roof cells over the3x3interior atY136 are spruce_planks. The remaining outer roof row atz6 is air/snow, but that row lies over the perimeter wall; completing it is lower priority than these actual gaps:
+
+- Missing floor support at(-2,133,5) and(-1,133,5). Both are air; restore usable footing atY134.
+- Upper east-wall cells(0,135,5) and(0,135,6) are thin snow, not full wall blocks. Replace with full blocks while preserving the door at(0,134..135,4).
+- The east-wall door has both halves present, facingwest, hingedright and open. Closing it and actually traversing the entrance remain required verification.
+
+The furnace occupies(-3,134,3); remaining interior body/head cells have no full-block headroom obstruction. Two torches at(-2,134,3) and(-2,134,4) each read light14; clear interior feet cells read12..14 (the solid furnace cell reads0). The scan verifies local lighting and geometry, not navigation or enemy exclusion. Exterior approach/support and safe entry/exit must still be tested through the actual planner.
+
+Frozen player facts: feet(-1.580,134,4.501), health6.53/20, food11, no armor;29spruceplanks,6torches,6sticks,1dirt,2doors and2rottenflesh. No pickaxe or charcoal in the snapshot inventory. Once normal provider access returns, recover the existing degraded planner once, provide this fresh checkpoint and the placement-direction clarification, then resume the same paused world. Prioritize the four floor/wall repairs and usable entrance over redesign or a decorative roof rim. The actual planner should inspect these cells before modification because external debug reads do not authorize its tools.
