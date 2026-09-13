@@ -8,6 +8,10 @@ public record MissionExecutionSnapshot(
 	StepExecutionResult lastStepResult,
 	TaskExecutionSnapshot primitiveExecution
 ) {
+	public MissionExecutionSnapshot withEvidence(WorldEvidence currentEvidence) {
+		return new MissionExecutionSnapshot(mission, ledger, activeStep, currentEvidence, lastStepResult, primitiveExecution);
+	}
+
 	public static MissionExecutionSnapshot idle() {
 		return new MissionExecutionSnapshot(null, null, null, null, StepExecutionResult.idle(), TaskExecutionSnapshot.idle());
 	}

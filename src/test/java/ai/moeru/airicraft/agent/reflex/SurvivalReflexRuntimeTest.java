@@ -15,6 +15,31 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void resumingTacticalWorkRetainsDeferredThreatIdentityUntilLifecycleReset() throws Exception {
+		var runtime = new SurvivalReflexRuntime(null);
+		runtime.observeDamage(new SurvivalReflexRuntime.DamageObservation(1, "arrow", "pillager", "Pillager", "minecraft:pillager", true, false));
+		var snapshotField = SurvivalReflexRuntime.class.getDeclaredField("snapshot");
+		snapshotField.setAccessible(true);
+		snapshotField.set(runtime, new SurvivalReflexSnapshot(SurvivalReflexState.AWAITING_PLANNER,
+			SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, 3, "hold", "job", null,
+			List.of(), 20F, 20F, 300, 300, 0, 400, 0, null));
+		var deferred = new CombatStalemate(CombatStalemate.Phase.DEFERRED, 0, net.minecraft.util.math.Vec3d.ZERO,
+			java.util.Map.of("pillager", new net.minecraft.util.math.Vec3d(13, 0, 0)));
+		var stateField = SurvivalReflexRuntime.class.getDeclaredField("combatStalemate");
+		stateField.setAccessible(true);
+		stateField.set(runtime, deferred);
+		var threatsField = SurvivalReflexRuntime.class.getDeclaredField("observedThreats");
+		threatsField.setAccessible(true);
+
+		assertEquals(SurvivalReflexRuntime.ResumeResult.RESUMED, runtime.resume("hold", 401));
+		assertEquals(deferred, runtime.decisionEvidence().get("combatStalemate"));
+		assertTrue(((java.util.Map<?, ?>) threatsField.get(runtime)).containsKey("pillager"),
+			"Do not lose deferral during the next asynchronous aggro-query gap");
+		runtime.reset(null);
+		assertNull(runtime.decisionEvidence().get("combatStalemate"));
+		assertTrue(((java.util.Map<?, ?>) threatsField.get(runtime)).isEmpty());
+	}
+
 	@Test void blocksAnApproachingCreeperBlastBeforeShieldStartupDelay() {
 		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(3.03, 1, 0.35F, false));
 		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(8, 1, 0.8F, true));

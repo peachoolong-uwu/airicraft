@@ -491,9 +491,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 		WorldEvidence worldEvidence = currentWorldEvidence(client);
 		// Idle/primitive jobs may not project a semantic task, but every planner trigger needs fresh evidence.
-		missionExecutionSnapshot = new MissionExecutionSnapshot(missionExecutionSnapshot.mission(), missionExecutionSnapshot.ledger(),
-			missionExecutionSnapshot.activeStep(), worldEvidence, missionExecutionSnapshot.lastStepResult(),
-			missionExecutionSnapshot.primitiveExecution());
+		missionExecutionSnapshot = missionExecutionSnapshot.withEvidence(worldEvidence);
 		dialogueRuntime.updateGameplayWorkIdle(!actionGraphCoordinator.hasNonterminal()
 			&& isIdleForIdleIdeaScheduling(activeJobRuntime.current()) && activeGoal().isEmpty()
 			&& !playerItemUseController.eating());
@@ -693,7 +691,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		activeJobRuntime.pauseForReflex(tickCount);
 		actionGraphCoordinator.pauseForegroundForReflex(tickCount);
 		taskSnapshot = activeJobRuntime.taskSnapshot();
-		missionExecutionSnapshot = activeJobRuntime.missionExecutionSnapshot();
+		// The job stopped sampling when interrupted; retain this tick's actual world observation.
+		missionExecutionSnapshot = activeJobRuntime.missionExecutionSnapshot().withEvidence(missionExecutionSnapshot.evidence());
 		Optional<WorldTaskRequest> activeRequest = activeJobRuntime.activeTaskRequest();
 		String taskId = activeRequest.map(WorldTaskRequest::taskId).orElse(previousExecution.taskId());
 		GoalSnapshot goal = activeRequest.map(WorldTaskRequest::goal).orElse(previousExecution.activeGoal());
@@ -4109,6 +4108,13 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			+ (holdId == null
 				? ". Review the consolidated safety episode; no interrupted task requires resumption."
 				: ". Review the consolidated safety episode and explicitly resume_task with this holdId, replace the task, or cancel it.");
+		if ("combat_approach_stalled".equals(reason)) {
+			message += " Combat is unresolved: the player and distant threats stayed stationary for "
+				+ event.payload().get("noProgressTicks") + " ticks. Position=" + event.payload().get("position")
+				+ "; remainingThreats=" + event.payload().get("remainingThreats")
+				+ ". Choose a tactical next step from fresh geometry and inventory; repeated pursuit has made no progress."
+				+ " The unchanged distant encounter is deferred while you act; close danger, incoming projectiles, damage or changed threats reactivate defense.";
+		}
 		return PlannerTrigger.autonomous(
 			PlannerTriggerType.SYSTEM,
 			"survival_runtime",

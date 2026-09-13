@@ -60,6 +60,7 @@ public final class SurvivalReflexRuntime {
 	private long combatRouteTick;
 	private boolean shieldUseOwned;
 	private ShieldGuard shieldGuard;
+	private CombatStalemate combatStalemate;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
 		this(config, new MovementController(), new CameraController(), null);
@@ -102,6 +103,7 @@ public final class SurvivalReflexRuntime {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("snapshot", snapshot);
 		evidence.put("combatTarget", combatTarget);
+		evidence.put("combatStalemate", combatStalemate);
 		evidence.put("shieldUseOwned", shieldUseOwned);
 		evidence.put("shieldGuard", shieldGuard);
 		evidence.put("secureEscapeTicks", secureEscapeTicks);
@@ -145,7 +147,14 @@ public final class SurvivalReflexRuntime {
 		boolean drowningDanger = drowningDanger(player, config.lowAirTicks(), drowningDamageObserved);
 		detectProactiveThreats(client, player, tick);
 		List<ResolvedThreat> threats = resolveThreats(client, player);
-		boolean mobDanger = !threats.isEmpty() || recentlyDamagedByMob(tick, lastMobDamageTick, config.threatCooldownTicks());
+		if (combatStalemate != null || snapshot.state() == SurvivalReflexState.ACTIVE && snapshot.cause() == SurvivalReflexCause.MOB_ATTACK) {
+			Map<String, Vec3d> positions = new LinkedHashMap<>();
+			for (ResolvedThreat threat : threats) positions.put(threat.observed().uuid(), threat.entity().getPos());
+			combatStalemate = CombatStalemate.observe(combatStalemate, tick, player.getPos(), positions,
+				immediateCombatDanger(client, player, threats, tick));
+		}
+		boolean mobDanger = !combatDeferred()
+			&& (!threats.isEmpty() || recentlyDamagedByMob(tick, lastMobDamageTick, config.threatCooldownTicks()));
 		if (shouldBeginReflex(snapshot.state(), drowningDanger || mobDanger)) {
 			SurvivalReflexCause cause = drowningDanger ? SurvivalReflexCause.DROWNING : SurvivalReflexCause.MOB_ATTACK;
 			boolean hasInterruptedWork = interruptedWork != null && interruptedWork.hasInterruptedWork();
@@ -194,7 +203,7 @@ public final class SurvivalReflexRuntime {
 			SurvivalReflexState.IDLE, null, null, snapshot.safetyEpoch(), null, null, null, List.of(),
 			snapshot.health(), snapshot.maxHealth(), snapshot.air(), snapshot.maxAir(), -1L, tick, 0, null
 		);
-		observedThreats.clear();
+		if (!combatDeferred()) observedThreats.clear();
 		return true;
 	}
 
@@ -222,6 +231,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	public void reset(MinecraftClient client) {
+		combatStalemate = null;
 		releaseShield(client);
 		movementController.stop(client);
 		observedThreats.clear();
@@ -258,6 +268,7 @@ public final class SurvivalReflexRuntime {
 		Runnable releaseNormalActuators
 	) {
 		long nextEpoch = snapshot.safetyEpoch() + 1L;
+		combatStalemate = null;
 		resetSecurityProgress();
 		InterruptedWork work = interruptedWork == null ? InterruptedWork.none() : interruptedWork;
 		String holdId = work.hasInterruptedWork() ? UUID.randomUUID().toString() : null;
@@ -371,7 +382,26 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
+	private boolean combatDeferred() {
+		return combatStalemate != null && combatStalemate.deferred();
+	}
+
+	private boolean immediateCombatDanger(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+		if (recentlyDamagedByMob(tick, lastMobDamageTick, config.threatCooldownTicks())
+			|| threats.stream().anyMatch(threat -> threat.distance() <= MELEE_THREAT_DISTANCE || threat.entity().isUsingItem())) return true;
+		for (var projectile : client.world.getEntitiesByClass(net.minecraft.entity.projectile.PersistentProjectileEntity.class,
+			player.getBoundingBox().expand(24), Entity::isAlive)) {
+			if (projectile.getOwner() != player && Double.isFinite(incomingProjectileTicks(
+				player.getBoundingBox().getCenter().subtract(projectile.getPos()), projectile.getVelocity()))) return true;
+		}
+		return false;
+	}
+
 	private void tickMobAttack(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+		if (combatDeferred()) {
+			resolve(client, player, threats, tick, "combat_approach_stalled", true);
+			return;
+		}
 		if (mobThreatsResolved(threats.size(), tick, lastMobDamageTick, config.threatCooldownTicks())) {
 			resolve(client, player, threats, tick, "threats_clear", false);
 			return;
@@ -607,6 +637,9 @@ public final class SurvivalReflexRuntime {
 			"cause", snapshot.cause() == null ? null : snapshot.cause().name(),
 			"action", snapshot.action() == null ? null : snapshot.action().name(),
 			"reason", reason,
+			"position", goal(player.getBlockPos()),
+			"remainingThreats", threatSnapshots(threats),
+			"noProgressTicks", combatDeferred() ? tick - combatStalemate.sinceTick() : null,
 			"nextState", nextState.name()
 		)));
 		snapshot = new SurvivalReflexSnapshot(
@@ -615,7 +648,10 @@ public final class SurvivalReflexRuntime {
 			player.getHealth(), player.getMaxHealth(), player.getAir(), player.getMaxAir(), snapshot.startedTick(),
 			tick, snapshot.breathableTicks(), null
 		);
-		observedThreats.clear();
+		if (!"combat_approach_stalled".equals(reason)) {
+			combatStalemate = null;
+			observedThreats.clear();
+		}
 		lastMobDamageTick = Long.MIN_VALUE;
 		resetSecurityProgress();
 	}

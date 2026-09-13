@@ -104,6 +104,41 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EmbodiedAgentRuntimeTest {
 	@Test
+	void reflexPauseKeepsFreshEvidenceInsteadOfTheInterruptedJobsOldSample() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var fresh = new WorldEvidence(Map.of(), Map.of("minecraft:dirt", 1), Map.of(),
+				"minecraft:overworld", -34, 124, -39, "minecraft:dirt", 27024);
+			Field field = EmbodiedAgentRuntime.class.getDeclaredField("missionExecutionSnapshot");
+			field.setAccessible(true);
+			field.set(runtime, new ai.moeru.airicraft.agent.tasks.MissionExecutionSnapshot(
+				null, null, null, fresh, StepExecutionResult.idle(), TaskExecutionSnapshot.idle()));
+			Method pause = EmbodiedAgentRuntime.class.getDeclaredMethod("pauseNormalWorkForReflex", net.minecraft.client.MinecraftClient.class);
+			pause.setAccessible(true);
+			pause.invoke(runtime, new Object[]{null});
+			assertEquals(fresh, runtime.missionExecutionSnapshot().evidence(),
+				"A reflex handoff must not present the interrupted job's old position as a fresh update");
+		}
+		finally { runtime.shutdown(); }
+	}
+
+	@Test
+	void stalledCombatTriggerReportsUnresolvedThreatAndTacticalHold() {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var trigger = runtime.createPlannerTriggerForTests(new SemanticEvent(1, 400, 20000, "reflex.resolved",
+				Map.of("reason", "combat_approach_stalled", "cause", "MOB_ATTACK", "holdId", "hold-patrol",
+					"nextState", "AWAITING_PLANNER", "position", "-35,124,-39", "remainingThreats", "pillager at distance 13.14",
+					"noProgressTicks", 400)), new EventRoutingProfile("reflex.resolved", true, PlannerTriggerType.SYSTEM, true));
+			assertTrue(trigger.text().contains("Combat is unresolved"));
+			assertTrue(trigger.text().contains("hold-patrol"));
+			assertTrue(trigger.text().contains("pillager at distance 13.14"));
+			assertTrue(trigger.text().contains("-35,124,-39"));
+		}
+		finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void idlePlannerEvidenceRefreshesWithoutAProjectedSemanticTask() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		try {
