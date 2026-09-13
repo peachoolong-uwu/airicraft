@@ -54,6 +54,8 @@ public final class DialogueRuntime {
 	private long safetyEpoch;
 	private String safetyHoldId;
 	private boolean reflexActive;
+	private Object observedObjective;
+	private long blockedEventCursor;
 	private boolean externalDriverActive;
 	private long nextPendingReplyId = 1L;
 
@@ -161,7 +163,7 @@ public final class DialogueRuntime {
 			+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
 			+ plannerGoal.context();
 		if (awaitingSafetyDecision) continuation = "Safety hold " + safetyHoldId
-			+ " still awaits your decision. The previous job remains paused. Use resume_task with this holdId, replace the task, or cancel it."
+			+ " still awaits your decision. The previous job remains paused. Use inspect_work and resume_work with its exact workId and this holdId, or cancel_work."
 			+ " Saying you will act does not release the hold.\n" + continuation;
 		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
 			continuation, tick, clock.millis(), "planner_goal"),
@@ -417,6 +419,7 @@ public final class DialogueRuntime {
 		MissionExecutionSnapshot missionExecution,
 		SemanticEventBuffer plannerEventBuffer
 	) {
+		if (plannerGoal != null && plannerGoal.blocked() && trigger != null && !trigger.maySupersedeLaunchedTurn()) return;
 		if (trigger == null) {
 			return;
 		}
@@ -494,6 +497,18 @@ public final class DialogueRuntime {
 		if (externalDriverActive) {
 			return null;
 		}
+		if (plannerGoal != null) {
+			if (observedObjective != plannerGoal.snapshot()) {
+				observedObjective = plannerGoal.snapshot();
+				blockedEventCursor = eventBuffer.latestSeqNo();
+			}
+			if (plannerGoal.blocked()) {
+				for (var event : eventBuffer.query(blockedEventCursor).events())
+					if (plannerGoal.relevantToBlock(event.type())) queueTaskWakeup(null, tick, event.seqNo());
+				blockedEventCursor = eventBuffer.latestSeqNo();
+			}
+		}
+
 		if (queuedTimeoutInjections > 0 && !activePlanner().hasInFlight()) {
 			queuedTimeoutInjections--;
 			applyTransition(DialogueCore.onPlannerFailure(state, LlmFailureType.TIMEOUT, "Injected LLM timeout", pendingTimeoutVisibleReply, tick), tick, eventBuffer);

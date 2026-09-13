@@ -259,7 +259,7 @@ public final class PlannerShellFactory {
 				cacheKey == null ? null : cacheKey + ":compaction"), observability),
 			new PlannerContextAggregator(clock, llm.plannerCompactionTriggerTokens(), llm.plannerPendingSemanticEventCap(),
 				llm.plannerVisionMode(), tools, llm.backendManagedHistory()), vision, inventory, llm.plannerVisionMode(),
-			llm.visionImageDetail(), llm.plannerSessionMaxConcurrentAttempts(), llm.plannerSessionCoalesceStepMillis(),
+			llm.visionImageDetail(), 1, llm.plannerSessionCoalesceStepMillis(),
 			llm.plannerSessionCoalesceMinMillis(), llm.plannerSessionCoalesceMaxMillis(), clock, observability,
 			listener, debug, actions, narration, tools, toolObserver);
 	}

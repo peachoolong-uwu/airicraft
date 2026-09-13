@@ -756,7 +756,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private void processSurvivalReflexEvents() {
 		List<SurvivalReflexEvent> events = survivalReflexRuntime.drainEvents();
 		for (SurvivalReflexEvent event : events) {
-			eventBuffer.append(tickCount, event.type(), event.payload());
+			var observed = eventBuffer.append(tickCount, event.type(), event.payload());
+			if (List.of("reflex.started", "reflex.resolved", "reflex.threat_detected", "reflex.actuator_failed").contains(event.type()))
+				dialogueRuntime.queueTaskWakeup(null, tickCount, observed.seqNo());
 		}
 		SurvivalReflexSnapshot reflex = survivalReflexRuntime.snapshot();
 		dialogueRuntime.updateSafetyContext(

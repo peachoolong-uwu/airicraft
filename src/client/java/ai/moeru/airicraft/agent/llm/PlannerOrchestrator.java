@@ -290,7 +290,8 @@ public final class PlannerOrchestrator {
 	public void updateSafetyContext(long safetyEpoch, String holdId, boolean activeReflex) {
 		minimumSafetyEpoch = Math.max(minimumSafetyEpoch, Math.max(0L, safetyEpoch));
 		currentSafetyHoldId = holdId;
-		safetyLaunchBlocked = activeReflex;
+		// A reflex owns actuators, not reasoning. Executor policies gate physical tools.
+		safetyLaunchBlocked = false;
 		toolRegistry.setSafetyHoldActive(holdId != null && !holdId.isBlank());
 	}
 
@@ -1520,9 +1521,9 @@ public final class PlannerOrchestrator {
 		sessionCoordinator.finishGeneration(result.generation(), true);
 		committedSnapshotGenerations.remove(result.generation());
 		endTurnSpan();
-		if (!safetyLaunchBlocked) {
-			startQueuedWorkIfPossible();
-		}
+		// Wait for an identified ownership/event wake; do not replay the obsolete trigger.
+		pendingSubmitRequest = null;
+		clearCoalesceState();
 	}
 
 	private void recordStalePlannerRejection(long generation, PlannerRequest request, String phase) {

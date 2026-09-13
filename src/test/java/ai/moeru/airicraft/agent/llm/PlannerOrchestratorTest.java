@@ -1136,6 +1136,21 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void activeReflexAllowsSupervisionWithoutCreatingPlaintextLoop() {
+		RecordingBackend backend = new RecordingBackend();
+		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(),
+			CurrentInventoryTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, PlannerToolRegistry.empty(), PlannerActionToolExecutor.DISABLED);
+		orchestrator.updateSafetyContext(1L, "hold-1", true);
+		orchestrator.submit(autonomousRequestAt(20L, 2000L, "reflex started; inspect and supervise", "reflex-started").withSafetyContext(1L, "hold-1"));
+		awaitBackendCallCount(orchestrator, backend, 1, Duration.ofSeconds(1));
+		backend.succeed(0, replyOnly("Keep blocking while the threat remains."));
+		assertTrue(awaitResult(orchestrator).succeeded());
+		orchestrator.onAcceptedReplyRecorded();
+		for (int i = 0; i < 30; i++) orchestrator.poll();
+		assertEquals(1, backend.callCount());
+	}
+
+	@Test
 	void reflexEpochRejectsOldPlannerToolsAndLaunchesConsolidatedSafeTurn() {
 		RecordingBackend backend = new RecordingBackend();
 		ArrayList<String> invokedTools = new ArrayList<>();
