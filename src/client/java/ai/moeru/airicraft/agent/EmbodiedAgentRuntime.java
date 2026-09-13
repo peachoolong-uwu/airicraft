@@ -2003,8 +2003,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			if (illuminationError.isPresent()) {
 				LinkedHashMap<String, Object> payload = new LinkedHashMap<>(dispatch.payload());
 				payload.put("failureReason", "insufficient_illumination");
+				// This method is unusable under current world conditions. Re-resolving
+				// the same mining method cannot supply its own missing illumination.
 				return ActionGraphPrimitiveDispatchResult.failed(
-					TaskFailureCode.MISSING_ITEM,
+					TaskFailureCode.ENVIRONMENT_CHANGED,
 					illuminationError.get(),
 					payload
 				);
