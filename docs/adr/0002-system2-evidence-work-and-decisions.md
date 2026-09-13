@@ -1,6 +1,6 @@
 # System 2 evidence, work, and decisions
 
-Status: accepted; staged implementation in progress (2026-09-14).
+Status: accepted; implemented, automated validation passed, live rollout paused on provider HTTP403 (2026-09-14).
 
 ## Context
 
@@ -40,22 +40,35 @@ Freeze cleaned-up typed tools independently for each role. Discovery is catalog 
 not dynamic schema activation. Retain separate prefix-stable histories. Preserve bounded
 recording and explicit overflow gaps; do not introduce unbounded event sourcing.
 
+## Ownership and limits
+
+| Owner | Authoritative responsibility |
+| --- | --- |
+| Minecraft runtime and semantic event buffer | Physical observations, executor transitions, bounded event identities and gaps. |
+| Work projection/history | Common identity, requested parameters, current state and retained outcomes over existing executors; no scheduling authority. |
+| Controller and objective store | Overall objective, constraints, criteria, blockers and named decisions. |
+| Thinker and delegation | Bounded assignment, private reasoning/history, claimed return outcome and shared evidence references. |
+| Survival reflex | Temporary actuator ownership; does not own or silence System2 decisions. |
+| Per-role orchestrator | Fresh decision boundary, incorporated cursor, frozen transport attempts, stale response rejection and fixed schema prefix. |
+
+Work history retains128 terminal entries plus unresolved work; each decision includes unresolved work and the latest8 terminal projections. Shared semantic evidence is bounded512events, with explicit gaps. Goal notes are bounded16names and replaced goals32entries. The recorder remains a separate12000server-tick/64MiB diagnostic window.
+
 ## Implementation and acceptance checklist
 
-- [ ] Evidence: fresh decision context at initial, follow-up, continuation and handoff boundaries;
+- [x] Evidence: fresh decision context at initial, follow-up, continuation and handoff boundaries;
   per-role cursors; retained outcomes; retry/compaction/overflow/world-change coverage;
   distinguish dispatch/context/recording clocks.
-- [ ] Work: stable handles and receipts; inspect/list/cancel/resume/wait; graph children;
+- [x] Work: stable handles and receipts; inspect/list/cancel/resume/wait; graph children;
   background furnace semantics; legacy CLI adapters; authoritative terminal evidence.
-- [ ] Objectives: migrate existing persisted goals; blocked/resume; controller-only authority;
+- [x] Objectives: migrate existing persisted goals; blocked/resume; controller-only authority;
   scoped decisions, constraints and criteria; relevant-event reassessment without idle loops.
-- [ ] Delegation: structured assignment and fresh evidence; identified observed effects and
+- [x] Delegation: structured assignment and fresh evidence; identified observed effects and
   final state separate from claimed outcome; preserve both role histories.
-- [ ] Reflex supervision: read/cancel/policy during reflex; no competing actuation; bounded
+- [x] Reflex supervision: read/cancel/policy during reflex; no competing actuation; bounded
   wakes; observed release and explicit resume through the current work/hold identity.
-- [ ] Constraints and spatial queries: search/travel separation; full movement restrictions;
+- [x] Constraints and spatial queries: search/travel separation; full movement restrictions;
   forced-displacement reporting; failed predicates; bounded support/clearance/reach/LOS queries.
-- [ ] Tool surface/prompts: unified lifecycle; free choice of action detail; fixed typed schemas;
+- [x] Tool surface/prompts: unified lifecycle; free choice of action detail; fixed typed schemas;
   catalog-only discovery; preserve actual capabilities, evidence checks and user constraints.
 - [ ] Full build after each integrated subsystem; focused regressions; actual configured planner
   resource gathering, shelter repair, chest/furnace interaction and reflex-interruption trials.
@@ -64,3 +77,5 @@ recording and explicit overflow gaps; do not introduce unbounded event sourcing.
 Keep the existing game paused during implementation. Export before rebuilding; use compatible
 HotSwap/config reload where possible, restart cleanly for structural changes. Never silently
 reactivate a finished goal. Commit logical stages and record live limitations explicitly.
+
+Verification details, measured evidence latency, provider failures and the remaining live acceptance are in [the validation report](../system2-refactor-validation.md). Checked implementation entries do not imply all live trials passed.

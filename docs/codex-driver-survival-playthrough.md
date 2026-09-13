@@ -462,3 +462,12 @@ Observed limitations remain: 30-second request timeouts cut off streamed reasoni
 Confirmed and fixed repeated illumination-denied graph recovery (`14161b06`). The baseline retried the same coal-mining denial nine times. Classifying this as a currently unusable method lets the existing resolver consider alternatives. Live Qwen's retry completed via charcoal; `agent evidence` verified eight torches. Tests/full build passed and the client was HotSwapped. Tool-upgrade detours still occurred before charcoal, so route efficiency remains open.
 
 Next confirmed issue: Qwen tried `eat_food` at low health, but the action-graph mutation gate rejected it during REPLANNING and furnace WATCHING. Pause/export captured the denial. Food needs safe access when no primitive owns the hands, with coordination to prevent a newly dispatched primitive interrupting eating. See D094 for exact execution IDs and evidence files. The shelter objective remains active; game paused at client40505 for diagnosis. Local planner deadline is120 seconds during the ongoing test because30 seconds repeatedly cut off real requests.
+
+
+## System 2 refactor playtest — 2026-09-14
+
+The actual configured controller gathered3spruce logs; the thinker crafted12planks, placed2to repair the immediate east-approach gaps, verified standing clearance and returned control. Frozen-world reads independently confirm the placed blocks and preserved open door. See [validation evidence and measurements](system2-refactor-validation.md).
+
+Bypassable planner inefficiencies: one collection request used `kind` instead of the advertised `resourceKind`; repeated surface-wood illumination rejections led to a daylight image and torch search before explicit surface-only permission resolved that test constraint. A placement with `facePreference=down` returned `support_not_found`; the thinker retried with west support and succeeded. These observations do not establish a broken collection or placement executor. Navigation to the unsupported farther-east cell failed; the thinker reported that limitation.
+
+The reproduced common-receipt defect (RUNNING paired with COMPLETED/FAILED phase) and duplicate terminal transition during primitive cleanup were fixed with regressions and HotSwap. Their final live recheck remains pending. Further live acceptance stopped on three controller HTTP403 responses carrying Vercel Security Checkpoint. The game is paused and the objective remains ACTIVE; chest/furnace, reflex interruption and controlled travel-boundary trials have not passed in this refactor run.
