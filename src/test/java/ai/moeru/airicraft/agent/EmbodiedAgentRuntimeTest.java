@@ -2310,6 +2310,26 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void commonCraftReceiptPublishesTerminalWorkBeforeCompletingFuture() {
+		for (TaskExecutionState state : List.of(TaskExecutionState.COMPLETED, TaskExecutionState.FAILED)) {
+			var executor = new FakeWorldTaskExecutor();
+			var runtime = EmbodiedAgentRuntime.createForTests(executor);
+			runtime.overrideSessionSnapshotForTests(loadedRemoteSession());
+			try {
+				var future = runtime.executePlannerAction(craftRecipeToolCall());
+				runtime.onClientTick(null);
+				var request = executor.lastActiveTask.orElseThrow();
+				executor.nextTerminalEvent = Optional.of(new TaskTerminalEvent(request.taskId(), null, state, "observed result", null));
+				runtime.onClientTick(null);
+				var receipt = JsonParser.parseString(future.join().substring(future.join().indexOf('{'))).getAsJsonObject();
+				assertEquals(state == TaskExecutionState.COMPLETED ? "SUCCEEDED" : "FAILED", receipt.get("state").getAsString());
+				assertTrue(receipt.get("accepted").getAsBoolean());
+				assertEquals(state.name(), receipt.getAsJsonObject("work").get("phase").getAsString());
+			} finally { runtime.shutdown(); }
+		}
+	}
+
+	@Test
 	void craftRecipeToolResultWaitsForTerminalFeedback() {
 		FakeWorldTaskExecutor executor = new FakeWorldTaskExecutor();
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(executor);

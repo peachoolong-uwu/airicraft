@@ -4853,7 +4853,23 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (pending == null || event == null || !Objects.equals(pending.taskId(), event.taskId())) {
 			return;
 		}
+		reconcileTerminalPlannerWork(event);
 		completePendingCraftToolResult(formatCraftTerminalToolResult(pending.craftRecipe(), event) + inventorySnapshotForTaskUpdate(WorldTaskType.CRAFT_RECIPE));
+	}
+
+	/** Publish the executor's observed outcome before completing its synchronous tool result. */
+	private void reconcileTerminalPlannerWork(TaskTerminalEvent event) {
+		if (activeJobRuntime.activeTaskRequest().filter(request -> request.taskId().equals(event.taskId())
+			&& request.sourceJobId().equals(activeJobRuntime.current().jobId())).isEmpty()) return;
+		var observed = new TaskExecutionSnapshot(event.terminalState(), event.taskId(), event.goal(),
+			taskExecutionSnapshot.processName(), event.message(), null, event.terminationCause());
+		TaskSnapshot previous = taskSnapshot;
+		// This reduces an effect already observed; it does not grant new actuation.
+		activeJobRuntime.tick(observed, currentWorldEvidence(MinecraftClient.getInstance()), true, true, tickCount);
+		taskSnapshot = activeJobRuntime.taskSnapshot();
+		missionExecutionSnapshot = activeJobRuntime.missionExecutionSnapshot();
+		recordSemanticTaskTransition(previous, taskSnapshot);
+		refreshWorkHistory();
 	}
 
 	private void completePendingCraftToolResultFromTaskSnapshot(TaskSnapshot snapshot) {
@@ -4876,6 +4892,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (pending == null || event == null || !Objects.equals(pending.taskId(), event.taskId())) {
 			return;
 		}
+		reconcileTerminalPlannerWork(event);
 		completePendingBlockModificationToolResult(pending,
 			formatBlockModificationTerminalToolResult(pending, event)
 				+ inventorySnapshotForTaskUpdate(event, activeTaskRequest)
