@@ -47,6 +47,7 @@ public final class WorkProjection {
 				primitive == null || state.terminal() ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(),
 				Map.of("collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""),
 					"failure", Objects.toString(job.lastError(), ""), "holdId", Objects.toString(holdId, ""),
+					"request", requestedWork(job),
 					"message", primitive == null || state.terminal() ? "" : Objects.toString(primitive.lastPathEvent(), ""))));
 		}
 		for (var process : processes) {
@@ -56,5 +57,26 @@ public final class WorkProjection {
 					"needsCollection", true, "readiness", "May be estimated; inspect slots and verify collection.")));
 		}
 		return List.copyOf(result);
+	}
+
+	private static Object requestedWork(ActiveJob job) {
+		Object request = switch (job.type()) {
+			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY -> job.directGoal();
+			case COLLECT_RESOURCE -> job.taskSpec();
+			case CRAFT_RECIPE -> job.craftRecipe();
+			case DROP_ITEMS -> job.dropItems();
+			case SMELT_ITEMS -> job.smeltItems();
+			case COLLECT_SMELTED_ITEMS -> job.collectSmeltedItems();
+			case ATTACK_ENTITY, USE_ENTITY -> job.entityInteraction();
+			case PLACE_BLOCK -> job.blockPlacement();
+			case USE_BLOCK -> job.blockUse();
+			case BREAK_BLOCKS -> job.blockBreak();
+			case TEND_CROPS -> job.cropTending();
+			case LURE_ENTITIES -> job.lureEntities();
+			case RETURN_TO_SURFACE -> job.returnToSurface();
+			case ASK_USER -> job.askPrompt();
+			case IDLE -> null;
+		};
+		return Objects.requireNonNullElse(request, Map.of("known", false));
 	}
 }

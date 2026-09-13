@@ -15,7 +15,11 @@ public final class WorldTravelPolicy {
 	private record Document(int version, String dimension, TravelBounds user) { }
 	private static volatile State state = new State(null, null, null, "");
 	private static volatile boolean workActive;
+	private static java.util.function.Consumer<Map<String,Object>> changeObserver = ignored -> { };
 	private WorldTravelPolicy() { }
+	public static void observeChanges(java.util.function.Consumer<Map<String,Object>> observer) {
+		changeObserver = java.util.Objects.requireNonNull(observer);
+	}
 	public static void tick(MinecraftClient client, boolean active) {
 		workActive = active;
 		if (client == null || client.world == state.world()) return;
@@ -42,7 +46,11 @@ public final class WorldTravelPolicy {
 		if (client.world == null) throw new IllegalStateException("world_not_loaded");
 		State s = state;
 		if (!s.error().isEmpty()) throw new IllegalStateException(s.error());
-		if (scope.equals("strategy")) { state = new State(client.world, s.user(), bounds, ""); return; }
+		if (scope.equals("strategy")) {
+			state = new State(client.world, s.user(), bounds, "");
+			changeObserver.accept(Map.of("scope", scope, "policy", snapshot()));
+			return;
+		}
 		if (!scope.equals("user") || bounds == null) throw new IllegalArgumentException("user_bounds_cannot_be_removed_by_planner");
 		if (client.getServer() == null) throw new IllegalStateException("durable_user_bounds_require_local_world");
 		if (s.user() != null && !s.user().includes(bounds)) throw new IllegalArgumentException("cannot_relax_user_restrictions");
@@ -52,6 +60,7 @@ public final class WorldTravelPolicy {
 			Files.writeString(temp, GSON.toJson(new Document(1, client.world.getRegistryKey().getValue().toString(), bounds)));
 			Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 			state = new State(client.world, bounds, s.strategy(), "");
+			changeObserver.accept(Map.of("scope", scope, "policy", snapshot()));
 		} finally { Files.deleteIfExists(temp); }
 	}
 	private static Path file(MinecraftClient c) {

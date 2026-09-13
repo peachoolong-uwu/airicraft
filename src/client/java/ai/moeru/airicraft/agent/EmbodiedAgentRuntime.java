@@ -657,6 +657,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	ai.moeru.airicraft.agent.llm.PlannerDecisionContext currentPlannerDecisionContext() {
+		ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.observeChanges(change ->
+			eventBuffer.append(tickCount, "policy.travel_changed", change));
 		refreshWorkHistory();
 		var client = MinecraftClient.getInstance();
 		var facts = new java.util.LinkedHashMap<String, Object>();
@@ -2866,7 +2868,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 						args.get("drowningEnabled").getAsBoolean(), args.get("maxThreatDistance").getAsInt(),
 						args.get("requireLineOfSight").getAsBoolean()));
 				yield "Tool result for configure_reflex: " + (args.isEmpty() ? "current " : "applied ") + policy
-					+ "; changes take effect next tick; interrupted jobs require an explicit resume_task or replacement.";
+					+ "; changes take effect next tick. Observe ownership release, then use resume_work with the exact workId and current holdId, or cancel_work.";
 			}
 			default -> "TOOL_ERROR: unknown_tool " + toolCall.name();
 		};
@@ -4823,6 +4825,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			payload.putAll(currentPhysicalState());
 			if (event.terminationCause() != null) {
 				payload.put("terminationCause", event.terminationCause().name());
+				if (event.terminationCause() == ai.moeru.airicraft.agent.tasks.TaskTerminationCause.CALCULATION_FAILED) {
+					payload.put("failedPredicate", "eligible_path_found");
+					payload.put("scope", "target");
+					payload.put("bounds", ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.snapshot());
+					payload.put("causeKnown", false);
+				}
 			}
 			if (event.goal().targetPlayer() != null && !event.goal().targetPlayer().isBlank()) {
 				payload.put("targetPlayer", event.goal().targetPlayer());

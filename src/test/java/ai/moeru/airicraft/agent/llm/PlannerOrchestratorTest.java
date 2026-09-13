@@ -928,6 +928,43 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void compactionPreservesDecisionCursorAndRefreshesUnresolvedWork() throws Exception {
+		try (CompactionTestServer server = CompactionTestServer.start()) {
+			var config = new AgentConfig.LlmConfig("http://127.0.0.1:" + server.port(), "test-key", "test-model",
+				"https://api.openai.com/v1", "", "", 15_000, 10_000, 8, 65_536, "low", false);
+			var backend = new RecordingBackend();
+			var orchestrator = newCompactionOrchestrator(config, backend);
+			var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+			events.append(10, "work.changed", Map.of("workId", "JOB:held", "state", "PAUSED"));
+			orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world-A", 20, 20, "controller", "safety_hold",
+				Map.of("work", Map.of("workId", "JOB:held", "state", "PAUSED", "holdId", "hold-one")), events.query(null)));
+			try {
+				orchestrator.submit(requestAt(10, 1000, "Alice", "Inspect held work"));
+				backend.awaitCalls(1, Duration.ofSeconds(1));
+				backend.succeed(0, replyOnly("Reviewed"));
+				awaitResult(orchestrator);
+				orchestrator.onAcceptedReplyRecorded();
+				assertTrue(orchestrator.hasIncorporatedDecisionEvent(1));
+				assertTrue(orchestrator.startDebugCompaction());
+				awaitDebugCompaction(orchestrator);
+				assertTrue(orchestrator.debugSnapshot().lastCompactionResult().succeeded());
+				assertTrue(orchestrator.hasIncorporatedDecisionEvent(1));
+				events.append(20, "interaction.container_take", Map.of("itemId", "minecraft:torch"));
+				orchestrator.submit(requestAt(20, 2000, "Alice", "Inspect again"));
+				awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+				backend.succeed(1, replyOnly("Reviewed again"));
+				awaitResult(orchestrator);
+				String content = backend.conversation(1).messages().getLast().content();
+				var context = JsonParser.parseString(content.substring(content.lastIndexOf("DECISION CONTEXT: ") + "DECISION CONTEXT: ".length())).getAsJsonObject();
+				assertEquals(1, context.get("afterEventSequence").getAsLong());
+				assertEquals(2, context.get("throughEventSequence").getAsLong());
+				assertEquals(1, context.getAsJsonArray("events").size());
+				assertEquals("hold-one", context.getAsJsonObject("current").getAsJsonObject("work").get("holdId").getAsString());
+			} finally { orchestrator.shutdown(); }
+		}
+	}
+
+	@Test
 	void debugCompactionCompletesWithoutPlannerRequest() throws Exception {
 		try (CompactionTestServer server = CompactionTestServer.start()) {
 			AgentConfig.LlmConfig config = new AgentConfig.LlmConfig(
@@ -1387,17 +1424,23 @@ class PlannerOrchestratorTest {
 			clock
 		);
 
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		events.append(10, "task.started", Map.of("workId", "JOB:wood"));
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world-A", 10, 10,
+			"controller", "work", Map.of(), events.query(null)));
 		orchestrator.submit(requestAt(10L, 1_000L, "Alice", "retry please"));
 		backend.awaitCalls(1, Duration.ofSeconds(1));
 		String firstPrompt = terminalPrompt(backend.conversation(0));
 
 		backend.fail(0, LlmFailureType.TIMEOUT, "Injected timeout");
 		awaitRetryPending(orchestrator, Duration.ofSeconds(1));
+		events.append(11, "task.failed", Map.of("workId", "JOB:wood", "reason", "search_exhausted"));
 
 		clock.advanceMillis(250L);
 		awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(1));
 
 		assertEquals(firstPrompt, terminalPrompt(backend.conversation(1)));
+		assertFalse(orchestrator.hasIncorporatedDecisionEvent(2), "A transport retry cannot consume new gameplay evidence");
 
 		backend.succeed(1, replyOnly("retried"));
 		PlannerExecutionResult result = awaitResult(orchestrator);
@@ -1405,6 +1448,13 @@ class PlannerOrchestratorTest {
 		assertEquals("retried", result.response().replyText());
 		assertEquals(1L, result.generation());
 		assertEquals(2, result.attempt());
+		orchestrator.onAcceptedReplyRecorded();
+		orchestrator.submit(requestAt(20, 2000, "Alice", "Use another approach"));
+		clock.advanceMillis(10_000);
+		awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(1));
+		assertTrue(terminalPrompt(backend.conversation(2)).contains("search_exhausted"));
+		assertTrue(orchestrator.hasIncorporatedDecisionEvent(2));
+		orchestrator.shutdown();
 	}
 
 	@Test
@@ -2937,9 +2987,13 @@ class PlannerOrchestratorTest {
 	}
 
 	private static PlannerOrchestrator newCompactionOrchestrator(AgentConfig.LlmConfig config) {
+		return newCompactionOrchestrator(config, new OpenAiCompatibleLlmBackend(config));
+	}
+
+	private static PlannerOrchestrator newCompactionOrchestrator(AgentConfig.LlmConfig config, LlmBackend backend) {
 		Clock clock = Clock.systemDefaultZone();
 		return new PlannerOrchestrator(
-			new PlannerExecutor(new OpenAiCompatibleLlmBackend(config)),
+			new PlannerExecutor(backend),
 			new PlannerCompactionService(new OpenAiCompatibleChatClient(config)),
 			new PlannerContextAggregator(clock, config.plannerCompactionTriggerTokens(), config.plannerVisionMode()),
 			CurrentViewVisionTool.disabled(),

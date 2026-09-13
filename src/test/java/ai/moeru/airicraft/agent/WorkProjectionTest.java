@@ -7,6 +7,17 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class WorkProjectionTest {
+	@Test void heldWorkKeepsItsRequestedDestinationWithoutConversationHistory() {
+		var goal = new ai.moeru.airicraft.agent.goals.GoalSnapshot(ai.moeru.airicraft.agent.goals.GoalType.NAVIGATE_TO,
+			null, new ai.moeru.airicraft.agent.goals.GoalPosition(4, 64, 8, true), null, 1, "planner_tool");
+		var job = new ai.moeru.airicraft.agent.job.ActiveJob("nav", ai.moeru.airicraft.agent.job.ActiveJobType.NAVIGATE_TO,
+			ai.moeru.airicraft.agent.job.ActiveJobStatus.BLOCKED, goal, null, null, null, 0, 0, 0, "planner_tool", "reflex", null, 10);
+		var work = WorkProjection.project(job, TaskExecutionSnapshot.idle(), List.of(), List.of(), true, "hold", "nav", null, 11).getFirst();
+		assertEquals(WorkSnapshot.State.PAUSED, work.state());
+		assertEquals(goal, work.details().get("request"));
+		assertEquals("hold", work.details().get("holdId"));
+	}
+
 	@Test void primitiveCleanupDoesNotPublishAnotherTerminalOutcome() {
 		var job = new ai.moeru.airicraft.agent.job.ActiveJob("one", ai.moeru.airicraft.agent.job.ActiveJobType.COLLECT_RESOURCE,
 			ai.moeru.airicraft.agent.job.ActiveJobStatus.COMPLETED, null, null, null, null, 0, 0, 3, "planner_tool", null, null, 100);
