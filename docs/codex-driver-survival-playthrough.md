@@ -295,6 +295,12 @@ A skeleton at full health during repeated blocking initially looked stalled. Pau
 
 Confirmed, bypassable: navigation from the shelter reopened the new barrel after `close_container` had succeeded. A later crop pass waited in HARVEST and timed out because a container remained open. Flight recorder shows the screen transition during navigation; exact input-order cause remains unproven. Closing the empty-cursor barrel and retrying at the same position completed the crop pass (one harvested/replanted, fourteen growing). See D060 and `farm-harvest-stall.jsonl`.
 
+Reproduced again in D081 with the original chest: the crop approach ended at259,63,480 with `GenericContainerScreen`/syncId6 open, then timed out in HARVEST with zero harvests. Closing that empty-cursor chest and retrying harvested eight plants before a separate pickup failure. Recorder `resupply-crop-stall.jsonl` preserves the screen transition and timeout. The harvest guard correctly refuses an open container; accidental opening/input order remains unconfirmed.
+
+### 2026-09-13: Crop collection and approach interruptions
+
+Bypassable path failures during D081 resupply: after eight harvests/seven replants, crop collection failed while routing to a dropped item at264,61,481 in irrigation water. A later entity observation found the wheat/seeds floating atY62.5. Navigating near their surface position collected both, and returning to the farm allowed another eight harvests/replants. That pass failed approaching266,63,485 from selected work cell264,63,483; its underlying path failure remains unresolved. A separate one-cell pass replanted the interrupted crop, and the final scan confirmed all31 wheat plants present. See `resupply-water-drops.jsonl`, `resupply-farm-approach.jsonl` and D081. Do not report either full-plot pass as completed.
+
 ### 2026-09-13: Mixed fuel requires separate cooking batches
 
 Bypassable limitation: four raw porkchops and enough combined wood fuel were carried, but `check_smeltables` reported no automatic fuel for the full batch because selection uses one fuel type. Two spare doors cooked two porkchops; three slabs cooked the other two in a second batch. All four outputs were collected and one stored with a verified logbook entry. See D061. No progression blocker or furnace fix is claimed.
