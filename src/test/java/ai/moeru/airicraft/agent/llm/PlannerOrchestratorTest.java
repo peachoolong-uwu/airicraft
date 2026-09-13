@@ -1334,37 +1334,29 @@ class PlannerOrchestratorTest {
 		awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(1));
 	}
 
-	@Test
-	void completedGenerationWinsOverLaterSubmitUntilAcceptedReplyIsRecorded() {
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+	void newGuidanceSupersedesACompletedButUnappliedReplyOrTool(boolean toolResponse) {
 		RecordingBackend backend = new RecordingBackend();
-		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY);
-
+		var invokedTools = new ArrayList<String>();
+		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(),
+			CurrentInventoryTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, 3, 10, 10, 100, 128,
+			Clock.systemUTC(), call -> { invokedTools.add(call.name()); return CompletableFuture.completedFuture("done"); },
+			PlannerToolNarrationSink.NO_OP);
 		orchestrator.submit(requestAt(10L, 1_000L, "Alice", "A"));
 		backend.awaitCalls(1, Duration.ofSeconds(1));
-		backend.succeed(0, replyOnly("reply A"));
+		backend.succeed(0, toolResponse ? PlannerResponse.toolCalls(List.of(
+			new PlannerToolCall("obsolete", PlannerToolCatalog.CANCEL_TASK, new JsonObject(), null, null)), null) : replyOnly("reply A"));
 		backend.awaitCompletions(1, Duration.ofSeconds(1));
 
 		orchestrator.submit(requestAt(11L, 1_100L, "Alice", "B"));
-		assertEquals(1, backend.callCount());
-
-		PlannerExecutionResult first = awaitResult(orchestrator);
-		assertEquals("reply A", first.response().replyText());
-		assertEquals(1L, first.generation());
-		assertEquals(1, first.request().triggerBatch().size());
-		assertEquals("A", first.request().triggerBatch().triggers().getFirst().text());
-
-		orchestrator.recordAssistantTurn(new DialogueTurn("agent", "reply A", 20L, 2_000L));
-		orchestrator.onAcceptedReplyRecorded();
-		backend.awaitCalls(2, Duration.ofSeconds(1));
-
-		String secondPrompt = terminalPrompt(backend.conversation(1));
-		assertTrue(secondPrompt.contains("[chat][Alice] B"));
-		assertFalse(secondPrompt.contains("[chat][Alice] A"));
-
+		awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(1));
+		assertPromptContains(backend.conversation(1), "[chat][Alice] A", "[chat][Alice] B");
+		assertTrue(invokedTools.isEmpty(), "The old model result must not actuate after newer operator guidance");
 		backend.succeed(1, replyOnly("reply B"));
-		PlannerExecutionResult second = awaitResult(orchestrator);
-		assertEquals("reply B", second.response().replyText());
-		assertEquals(2L, second.generation());
+		PlannerExecutionResult result = awaitResult(orchestrator);
+		assertEquals("reply B", result.response().replyText());
+		assertEquals(2L, result.generation());
 	}
 
 	@Test

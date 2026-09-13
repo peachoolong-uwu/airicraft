@@ -300,9 +300,6 @@ public final class PlannerOrchestrator {
 			return true;
 		}
 		if (sessionCoordinator.hasReplaceableActiveSession() && request.triggerBatch().maySupersedeLaunchedTurn()) {
-			if (sessionCoordinator.hasReadyResultForActiveSession()) {
-				return true;
-			}
 			long supersededGeneration = sessionCoordinator.activeGeneration();
 			coalesceSupersededSnapshot = sessionCoordinator.supersedeActiveSessionIfReplaceable();
 			committedSnapshotGenerations.remove(supersededGeneration);
