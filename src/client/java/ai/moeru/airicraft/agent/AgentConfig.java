@@ -63,15 +63,64 @@ public record AgentConfig(
 		boolean plannerNativeVisionEnabled,
 		boolean plannerUseJsonObjectResponseFormat,
 		PlannerBackend plannerBackend,
-		CodexAppServerConfig codexAppServer
+		CodexAppServerConfig codexAppServer,
+		String reasoningEffort
 	) {
 		public LlmConfig {
+			reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
 			plannerPendingSemanticEventCap = Math.max(1, plannerPendingSemanticEventCap);
 			plannerSessionCoalesceStepMillis = Math.max(0, plannerSessionCoalesceStepMillis);
 			plannerSessionCoalesceMinMillis = Math.max(0, plannerSessionCoalesceMinMillis);
 			plannerSessionCoalesceMaxMillis = Math.max(plannerSessionCoalesceMinMillis, plannerSessionCoalesceMaxMillis);
 			plannerBackend = plannerBackend == null ? PlannerBackend.OPENAI_COMPATIBLE : plannerBackend;
 			codexAppServer = codexAppServer == null ? CodexAppServerConfig.defaults() : codexAppServer;
+		}
+
+		public LlmConfig(
+			String providerBaseUrl,
+			String apiKey,
+			String model,
+			String visionProviderBaseUrl,
+			String visionApiKey,
+			String visionModel,
+			int requestTimeoutMillis,
+			int visionRequestTimeoutMillis,
+			int maxRecentConversationTurns,
+			int plannerCompactionTriggerTokens,
+			int plannerPendingSemanticEventCap,
+			int plannerSessionMaxConcurrentAttempts,
+			int plannerSessionCoalesceStepMillis,
+			int plannerSessionCoalesceMinMillis,
+			int plannerSessionCoalesceMaxMillis,
+			String visionImageDetail,
+			boolean plannerNativeVisionEnabled,
+			boolean plannerUseJsonObjectResponseFormat,
+			PlannerBackend plannerBackend,
+			CodexAppServerConfig codexAppServer
+		) {
+			this(
+				providerBaseUrl,
+				apiKey,
+				model,
+				visionProviderBaseUrl,
+				visionApiKey,
+				visionModel,
+				requestTimeoutMillis,
+				visionRequestTimeoutMillis,
+				maxRecentConversationTurns,
+				plannerCompactionTriggerTokens,
+				plannerPendingSemanticEventCap,
+				plannerSessionMaxConcurrentAttempts,
+				plannerSessionCoalesceStepMillis,
+				plannerSessionCoalesceMinMillis,
+				plannerSessionCoalesceMaxMillis,
+				visionImageDetail,
+				plannerNativeVisionEnabled,
+				plannerUseJsonObjectResponseFormat,
+				plannerBackend,
+				codexAppServer,
+				""
+			);
 		}
 
 		public LlmConfig(

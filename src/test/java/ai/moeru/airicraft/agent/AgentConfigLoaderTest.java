@@ -11,6 +11,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentConfigLoaderTest {
 	@Test
+	void readsOptionalOpenAiReasoningEffortIndependentlyOfCodex() {
+		assertEquals("", AgentConfig.defaults().llm().reasoningEffort());
+		for (String effort : java.util.List.of("low", "none")) {
+			var parsed = AgentConfigLoader.fromMapStrict(Map.of("plannerReasoningEffort", effort), AgentConfig.defaults());
+			assertEquals(effort, parsed.llm().reasoningEffort());
+			assertEquals("", parsed.llm().codexAppServer().reasoningEffort());
+		}
+	}
+
+	@Test
 	void defaultsToOpenAiCompatiblePlannerBackend() {
 		AgentConfig.LlmConfig llm = AgentConfig.defaults().llm();
 

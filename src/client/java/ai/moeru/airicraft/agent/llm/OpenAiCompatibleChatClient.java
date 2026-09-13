@@ -218,6 +218,9 @@ public final class OpenAiCompatibleChatClient {
 	private Map<String, Object> buildRequestPayload(LlmConversation conversation, LlmRequestOptions options) {
 		LinkedHashMap<String, Object> payload = new LinkedHashMap<>();
 		payload.put("model", config.model());
+		if (config.reasoningEffort() != null && !config.reasoningEffort().isBlank()) {
+			payload.put("reasoning_effort", config.reasoningEffort());
+		}
 		if (options.jsonObjectResponseFormat()) {
 			payload.put("response_format", Map.of("type", JSON_OBJECT_RESPONSE_FORMAT));
 		}

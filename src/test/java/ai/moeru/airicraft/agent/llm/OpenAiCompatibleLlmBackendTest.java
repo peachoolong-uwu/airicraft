@@ -27,6 +27,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
 	@Test
+	void sendsConfiguredReasoningEffortAndOmitsProviderDefault() throws Exception {
+		for (String effort : List.of("", "low", "none")) {
+			AtomicReference<String> bodyRef = new AtomicReference<>();
+			try (TestServer server = TestServer.start(bodyRef, plaintextResponse("Ready."))) {
+				var c = config(server.port(), false);
+				var configured = new AgentConfig.LlmConfig(c.providerBaseUrl(), c.apiKey(), c.model(),
+					c.visionProviderBaseUrl(), c.visionApiKey(), c.visionModel(), c.requestTimeoutMillis(),
+					c.visionRequestTimeoutMillis(), c.maxRecentConversationTurns(), c.plannerCompactionTriggerTokens(),
+					c.plannerPendingSemanticEventCap(), c.plannerSessionMaxConcurrentAttempts(), c.plannerSessionCoalesceStepMillis(),
+					c.plannerSessionCoalesceMinMillis(), c.plannerSessionCoalesceMaxMillis(), c.visionImageDetail(),
+					c.plannerNativeVisionEnabled(), c.plannerUseJsonObjectResponseFormat(), c.plannerBackend(), c.codexAppServer(), effort);
+				new OpenAiCompatibleLlmBackend(configured).generate(LlmConversation.of(List.of(LlmChatMessage.user("Ready?", LlmMessageKind.USER_TURN))));
+				var body = JsonParser.parseString(bodyRef.get()).getAsJsonObject();
+				if (effort.isEmpty()) assertFalse(body.has("reasoning_effort"));
+				else assertEquals(effort, body.get("reasoning_effort").getAsString());
+			}
+		}
+	}
+
+	@Test
 	void generateClassifiesConnectionFailureAsProviderUnavailable() throws Exception {
 		int closedPort = closedLocalPort();
 		OpenAiCompatibleLlmBackend backend = new OpenAiCompatibleLlmBackend(config(closedPort, false));

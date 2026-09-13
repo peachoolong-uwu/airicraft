@@ -111,7 +111,8 @@ public final class AgentConfigLoader {
 			readBoolean(root, "plannerNativeVisionEnabled", defaults.llm().plannerNativeVisionEnabled(), strict),
 			readBoolean(root, "plannerUseJsonObjectResponseFormat", defaults.llm().plannerUseJsonObjectResponseFormat(), strict),
 			readPlannerBackend(root, defaults.llm().plannerBackend(), strict),
-			codexAppServer
+			codexAppServer,
+			readString(root, "plannerReasoningEffort", defaults.llm().reasoningEffort(), strict)
 		);
 		AgentConfig.IdleConfig idle = new AgentConfig.IdleConfig(
 			readInt(root, "idleInitialDelaySeconds", defaults.idle().initialDelaySeconds()),
@@ -182,6 +183,7 @@ public final class AgentConfigLoader {
 		yamlData.put("providerBaseUrl", readString(root, "providerBaseUrl", defaults.llm().providerBaseUrl(), false));
 		yamlData.put("apiKey", readString(root, "apiKey", defaults.llm().apiKey(), false));
 		yamlData.put("model", readString(root, "model", defaults.llm().model(), false));
+		yamlData.put("plannerReasoningEffort", readString(root, "plannerReasoningEffort", defaults.llm().reasoningEffort(), false));
 		yamlData.put("visionProviderBaseUrl", readString(root, "visionProviderBaseUrl", defaults.llm().visionProviderBaseUrl(), false));
 		yamlData.put("visionApiKey", readString(root, "visionApiKey", defaults.llm().visionApiKey(), false));
 		yamlData.put("visionModel", readString(root, "visionModel", defaults.llm().visionModel(), false));

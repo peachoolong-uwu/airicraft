@@ -22,6 +22,11 @@ apiKey: ""
 # Model name exposed by the configured provider.
 model: ""
 
+# Optional OpenAI-compatible reasoning_effort, e.g. low, medium, high, none.
+# Empty omits the field; supported values and defaults depend on the provider/model.
+# RunInfra qwen3-8-27b supports low and none (thinking off). Reload to apply.
+plannerReasoningEffort: ""
+
 # OpenAI-compatible base URL for vision requests.
 visionProviderBaseUrl: "https://api.openai.com/v1"
 
