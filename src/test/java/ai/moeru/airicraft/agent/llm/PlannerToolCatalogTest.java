@@ -7,6 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PlannerToolCatalogTest {
+	@Test void validatesAtomicReflexPolicyAndEmptyQuery() {
+		assertEquals("configure_reflex", PlannerToolCatalog.parseToolCall(toolCall("configure_reflex", "{}")).name());
+		String policy = "{\"combatEnabled\":false,\"drowningEnabled\":true,\"maxThreatDistance\":16,\"requireLineOfSight\":true}";
+		PlannerToolCatalog.parseToolCall(toolCall("configure_reflex", policy));
+		for (String bad : java.util.List.of("{\"combatEnabled\":false}", policy.replace("16", "1.5"),
+			policy.replace("16", "33"), policy.replace("16", "0"), policy.replace("false", "\"false\""))) {
+			assertThrows(RuntimeException.class, () -> PlannerToolCatalog.parseToolCall(toolCall("configure_reflex", bad)));
+		}
+	}
 	@Test void validatesBoundedEntitySearch() {
 		PlannerToolCall call = PlannerToolCatalog.parseToolCall(toolCall(PlannerToolCatalog.INSPECT_NEARBY_ENTITIES,
 			"{\"radius\":128,\"maxResults\":4,\"entityTypeIds\":[\"minecraft:sheep\"]}"));

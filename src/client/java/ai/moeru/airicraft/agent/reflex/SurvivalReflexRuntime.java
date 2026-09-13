@@ -61,6 +61,7 @@ public final class SurvivalReflexRuntime {
 	private boolean shieldUseOwned;
 	private ShieldGuard shieldGuard;
 	private CombatStalemate combatStalemate;
+	private ReflexPolicy policyOverride;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
 		this(config, new MovementController(), new CameraController(), null);
@@ -99,9 +100,20 @@ public final class SurvivalReflexRuntime {
 		return snapshot;
 	}
 
+	public ReflexPolicy policy() {
+		return policyOverride == null ? ReflexPolicy.defaults() : policyOverride;
+	}
+
+	public ReflexPolicy configure(ReflexPolicy policy) {
+		policyOverride = Objects.requireNonNull(policy);
+		pendingEvents.add(new SurvivalReflexEvent("reflex.policy_changed", Map.of("policy", policy)));
+		return policy;
+	}
+
 	public Map<String, Object> decisionEvidence() {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("snapshot", snapshot);
+		evidence.put("policy", policy());
 		evidence.put("combatTarget", combatTarget);
 		evidence.put("combatStalemate", combatStalemate);
 		evidence.put("shieldUseOwned", shieldUseOwned);
@@ -144,7 +156,7 @@ public final class SurvivalReflexRuntime {
 			return snapshot;
 		}
 
-		boolean drowningDanger = drowningDanger(player, config.lowAirTicks(), drowningDamageObserved);
+		boolean drowningDanger = policy().drowningEnabled() && drowningDanger(player, config.lowAirTicks(), drowningDamageObserved);
 		detectProactiveThreats(client, player, tick);
 		List<ResolvedThreat> threats = resolveThreats(client, player);
 		if (combatStalemate != null || snapshot.state() == SurvivalReflexState.ACTIVE && snapshot.cause() == SurvivalReflexCause.MOB_ATTACK) {
@@ -153,8 +165,7 @@ public final class SurvivalReflexRuntime {
 			combatStalemate = CombatStalemate.observe(combatStalemate, tick, player.getPos(), positions,
 				immediateCombatDanger(client, player, threats, tick));
 		}
-		boolean mobDanger = !combatDeferred()
-			&& (!threats.isEmpty() || recentlyDamagedByMob(tick, lastMobDamageTick, config.threatCooldownTicks()));
+		boolean mobDanger = !combatDeferred() && !threats.isEmpty();
 		if (shouldBeginReflex(snapshot.state(), drowningDanger || mobDanger)) {
 			SurvivalReflexCause cause = drowningDanger ? SurvivalReflexCause.DROWNING : SurvivalReflexCause.MOB_ATTACK;
 			boolean hasInterruptedWork = interruptedWork != null && interruptedWork.hasInterruptedWork();
@@ -170,7 +181,11 @@ public final class SurvivalReflexRuntime {
 			return snapshot;
 		}
 
-		if (drowningDanger || snapshot.cause() == SurvivalReflexCause.DROWNING) {
+		if (snapshot.cause() == SurvivalReflexCause.DROWNING && !policy().drowningEnabled()
+			|| snapshot.cause() == SurvivalReflexCause.MOB_ATTACK && !policy().combatEnabled()) {
+			resolve(client, player, threats, tick, "reflex_policy_disabled", false);
+		}
+		else if (drowningDanger || snapshot.cause() == SurvivalReflexCause.DROWNING) {
 			releaseShield(client);
 			tickDrowning(client, player, drowningDanger, threats, tick);
 		}
@@ -402,8 +417,8 @@ public final class SurvivalReflexRuntime {
 			resolve(client, player, threats, tick, "combat_approach_stalled", true);
 			return;
 		}
-		if (mobThreatsResolved(threats.size(), tick, lastMobDamageTick, config.threatCooldownTicks())) {
-			resolve(client, player, threats, tick, "threats_clear", false);
+		if (threats.isEmpty()) {
+			resolve(client, player, threats, tick, "no_eligible_threats", false);
 			return;
 		}
 		if (snapshot.action() != SurvivalReflexAction.DEFEND) {
@@ -1011,7 +1026,7 @@ public final class SurvivalReflexRuntime {
 			boolean targetsUs = targetingPlayer.contains(mob.getUuidAsString())
 				|| mob.getTarget() != null && player.getUuid().equals(mob.getTarget().getUuid());
 			if (!shouldDetectProactiveThreat(targetsUs, mob.isAlive())
-				|| !shouldTrackMobThreat(isRangedThreat(mob), player.distanceTo(mob))) {
+				|| !policy().acceptsMob(isRangedThreat(mob), player.distanceTo(mob), player.canSee(mob))) {
 				continue;
 			}
 			if (classifyThreatSecurity(computeMobRoute(player, mob).status(), player.canSee(mob)) == SecurityKind.SEALED) {
@@ -1032,6 +1047,14 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void maintainDrowningSafetyHold(MinecraftClient client, ClientPlayerEntity player, long tick) {
+		if (!policy().drowningEnabled()) {
+			if (safetyHoldActuating) {
+				underwaterEscape.reset(client);
+				movementController.stop(client);
+				safetyHoldActuating = false;
+			}
+			return;
+		}
 		boolean reachingSafeLand = snapshot.state() == SurvivalReflexState.AWAITING_PLANNER
 			&& snapshot.cause() == SurvivalReflexCause.DROWNING
 			&& snapshot.action() == SurvivalReflexAction.REACH_SAFE_LAND;
@@ -1080,10 +1103,6 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
-	static boolean shouldTrackMobThreat(boolean ranged, double distance) {
-		return ranged || distance <= MELEE_THREAT_DISTANCE;
-	}
-
 	private static boolean isRangedThreat(LivingEntity entity) {
 		return isRangedThreat(Registries.ENTITY_TYPE.getId(entity.getType()).toString(),
 			Registries.ITEM.getId(entity.getMainHandStack().getItem()).toString(),
@@ -1115,10 +1134,11 @@ public final class SurvivalReflexRuntime {
 				continue;
 			}
 			double distance = player.distanceTo(entity);
-			if (!shouldTrackMobThreat(isRangedThreat(living), distance)) {
+			boolean lineOfSight = player.canSee(entity);
+			if (!policy().acceptsMob(isRangedThreat(living), distance, lineOfSight)) {
 				continue;
 			}
-			resolved.add(new ResolvedThreat(observed, living, distance, player.canSee(entity)));
+			resolved.add(new ResolvedThreat(observed, living, distance, lineOfSight));
 		}
 		return List.copyOf(resolved);
 	}

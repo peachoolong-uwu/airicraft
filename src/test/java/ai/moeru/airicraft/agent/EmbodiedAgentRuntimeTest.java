@@ -139,6 +139,24 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void plannerCanReadAndReplaceReflexPolicyThroughActionExecutor() {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var settings = com.google.gson.JsonParser.parseString("""
+				{"combatEnabled":false,"drowningEnabled":true,"maxThreatDistance":8,"requireLineOfSight":true}
+				""").getAsJsonObject();
+			String applied = runtime.execute(PlannerToolCatalog.parseToolCall("configure_reflex", settings,
+				ai.moeru.airicraft.agent.llm.PlannerToolRegistry.empty())).join();
+			assertTrue(applied.contains("applied ReflexPolicy[combatEnabled=false"));
+			String queried = runtime.execute(PlannerToolCatalog.parseToolCall("configure_reflex", new com.google.gson.JsonObject(),
+				ai.moeru.airicraft.agent.llm.PlannerToolRegistry.empty())).join();
+			assertTrue(queried.contains("maxThreatDistance=8"));
+			assertTrue(queried.contains("drowningEnabled=true"));
+		}
+		finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void idlePlannerEvidenceRefreshesWithoutAProjectedSemanticTask() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		try {

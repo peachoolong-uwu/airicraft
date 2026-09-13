@@ -183,21 +183,38 @@ class SurvivalReflexRuntimeTest {
 		assertTrue(SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:trident", true));
 		assertTrue(SurvivalReflexRuntime.isRangedThreat("minecraft:skeleton", "minecraft:bow", true));
 		assertTrue(SurvivalReflexRuntime.isRangedThreat("minecraft:guardian", "minecraft:air", false));
-		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(
-			SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:air", true), 33.93D));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(
+			SurvivalReflexRuntime.isRangedThreat("minecraft:drowned", "minecraft:air", true), 33.93D, true));
 	}
 
 	@Test
 	void distantMeleeMobsDoNotOwnCombatButCloseAndRangedThreatsStillDo() {
-		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(false, 3.0D));
-		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(false, 6.0D));
-		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 6.01D));
+		assertTrue(ReflexPolicy.defaults().acceptsMob(false, 3.0D, true));
+		assertTrue(ReflexPolicy.defaults().acceptsMob(false, 6.0D, true));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(false, 6.01D, true));
 		// The three tracked mobs in the ravine reproduction.
-		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 16.04D));
-		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 19.16D));
-		assertFalse(SurvivalReflexRuntime.shouldTrackMobThreat(false, 27.97D));
-		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(true, 16.04D));
-		assertTrue(SurvivalReflexRuntime.shouldTrackMobThreat(true, 32.0D));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(false, 16.04D, true));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(false, 19.16D, true));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(false, 27.97D, true));
+		assertTrue(ReflexPolicy.defaults().acceptsMob(true, 16.0D, true));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(true, 16.04D, true));
+		assertFalse(ReflexPolicy.defaults().acceptsMob(true, 32.0D, true));
+	}
+
+	@Test void policyIgnoresRecordedHiddenPillagersAndCanBeOverridden() {
+		var runtime = new SurvivalReflexRuntime(ai.moeru.airicraft.agent.AgentConfig.ReflexConfig.defaults());
+		assertFalse(runtime.policy().acceptsMob(true, 35.81, false));
+		assertFalse(runtime.policy().acceptsMob(true, 12.43, false));
+		assertFalse(runtime.policy().acceptsMob(false, 3, false));
+		var override = new ReflexPolicy(true, true, 32, false);
+		runtime.configure(override);
+		assertTrue(runtime.policy().acceptsMob(true, 12.43, false));
+		assertFalse(runtime.policy().acceptsMob(true, 35.81, false));
+		runtime.reset(null);
+		assertEquals(override, runtime.policy(), "Episode/death reset must not silently discard System 2 policy");
+		runtime.configure(new ReflexPolicy(false, true, 16, true));
+		assertFalse(runtime.policy().acceptsMob(true, 2, true));
+		assertTrue(runtime.policy().drowningEnabled());
 	}
 
 	@Test

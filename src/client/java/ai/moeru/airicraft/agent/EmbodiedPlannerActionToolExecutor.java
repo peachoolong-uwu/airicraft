@@ -34,7 +34,7 @@ record EmbodiedPlannerActionToolExecutor(
 			}
 			if (state.reflexState() == SurvivalReflexState.ACTIVE && !policy.allowedDuringActiveReflex()) {
 				return CompletableFuture.completedFuture("TOOL_ERROR: " + toolName
-					+ " reflex_active. Only read and cancel/clear controls are allowed during an active survival reflex.");
+					+ " reflex_active. Read, cancel/clear, and configure_reflex controls are allowed during an active survival reflex.");
 			}
 			if (policy.requiresLivingPlayer() && state.requiresRespawn()) {
 				return CompletableFuture.completedFuture("TOOL_ERROR: " + toolName
@@ -76,7 +76,8 @@ record EmbodiedPlannerActionToolExecutor(
 			return ToolPolicy.READ;
 		}
 		return switch (toolName) {
-			case PlannerToolCatalog.CANCEL_ACTION_GOAL, PlannerToolCatalog.CANCEL_SMELTING -> ToolPolicy.READ;
+			case PlannerToolCatalog.CANCEL_ACTION_GOAL, PlannerToolCatalog.CANCEL_SMELTING,
+				PlannerToolCatalog.CONFIGURE_REFLEX -> ToolPolicy.READ;
 			case PlannerToolCatalog.CANCEL_TASK, PlannerToolCatalog.CLEAR_GOAL -> ToolPolicy.GRAPH_CONTROL;
 			case PlannerToolCatalog.UPDATE_EVENT_POLICY, PlannerToolCatalog.CONFIGURE_PATHFIND,
 				PlannerToolCatalog.CONFIGURE_LIGHTING -> ToolPolicy.DEAD_SAFE;

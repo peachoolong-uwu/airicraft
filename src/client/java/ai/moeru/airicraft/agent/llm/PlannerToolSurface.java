@@ -182,6 +182,7 @@ public final class PlannerToolSurface {
 				PlannerToolCatalog.LIST_ACTION_CAPABILITIES,
 				PlannerToolCatalog.CANCEL_TASK,
 				PlannerToolCatalog.UPDATE_EVENT_POLICY,
+				PlannerToolCatalog.CONFIGURE_REFLEX,
 				PlannerToolCatalog.CONFIGURE_PATHFIND, PlannerToolCatalog.CONFIGURE_LIGHTING -> "advanced control";
 			default -> "integration";
 		};

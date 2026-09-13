@@ -15,6 +15,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EmbodiedPlannerActionToolExecutorTest {
+	@Test void reflexPolicyCanBeChangedWhileReflexOwnsABusyGraph() {
+		assertEquals("executed:configure_reflex", execute("configure_reflex",
+			ActionGraphExecutionState.WAITING_PRIMITIVE, true, false, SurvivalReflexState.ACTIVE, false));
+	}
 	@Test void eatsBetweenGraphPrimitivesWithoutCancellingTheGraph() {
 		for (var phase : List.of(ActionGraphExecutionState.REPLANNING, ActionGraphExecutionState.WATCHING,
 			ActionGraphExecutionState.OBSERVING, ActionGraphExecutionState.READY)) {

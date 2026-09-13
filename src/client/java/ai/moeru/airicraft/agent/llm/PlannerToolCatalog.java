@@ -65,6 +65,7 @@ public final class PlannerToolCatalog {
 	public static final String UPDATE_EVENT_POLICY = "update_event_policy";
 	public static final String CONFIGURE_PATHFIND = "configure_pathfind";
 	public static final String CONFIGURE_LIGHTING = "configure_lighting";
+	public static final String CONFIGURE_REFLEX = "configure_reflex";
 
 	private static final Consumer<JsonObject> NO_ARGUMENT_VALIDATION = arguments -> {
 	};
@@ -358,6 +359,12 @@ public final class PlannerToolCatalog {
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("settings", BaritonePathfindSettings.plannerSettingsSchema())
 			), List.of("settings")), PlannerToolCatalog::validateConfigurePathfindArguments),
+		builtInTool(CONFIGURE_REFLEX, false, tool(CONFIGURE_REFLEX, "Read or replace System 1 automatic survival policy. Call with {} to read; provide all four settings to replace. Defaults: combatEnabled=true, drowningEnabled=true, maxThreatDistance=16, requireLineOfSight=true. Applies to known aggressive mobs, with melee mobs additionally limited to 6 blocks. Ignored distant/hidden mobs do not trigger pursuit, including previously tracked attackers. Disabling combat also disables automatic shield/melee actions; manual gameplay tools remain available. Policy lasts until agent reload/recreation, including across death. Allowed during a reflex; stops disabled reflex actuation next tick but does not resume an interrupted job: wait for the survival update and use resume_task or replace/cancel. Use deliberately when automatic behavior conflicts with your task, and restore settings when that tactic ends.", properties(
+			prop("combatEnabled", bool("Enable automatic combat, including melee defense and shield blocking.")),
+			prop("drowningEnabled", bool("Enable automatic drowning recovery.")),
+			prop("maxThreatDistance", integer("Maximum eligible mob distance in blocks, 1..32; default 16.")),
+			prop("requireLineOfSight", bool("Ignore mobs out of line of sight when true; default true."))
+		), List.of()), PlannerToolCatalog::validateConfigureReflexArguments),
 		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic torch placement while mining or navigating. Keeps offhand equipment such as a shield, temporarily uses a carried torch and restores the held item. Does not interrupt combat, item use or active block breaking. Confirmed placements are batched into the next planner window.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("enabled", bool("Whether automatic torch placement is enabled.")),
@@ -1068,6 +1075,22 @@ public final class PlannerToolCatalog {
 		int minSpacingBlocks = requireInt(arguments, "minSpacingBlocks");
 		if (minSpacingBlocks < 1 || minSpacingBlocks > 16) {
 			throw new JsonParseException("minSpacingBlocks must be between 1 and 16");
+		}
+	}
+
+	private static void validateConfigureReflexArguments(JsonObject arguments) {
+		if (arguments.isEmpty()) return;
+		for (String key : List.of("combatEnabled", "drowningEnabled", "requireLineOfSight")) {
+			if (!arguments.has(key) || !arguments.get(key).isJsonPrimitive()
+				|| !arguments.getAsJsonPrimitive(key).isBoolean()) throw new JsonParseException(key + " must be boolean");
+		}
+		if (!arguments.has("maxThreatDistance") || !arguments.get("maxThreatDistance").isJsonPrimitive()
+			|| !arguments.getAsJsonPrimitive("maxThreatDistance").isNumber()) {
+			throw new JsonParseException("maxThreatDistance must be an integer between 1 and 32");
+		}
+		double distance = arguments.get("maxThreatDistance").getAsDouble();
+		if (!Double.isFinite(distance) || distance != Math.rint(distance) || distance < 1 || distance > 32) {
+			throw new JsonParseException("maxThreatDistance must be an integer between 1 and 32");
 		}
 	}
 

@@ -2632,6 +2632,14 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					+ " minSpacingBlocks=" + lightingPolicy.minSpacingBlocks()
 					+ " policyRevision=" + lightingPolicy.revision();
 			}
+			case PlannerToolCatalog.CONFIGURE_REFLEX -> {
+				var policy = args.isEmpty() ? survivalReflexRuntime.policy() : survivalReflexRuntime.configure(
+					new ai.moeru.airicraft.agent.reflex.ReflexPolicy(args.get("combatEnabled").getAsBoolean(),
+						args.get("drowningEnabled").getAsBoolean(), args.get("maxThreatDistance").getAsInt(),
+						args.get("requireLineOfSight").getAsBoolean()));
+				yield "Tool result for configure_reflex: " + (args.isEmpty() ? "current " : "applied ") + policy
+					+ "; changes take effect next tick; interrupted jobs require an explicit resume_task or replacement.";
+			}
 			default -> "TOOL_ERROR: unknown_tool " + toolCall.name();
 		};
 	}
@@ -4119,6 +4127,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				+ ". Choose a tactical next step from fresh geometry and inventory; repeated pursuit has made no progress."
 				+ " These distant attackers are deferred while you act; close danger, incoming projectiles, damage or a new attacker reactivate defense.";
 		}
+		message += " Automatic reflex policy=" + survivalReflexRuntime.policy()
+			+ ". Use configure_reflex to read or override it for a deliberate tactic; policy changes do not resume paused work.";
 		return PlannerTrigger.autonomous(
 			PlannerTriggerType.SYSTEM,
 			"survival_runtime",
