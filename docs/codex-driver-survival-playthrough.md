@@ -352,3 +352,12 @@ Two adult pig kills yielded five porkchops after separate dropped-item queries a
 Seed luring works with short waypoints and catch-up waits, but combat scatters followers and stale-coordinate approaches miss moving animals. A bounded playtest helper reduced manual pacing. A two-by-two pen interior was too shallow: the chicken stopped just outside the gate, about two blocks from the held seeds. Paused recorder evidence preserved in `pen-gate-standoff.jsonl`; extending the interior is a layout correction, not a mod fix. See D078 for the containment result.
 
 Two observed placement sites near mushrooms, `(212,104,494)` and `(213,105,493)`, returned `CALC_FAILED` as navigation goals. Previously traveled positions bypassed that section. Preserve the observations without claiming an A* defect: a standable placement site does not establish a traversable route. See D078, `lure-short-route-failed.jsonl` and `lure-bypass-failed.jsonl`.
+
+
+### 2026-09-13: Native luring and enclosure limits
+
+`lure_entities` now owns moving-follower acquisition and pacing; a live forest-to-entrance retrieval completed in about42 simulation seconds without consuming seeds. A reproduced unnecessary visibility requirement was removed after confirming vanilla temptation ignores visibility. See D079.
+
+Combat left the player beside fence199,103,488 with an active Baritone ascent that made no progress. Paused/probed/exported; removing and replacing our fence bypassed it. The native task now times out its leading phase, but the underlying fence-route stall remains unresolved. Two birds entered the small enclosure, yet one body did not fully fit the requested destination box. The action reported failure; expanding the pen is a layout correction. D079 distinguishes the already-inside check after expansion from a fresh entrance traversal.
+
+An adult escaped around our earlier exit while the gate remained open; the actual crossing was not captured. Do not treat the earlier contained snapshot as durable containment. The repaired pen currently has two adults and a newborn, seeds put away and gate closed. Improve exit handling and verify longer containment before treating husbandry as a sustained food supply.

@@ -117,8 +117,17 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 		WorldTaskExecutor blockBreak,
 		WorldTaskExecutor acquisition,
 		WorldTaskExecutor underwaterHarvest,
-		WorldTaskExecutor cropTending
+		WorldTaskExecutor cropTending,
+		WorldTaskExecutor lureEntities
 	) {
+		public ExecutorSet(WorldTaskExecutor baritone, WorldTaskExecutor crafting, WorldTaskExecutor dropItems,
+			WorldTaskExecutor entityInteraction, WorldTaskExecutor smelting, WorldTaskExecutor returnToSurface,
+			WorldTaskExecutor blockInteraction, WorldTaskExecutor blockBreak, WorldTaskExecutor acquisition,
+			WorldTaskExecutor underwaterHarvest, WorldTaskExecutor cropTending) {
+			this(baritone, crafting, dropItems, entityInteraction, smelting, returnToSurface, blockInteraction,
+				blockBreak, acquisition, underwaterHarvest, cropTending, entityInteraction);
+		}
+
 		public ExecutorSet(WorldTaskExecutor baritone, WorldTaskExecutor crafting, WorldTaskExecutor dropItems,
 			WorldTaskExecutor entityInteraction, WorldTaskExecutor smelting, WorldTaskExecutor returnToSurface,
 			WorldTaskExecutor blockInteraction, WorldTaskExecutor blockBreak, WorldTaskExecutor acquisition, WorldTaskExecutor underwaterHarvest) {
@@ -133,6 +142,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 
 		public ExecutorSet {
 			Objects.requireNonNull(cropTending, "cropTending");
+			Objects.requireNonNull(lureEntities, "lureEntities");
 			Objects.requireNonNull(acquisition, "acquisition");
 			Objects.requireNonNull(underwaterHarvest, "underwaterHarvest");
 			Objects.requireNonNull(baritone, "baritone");
@@ -158,6 +168,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 				case PLACE_BLOCK, USE_BLOCK -> blockInteraction;
 				case BREAK_BLOCKS -> blockBreak;
 				case TEND_CROPS -> cropTending;
+				case LURE_ENTITIES -> lureEntities;
 			};
 		}
 
@@ -170,7 +181,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 				smelting,
 				returnToSurface,
 				blockInteraction,
-				blockBreak, acquisition, underwaterHarvest, cropTending
+				blockBreak, acquisition, underwaterHarvest, cropTending, lureEntities
 			)));
 		}
 	}

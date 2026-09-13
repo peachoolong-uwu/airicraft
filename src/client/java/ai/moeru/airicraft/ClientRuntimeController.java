@@ -376,7 +376,8 @@ public final class ClientRuntimeController {
 			new TargetAcquisitionTaskExecutor(baritoneFacade),
 			underwaterHarvestTaskExecutor,
 			new ai.moeru.airicraft.agent.tasks.CropTendingTaskExecutor(baritoneFacade, cameraController,
-				new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade))
+				new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade)),
+			new ai.moeru.airicraft.agent.tasks.LureEntitiesTaskExecutor(baritoneFacade)
 		),
 			baritoneFacade
 		);

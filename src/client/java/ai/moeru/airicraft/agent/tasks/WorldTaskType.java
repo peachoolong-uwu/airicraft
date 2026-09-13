@@ -15,5 +15,6 @@ public enum WorldTaskType {
 	USE_BLOCK,
 	BREAK_BLOCKS,
 	TEND_CROPS,
+	LURE_ENTITIES,
 	RETURN_TO_SURFACE
 }

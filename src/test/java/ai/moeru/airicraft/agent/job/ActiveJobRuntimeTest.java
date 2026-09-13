@@ -740,6 +740,26 @@ class ActiveJobRuntimeTest {
 	}
 
 	@Test
+	void lurePayloadSurvivesPauseResumeAndCancellation() {
+		ActiveJobRuntime runtime = runtime();
+		var args = new ai.moeru.airicraft.agent.tasks.LureEntitiesStepArgs(java.util.List.of("aaaaaaaa"), "minecraft:wheat_seeds", 1, 63, 2, 3, 64, 4);
+		runtime.applyPlannerResponse(new DialogueResponse("Luring animals.",
+			new DialogueIntent(DialogueIntentType.JOB_UPDATE, ActiveJobProposal.lureEntities(args)), 1L), 0, "test", 1L);
+		assertEquals(WorldTaskType.LURE_ENTITIES, runtime.activeTaskRequest().orElseThrow().type());
+		assertEquals(new WorldTaskRequest.LureEntities(args), runtime.activeTaskRequest().orElseThrow().task());
+		String id = runtime.current().jobId();
+		runtime.pauseForReflex(2L);
+		assertEquals(args, runtime.current().lureEntities());
+		runtime.resumeAfterReflex(3L);
+		assertEquals(id, runtime.current().jobId());
+		assertEquals(new WorldTaskRequest.LureEntities(args), runtime.activeTaskRequest().orElseThrow().task());
+		runtime.cancel("test_cancel", 4L);
+		assertEquals(ActiveJobStatus.CANCELLED, runtime.current().status());
+		assertEquals(args, runtime.current().lureEntities());
+		assertTrue(runtime.activeTaskRequest().isEmpty());
+	}
+
+	@Test
 	void primitiveJobAppliesOnlyMatchingTaskSnapshot() {
 		Map<TaskExecutionState, ActiveJobStatus> taskStatuses = Map.of(
 			TaskExecutionState.RUNNING, ActiveJobStatus.RUNNING,

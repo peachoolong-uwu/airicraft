@@ -2487,6 +2487,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 						+ " firstTargetPos=" + compactPos(blockPos(blockBreak.targets().getFirst().position()))
 				);
 			}
+			case PlannerToolCatalog.LURE_ENTITIES -> {
+				var lure = ai.moeru.airicraft.agent.tasks.LureEntitiesStepArgs.parse(args);
+				applyPlannerJobTool(ActiveJobProposal.lureEntities(lure));
+				yield queuedActionToolResult("lure_entities", "destination=" + lure);
+			}
 			case PlannerToolCatalog.TEND_CROPS -> {
 				var cropTending = ai.moeru.airicraft.agent.tasks.CropTendingStepArgs.parse(args);
 				applyPlannerJobTool(ActiveJobProposal.tendCrops(cropTending));
@@ -4389,7 +4394,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return false;
 		}
 		return switch (intent.activeJob().type()) {
-			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS -> true;
+			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS, LURE_ENTITIES -> true;
 			case IDLE, COLLECT_RESOURCE, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, ATTACK_ENTITY, USE_ENTITY, ASK_USER -> false;
 		};
 	}
@@ -4404,7 +4409,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (Objects.equals(snapshot.activeStepId(), ActiveJobType.ENSURE_BLOCKS_IN_INVENTORY.name().toLowerCase())) {
 			return true;
 		}
-		if (Objects.equals(snapshot.activeStepId(), ActiveJobType.RETURN_TO_SURFACE.name().toLowerCase())) {
+		if (Objects.equals(snapshot.activeStepId(), ActiveJobType.LURE_ENTITIES.name().toLowerCase())
+			|| Objects.equals(snapshot.activeStepId(), ActiveJobType.RETURN_TO_SURFACE.name().toLowerCase())) {
 			return true;
 		}
 		return snapshot.activeStepKind() == ai.moeru.airicraft.agent.tasks.LedgerStepKind.COLLECT_RESOURCE
@@ -4621,7 +4627,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		}
 		return switch (type) {
 			case MINE, UNDERWATER_HARVEST, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS -> true;
-			case FOLLOW, NAVIGATE, ATTACK_ENTITY, USE_ENTITY -> false;
+			case FOLLOW, NAVIGATE, ATTACK_ENTITY, USE_ENTITY, LURE_ENTITIES -> false;
 		};
 	}
 

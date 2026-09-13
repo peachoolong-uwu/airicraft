@@ -30,6 +30,7 @@ public record WorldTaskRequest(String taskId, String sourceJobId, Task task) {
 			case UseBlock ignored -> WorldTaskType.USE_BLOCK;
 			case BreakBlocks ignored -> WorldTaskType.BREAK_BLOCKS;
 			case TendCrops ignored -> WorldTaskType.TEND_CROPS;
+			case LureEntities ignored -> WorldTaskType.LURE_ENTITIES;
 			case ReturnToSurface ignored -> WorldTaskType.RETURN_TO_SURFACE;
 		};
 	}
@@ -126,6 +127,11 @@ public record WorldTaskRequest(String taskId, String sourceJobId, Task task) {
 	}
 
 	public record TendCrops(CropTendingStepArgs args) implements Task { public TendCrops { Objects.requireNonNull(args, "cropTending"); } }
+
+	public static WorldTaskRequest lureEntities(String taskId, String sourceJobId, LureEntitiesStepArgs args) {
+		return new WorldTaskRequest(taskId, sourceJobId, new LureEntities(args));
+	}
+	public record LureEntities(LureEntitiesStepArgs args) implements Task { public LureEntities { Objects.requireNonNull(args, "lureEntities"); } }
 
 	public sealed interface Task {
 	}

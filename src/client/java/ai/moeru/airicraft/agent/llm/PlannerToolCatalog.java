@@ -58,6 +58,7 @@ public final class PlannerToolCatalog {
 	public static final String USE_BLOCK = "use_block";
 	public static final String BREAK_BLOCKS = "break_blocks";
 	public static final String TEND_CROPS = "tend_crops";
+	public static final String LURE_ENTITIES = "lure_entities";
 	public static final String CANCEL_TASK = "cancel_task";
 	public static final String RESUME_TASK = "resume_task";
 	public static final String CLEAR_GOAL = "clear_goal";
@@ -319,6 +320,13 @@ public final class PlannerToolCatalog {
 				prop("expectedTargetMaterial", enumString("Optional current target material check before use.", List.of("air", "replaceable", "air_or_replaceable"))),
 				prop("targets", array("Ordered target blocks to use. Maximum 16. Root facePreference, expectedSupportBlockIds, and expectedTargetMaterial apply as defaults.", useBlockTargetSchema()))
 			), List.of()), PlannerToolCatalog::validateUseBlockArguments),
+		builtInTool(LURE_ENTITIES, false, tool(LURE_ENTITIES, "Lure 1..8 observed animals into an inclusive destination box within 64 blocks. Animals must respond to the held food item. System 1 approaches moving followers, pauses travel for catch-up and chooses standing positions inside the area. Completion requires every selected animal's body inside; player arrival is insufficient. Does not feed animals or close gates. Use a roomy interior box and an open entrance. Uses temporary walking-only path settings, restored on release. Resume a safety hold after combat to reacquire followers.", properties(
+			prop("narration", optionalString("Optional visible narration.")),
+			prop("uuids", stringArray("1..8 distinct UUID tokens copied from inspect_nearby_entities. Targets must initially be within 32 blocks.")),
+			prop("itemId", string("Held lure item, for example minecraft:wheat_seeds for chickens or minecraft:wheat for cows.")),
+			prop("x1", integer("Minimum destination x.")), prop("y1", integer("Minimum destination y.")), prop("z1", integer("Minimum destination z.")),
+			prop("x2", integer("Maximum destination x.")), prop("y2", integer("Maximum destination y.")), prop("z2", integer("Maximum destination z."))
+		), List.of("uuids", "itemId", "x1", "y1", "z1", "x2", "y2", "z2")), ai.moeru.airicraft.agent.tasks.LureEntitiesStepArgs::parse),
 		builtInTool(TEND_CROPS, false, tool(TEND_CROPS, "Tend one existing flat crop plot, at most 16 by 16 blocks within 64 blocks of you. System 1 inspects the plot, harvests mature crops, collects drops and replants, and plants empty farmland when seeds are available. Leaves immature crops and other blocks intact. Deliberately edits crops within preserved places. One pass; does not wait for growth or till soil. Read TASK UPDATE for counts and missing seeds.", properties(
 			prop("narration", optionalString("Optional visible narration.")),
 			prop("seedItemId", string("Crop planting item, e.g. minecraft:wheat_seeds, minecraft:carrot, minecraft:potato, minecraft:beetroot_seeds.")),

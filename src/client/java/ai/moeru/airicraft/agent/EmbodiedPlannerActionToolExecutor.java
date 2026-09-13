@@ -87,7 +87,7 @@ record EmbodiedPlannerActionToolExecutor(
 				PlannerToolCatalog.SMELT_ITEMS, PlannerToolCatalog.COLLECT_SMELTED_ITEMS,
 				PlannerToolCatalog.DROP_ITEMS, PlannerToolCatalog.GIVE_PLAYER,
 				PlannerToolCatalog.EQUIP_ITEM, PlannerToolCatalog.EAT_FOOD,
-				PlannerToolCatalog.ATTACK_ENTITY, PlannerToolCatalog.USE_ENTITY -> ToolPolicy.TASK_AND_GRAPH_MUTATION;
+				PlannerToolCatalog.ATTACK_ENTITY, PlannerToolCatalog.USE_ENTITY, PlannerToolCatalog.LURE_ENTITIES -> ToolPolicy.TASK_AND_GRAPH_MUTATION;
 			case PlannerToolCatalog.CRAFT_RECIPE -> ToolPolicy.CRAFT;
 			case PlannerToolCatalog.PLACE_BLOCK, PlannerToolCatalog.USE_BLOCK,
 				PlannerToolCatalog.BREAK_BLOCKS, PlannerToolCatalog.TEND_CROPS -> ToolPolicy.BLOCK_MODIFICATION;
