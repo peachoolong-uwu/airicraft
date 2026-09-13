@@ -1068,3 +1068,10 @@ For small inspect_area boxes, replaced repeated per-block prose with horizontal 
 
 
 Live D109 follow-up: HotSwapped7query classes without reset/restart. Actual thinker call207 requested the complete25-cell roof atY136; call208 received the new layer representation and correctly decoded its rows into air, snow, leaves and the retained log. Saved shelter-layer-live.jsonl. This establishes live output and interpretation. However call208 still timed out after120seconds, and209 began interpreting the same layer again (shelter-layer-followup.jsonl). The view has not yet improved construction throughput. Asked the thinker to return give_up with its partial evidence and a next small roof section, allowing the controller to execute the settled design; no false shelter success. Handoff and subsequent controller progress pending.
+
+
+### D110 — Avoid regenerating actions for cosmetic narration
+
+D108 recorded an otherwise valid break_blocks request being regenerated because its narration exceeded80characters. This adds an LLM round trip and permits an unnecessary new gameplay decision. Paused client70470, session2688ae66-abcd-4de3-ad74-4f9dd70e04ec, exported shelter-before-narration-fix.jsonl (896 observations, truncated). The current thinker was streaming return_control for delegationc2d62e02-09fa-431a-bd6e-ad88fbfa3f43; no new roof placement yet.
+
+Use existing local narration contraction immediately when visible reply validation passes and only tool narration is invalid. Tool names/IDs, non-narration arguments and subsequent action validation remain unchanged; normal invalid chat replies retain their existing repair behavior. Deep-copy arguments before contraction so the received tool call remains immutable. A regression first failed because no action executed before the unnecessary repair. Full build now passes, verifying a single execution with identical break targets, bounded narration, an unchanged original request and no format-reminder round trip. Live cosmetic-repair avoidance remains pending; no model effort/cache or history reset.

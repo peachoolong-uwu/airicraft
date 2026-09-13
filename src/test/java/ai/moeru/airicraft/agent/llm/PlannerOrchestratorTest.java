@@ -2669,6 +2669,44 @@ class PlannerOrchestratorTest {
 		assertPromptContains(queuedPrompt, "Recent context updates require one combined response.");
 	}
 
+	@Test
+	void longToolNarrationDoesNotRegenerateOrChangeTheAction() {
+		RecordingBackend backend = new RecordingBackend();
+		ArrayList<PlannerToolCall> executed = new ArrayList<>();
+		ArrayList<String> narrations = new ArrayList<>();
+		String narration = "Removing the three misplaced planks obstructing walking space at x=-1,y=134,z=3..5.";
+		// Reproduce the live narration-length repair without touching the action's target data.
+		narration += " Preserving the doorway.";
+		JsonObject arguments = com.google.gson.JsonParser.parseString("""
+			{"targets":[{"x":-1,"y":134,"z":3,"expectedBlockIds":["minecraft:spruce_planks"]},
+			{"x":-1,"y":134,"z":4,"expectedBlockIds":["minecraft:spruce_planks"]},
+			{"x":-1,"y":134,"z":5,"expectedBlockIds":["minecraft:spruce_planks"]}]}
+			""").getAsJsonObject();
+		arguments.addProperty("narration", narration);
+		PlannerToolCall original = new PlannerToolCall("call_remove", "break_blocks", arguments, narration, null);
+		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(),
+			CurrentInventoryTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, 3, 10, 10, 100, 128,
+			Clock.systemUTC(), call -> {
+				executed.add(call);
+				return CompletableFuture.completedFuture("Tool result for break_blocks: completed targets=3");
+			}, call -> narrations.add(call.narration()));
+		orchestrator.submit(baseRequest(null));
+		backend.awaitCalls(1, Duration.ofSeconds(1));
+		backend.succeed(0, new PlannerResponse("", original, null));
+		awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(1));
+		assertEquals(1, executed.size());
+		assertEquals("call_remove", executed.getFirst().id());
+		assertEquals("break_blocks", executed.getFirst().name());
+		assertEquals(arguments.get("targets"), executed.getFirst().arguments().get("targets"));
+		assertEquals(arguments, original.arguments());
+		assertEquals(List.of(PlannerChatContract.contractText(narration)), narrations);
+		assertFalse(conversationText(backend.conversation(1)).contains("CHAT MESSAGE FORMAT REMINDER"));
+		assertTrue(conversationText(backend.conversation(1)).contains("completed targets=3"));
+		backend.succeed(1, replyOnly("Removed."));
+		assertTrue(awaitResult(orchestrator).succeeded());
+		assertEquals(1, executed.size());
+	}
+
 	private static void assertActionToolRoute(String toolName, JsonObject arguments) {
 		RecordingBackend backend = new RecordingBackend();
 		ArrayList<String> invokedTools = new ArrayList<>();

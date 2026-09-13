@@ -571,7 +571,8 @@ public final class PlannerOrchestrator {
 			return result;
 		}
 		String failureMessage = chatValidation.valid() ? narrationValidation.message() : chatValidation.message();
-		if (result.attempt() <= 1 && scheduleChatRepairRetry(result, failureMessage)) {
+		// Cosmetic tool narration must not regenerate an otherwise valid gameplay decision.
+		if (!chatValidation.valid() && result.attempt() <= 1 && scheduleChatRepairRetry(result, failureMessage)) {
 			return null;
 		}
 		PlannerResponse contractedResponse = contractVisibleChat(result.response());
@@ -641,7 +642,7 @@ public final class PlannerOrchestrator {
 			return toolCall;
 		}
 		String contractedNarration = PlannerChatContract.contractText(toolCall.narration());
-		JsonObject arguments = toolCall.arguments();
+		JsonObject arguments = toolCall.arguments().deepCopy();
 		arguments.addProperty("narration", contractedNarration);
 		return new PlannerToolCall(
 			toolCall.id(),
