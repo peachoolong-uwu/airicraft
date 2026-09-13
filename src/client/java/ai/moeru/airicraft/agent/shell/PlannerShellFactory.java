@@ -176,7 +176,14 @@ public final class PlannerShellFactory {
 		CurrentInventoryService inventoryService = new CurrentInventoryService(MinecraftClient::getInstance);
 		CurrentWorldQueryService worldQueryService = new CurrentWorldQueryService(MinecraftClient::getInstance);
 		WorldFeatureSearchService worldFeatureSearchService = new WorldFeatureSearchService(MinecraftClient::getInstance);
+		var plannerGoal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> {
+			MinecraftClient client = MinecraftClient.getInstance();
+			return client == null || client.world == null || client.getServer() == null ? null
+				: client.getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT);
+		});
+		plannerGoal.refreshWorld();
 		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(
+			new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, command -> MinecraftClient.getInstance().execute(command)),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),
@@ -228,7 +235,7 @@ public final class PlannerShellFactory {
 			);
 		return new PlannerShellComponents(
 			visionService,
-			new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock),
+			new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock, plannerGoal),
 			journal,
 			plannerCallJournal
 		);

@@ -14,15 +14,16 @@ import java.util.Objects;
  */
 public final class PlannerToolSurface {
 	private static final int MAX_DISCOVERED_TOOL_COUNT = 8;
-	private static final List<String> CORE_TOOL_NAMES = List.of(
+	private static List<String> coreToolNames() { return List.of(
 		PlannerToolCatalog.DISCOVER_TOOLS,
 		PlannerToolCatalog.START_ACTION_GOAL,
 		PlannerToolCatalog.INSPECT_ACTION_GOAL,
 		PlannerToolCatalog.CANCEL_ACTION_GOAL,
-		PlannerToolCatalog.CLEAR_GOAL
-	);
+		PlannerToolCatalog.CLEAR_GOAL,
+		"set_planner_goal", "change_planner_goal", "finish_planner_goal", "inspect_planner_goal"
+	); }
 
-	private final LinkedHashSet<String> activeToolNames = new LinkedHashSet<>(CORE_TOOL_NAMES);
+	private final LinkedHashSet<String> activeToolNames = new LinkedHashSet<>(coreToolNames());
 
 	public List<String> activeToolNames() {
 		return List.copyOf(activeToolNames);
@@ -34,7 +35,7 @@ public final class PlannerToolSurface {
 
 	public void reset() {
 		activeToolNames.clear();
-		activeToolNames.addAll(CORE_TOOL_NAMES);
+		activeToolNames.addAll(coreToolNames());
 	}
 
 	public void setSafetyHoldActive(boolean active) {
@@ -105,7 +106,7 @@ public final class PlannerToolSurface {
 	}
 
 	private static boolean isCoreTool(String toolName) {
-		return CORE_TOOL_NAMES.contains(PlannerToolCatalog.normalizeName(toolName));
+		return coreToolNames().contains(PlannerToolCatalog.normalizeName(toolName));
 	}
 
 	private static String normalizeQuery(String query) {

@@ -83,6 +83,70 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DialogueRuntimeTest {
 	@Test
+	void plainReplyDoesNotContinueUnfinishedWorkWithoutAnotherTrigger() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		backend.injectMockResponse(new PlannerResponse("I will inspect the cave next.", new PlannerIntent("none", null, null)));
+		runtime.onPlayerChat("Alice", "Craft torches then scout a cave", 10L,
+			SessionSnapshot.initial(), "Alice", Optional.empty(), events);
+		awaitResponse(runtime, events, Duration.ofSeconds(1));
+		for (long tick = 20; tick < 220; tick++) runtime.poll(tick, events);
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		assertEquals(1, backend.conversationCount());
+		runtime.shutdown();
+	}
+
+	@Test
+	void activePlannerGoalContinuesAfterPlainReplyAndStopsWhenFinished(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		var active = goal.set("Craft torches then scout a cave");
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, goal);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST,
+			true, true, "minecraft:overworld", true, 25565, 10);
+		backend.injectMockResponse(new PlannerResponse("I will inspect the cave next.", new PlannerIntent("none", null, null)));
+		runtime.onPlayerChat("Alice", "Craft torches then scout a cave", 10L, session, "Alice", Optional.empty(), events);
+		awaitResponse(runtime, events, Duration.ofSeconds(1));
+		assertEquals(1, backend.conversationCount());
+		// An executor still owns the action: no self-polling model loop.
+		runtime.continuePlannerGoal(100, false, session, "Alice", Optional.empty(), null, null, events);
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		// No new chat, idle timer, or external event is supplied.
+		backend.injectMockResponse(new PlannerResponse("The next step is underway.", new PlannerIntent("none", null, null)));
+		runtime.continuePlannerGoal(121, true, session, "Alice", Optional.empty(), null, null, events);
+		awaitResponse(runtime, events, Duration.ofSeconds(1));
+		assertEquals(2, backend.conversationCount());
+		assertTrue(backend.conversation(1).messages().stream().anyMatch(m -> m.content() != null && m.content().contains("GOAL CONTINUATION")));
+		goal.finish(active.id(), ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Status.GIVEN_UP, "Cave scouting needs unavailable evidence");
+		assertFalse(runtime.continuePlannerGoal(200, true, session, "Alice", Optional.empty(), null, null, events));
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		assertEquals(2, backend.conversationCount());
+		runtime.shutdown();
+	}
+
+	@Test
+	void plannerGoalDoesNotRunWhenDisabledOrExternallyDriven(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		goal.set("Scout a cave");
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, goal);
+		var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST,
+			true, true, "minecraft:overworld", true, 25565, 10);
+		var events = new SemanticEventBuffer(32);
+		runtime.setPlannerEnabled(false);
+		runtime.continuePlannerGoal(100, true, session, null, Optional.empty(), null, null, events);
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		runtime.setPlannerEnabled(true);
+		runtime.enableExternalDriver();
+		runtime.continuePlannerGoal(200, true, session, null, Optional.empty(), null, null, events);
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		assertEquals(0, backend.conversationCount());
+		runtime.shutdown();
+	}
+
+	@Test
 	void externalDriverSuppressesPlannerSubmission() throws Exception {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend);
@@ -1089,6 +1153,11 @@ class DialogueRuntimeTest {
 		CurrentViewVisionTool visionTool,
 		PlannerVisionMode visionMode
 	) {
+		return newDialogueRuntime(backend, visionTool, visionMode, null);
+	}
+
+	private static DialogueRuntime newDialogueRuntime(LlmBackend backend, CurrentViewVisionTool visionTool,
+		PlannerVisionMode visionMode, ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore goal) {
 		AgentConfig.LlmConfig config = AgentConfig.LlmConfig.defaults();
 		Clock clock = Clock.systemDefaultZone();
 		PlannerOrchestrator orchestrator = new PlannerOrchestrator(
@@ -1117,7 +1186,7 @@ class DialogueRuntimeTest {
 			PlannerToolRegistry.empty(),
 			PlannerToolExecutionObserver.NO_OP
 		);
-		return new DialogueRuntime(orchestrator, 8, clock);
+		return new DialogueRuntime(orchestrator, 8, clock, goal);
 	}
 
 	private static TaskSnapshot activeTask(

@@ -11,7 +11,6 @@ import java.util.Map;
 public final class PlannerPromptPolicy {
 	private static final String SYSTEM_PROMPT_TEMPLATE = "/prompts/planner-system.md";
 	private static final String COMPACTION_PROMPT_TEMPLATE = "/prompts/planner-compaction.md";
-	private static final String SYSTEM_PROMPT_TEMPLATE_TEXT = readTemplate(SYSTEM_PROMPT_TEMPLATE);
 	private static final String COMPACTION_PROMPT_TEMPLATE_TEXT = readTemplate(COMPACTION_PROMPT_TEMPLATE);
 
 	private PlannerPromptPolicy() {
@@ -24,7 +23,7 @@ public final class PlannerPromptPolicy {
 	public static String systemPrompt(PlannerVisionMode visionMode, PlannerToolRegistry toolRegistry) {
 		PlannerToolRegistry effectiveToolRegistry = toolRegistry == null ? PlannerToolRegistry.empty() : toolRegistry;
 		String visionInstruction = "If visual information is needed, discover an observation capability before requesting it.";
-		return renderTemplate(SYSTEM_PROMPT_TEMPLATE, SYSTEM_PROMPT_TEMPLATE_TEXT, Map.of(
+		return renderTemplate(SYSTEM_PROMPT_TEMPLATE, readTemplate(SYSTEM_PROMPT_TEMPLATE), Map.of(
 			"available_tool_line", availableToolLine(effectiveToolRegistry),
 			"vision_instruction", visionInstruction,
 			"provider_tool_instructions", effectiveToolRegistry.promptInstructions(),

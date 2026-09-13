@@ -687,7 +687,7 @@ public final class PlannerOrchestrator {
 	}
 
 	private boolean pendingSideEffectToolExecution() {
-		return pendingToolExecution != null && pendingToolExecution.toolCalls().stream().anyMatch(PlannerOrchestrator::isSideEffectTool);
+		return pendingToolExecution != null && pendingToolExecution.toolCalls().stream().anyMatch(call -> !toolRegistry.isReadTool(call.name()));
 	}
 
 	private static boolean isSideEffectTool(PlannerToolCall toolCall) {

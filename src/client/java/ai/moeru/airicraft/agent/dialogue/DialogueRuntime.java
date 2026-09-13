@@ -33,6 +33,8 @@ import java.util.concurrent.CompletableFuture;
 
 public final class DialogueRuntime {
 	private final PlannerOrchestrator plannerOrchestrator;
+	private final ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore plannerGoal;
+	private long nextGoalContinuationTick;
 	private final Clock clock;
 	private final int maxRecentTurns;
 	private final List<DialogueTurn> recentTurns = new ArrayList<>();
@@ -54,9 +56,40 @@ public final class DialogueRuntime {
 	}
 
 	public DialogueRuntime(PlannerOrchestrator plannerOrchestrator, int maxRecentTurns, Clock clock) {
+		this(plannerOrchestrator, maxRecentTurns, clock, null);
+	}
+
+	public DialogueRuntime(PlannerOrchestrator plannerOrchestrator, int maxRecentTurns, Clock clock,
+		ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore plannerGoal) {
+		this.plannerGoal = plannerGoal;
 		this.plannerOrchestrator = plannerOrchestrator;
 		this.clock = clock;
 		this.maxRecentTurns = Math.max(1, maxRecentTurns);
+	}
+
+	public void refreshPlannerGoalWorld() {
+		if (plannerGoal != null) plannerGoal.refreshWorld();
+	}
+
+	/** Called after action/reflex updates. Returning true reserves initiative for the current goal. */
+	public boolean continuePlannerGoal(long tick, boolean workIdle, SessionSnapshot session,
+		String primaryPlayer, Optional<GoalSnapshot> actionGoal, TaskSnapshot task,
+		MissionExecutionSnapshot mission, SemanticEventBuffer events) {
+		if (plannerGoal == null || !plannerGoal.active()) return false;
+		if (!workIdle || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
+			|| reflexActive || session == null || !session.companionActuationAllowed()
+			|| plannerOrchestrator.hasInFlight() || !pendingInternalTaskUpdates.isEmpty()) {
+			nextGoalContinuationTick = tick + 20;
+			return true;
+		}
+		if (tick < nextGoalContinuationTick) return true;
+		nextGoalContinuationTick = tick + 20;
+		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
+			"GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
+				+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
+				+ plannerGoal.context(), tick, clock.millis(), "planner_goal"),
+			session, primaryPlayer, actionGoal, task, mission, events);
+		return true;
 	}
 
 	public Optional<DialogueResponse> lastResponse() {

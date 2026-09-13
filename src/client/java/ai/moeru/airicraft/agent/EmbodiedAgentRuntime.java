@@ -437,6 +437,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public void onClientTick(MinecraftClient client) {
+		dialogueRuntime.refreshPlannerGoalWorld();
 		tickCount++;
 		localDamageTracker.pruneStale(tickCount);
 		BehaviorTreeSnapshot previousTreeSnapshot = behaviorTreeRuntime.snapshot();
@@ -3778,6 +3779,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return;
 		}
 		boolean jobIdle = isIdleForIdleIdeaScheduling(activeJobRuntime.current());
+		if (dialogueRuntime.continuePlannerGoal(tickCount, jobIdle && activeGoal.isEmpty(), sessionSnapshot,
+			primaryInteractionResolver.current().map(PrimaryInteractionPlayer::name).orElse(null),
+			activeGoal, taskSnapshot, missionExecutionSnapshot, plannerEventBuffer)) {
+			idleIdeaScheduler.reset();
+			return;
+		}
 		long nowMs = System.currentTimeMillis();
 		idleIdeaScheduler.tick(jobIdle, tickCount, nowMs).ifPresent(trigger -> {
 			String primaryInteractionPlayer = primaryInteractionResolver.current().map(PrimaryInteractionPlayer::name).orElse(null);
