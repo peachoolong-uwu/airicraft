@@ -88,22 +88,29 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			records.add(BlockRecord.of(pos, state, distance(player.getBlockPos(), pos)));
 		}
 		int maxResults = boundedInt(arguments, "maxResults", DEFAULT_MAX_RESULTS, 1, MAX_RESULTS);
-		return areaResult(bounds.scope(), bounds.compact(), scanned, records, maxResults);
+		return areaResult(bounds, scanned, records, maxResults);
 	}
 
-	static WorldQueryResult areaResult(String scope, String bounds, int scanned, List<BlockRecord> records, int maxResults) {
+	static WorldQueryResult areaResult(QueryBounds bounds, int scanned, List<BlockRecord> records, int maxResults) {
 		List<BlockRecord> safeRecords = records == null ? List.of() : records;
+		BlockPos center = bounds.center();
 		List<BlockRecord> limited = safeRecords.stream()
-			.sorted(BlockRecord.ORDERING)
+			.sorted(Comparator.comparingInt((BlockRecord record) -> distance(center, record.pos()))
+				.thenComparing(BlockRecord.ORDERING))
 			.limit(maxResults)
 			.toList();
 		return new WorldQueryResult("Tool result for inspect_world: mode=inspect_area"
-			+ " scope=" + scope
-			+ " bounds=" + bounds
+			+ " scope=" + bounds.scope()
+			+ " bounds=" + bounds.compact()
 			+ " scanned=" + scanned
 			+ " matched=" + safeRecords.size()
 			+ " returned=" + limited.size()
-			+ " blocks=" + formatRecords(limited, maxResults), limited.stream().map(record -> record.pos().toImmutable()).toList());
+			+ " order=nearest_query_center queryCenter=" + compactPos(center) + " distanceOrigin=player"
+			+ " truncated=" + (limited.size() < safeRecords.size())
+			+ " blocks=" + formatRecords(limited, maxResults)
+			+ (limited.size() < safeRecords.size()
+				? "\nResult truncated. Use a smaller box or radius around the blocks you need; omitted positions have not been inspected."
+				: ""), limited.stream().map(record -> record.pos().toImmutable()).toList());
 	}
 
 	private static WorldQueryResult findBlocks(World world, ClientPlayerEntity player, QueryBounds bounds, JsonObject arguments) {
@@ -548,7 +555,13 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 		}
 	}
 
-	private record QueryBounds(String scope, BlockPos min, BlockPos max) {
+	record QueryBounds(String scope, BlockPos min, BlockPos max) {
+		BlockPos center() {
+			return new BlockPos(min.getX() + (max.getX() - min.getX()) / 2,
+				min.getY() + (max.getY() - min.getY()) / 2,
+				min.getZ() + (max.getZ() - min.getZ()) / 2);
+		}
+
 		static QueryBounds from(BlockPos playerPos, JsonObject arguments) {
 			String scope = stringArg(arguments, "scope").orElseThrow(() -> new WorldQueryException("scope is required"));
 			return switch (scope) {
