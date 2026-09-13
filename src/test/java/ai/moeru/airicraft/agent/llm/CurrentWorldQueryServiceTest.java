@@ -69,4 +69,39 @@ final class CurrentWorldQueryServiceTest {
 			distance
 		);
 	}
+
+	@Test
+	void smallBoxLayersKeepCoordinatesStatesAndUnknownCellsDistinct() {
+		var bounds = new CurrentWorldQueryService.QueryBounds("box", new BlockPos(0, 134, 0), new BlockPos(1, 135, 1));
+		var records = new java.util.ArrayList<CurrentWorldQueryService.BlockRecord>();
+		records.add(new CurrentWorldQueryService.BlockRecord(new BlockPos(0, 134, 0), "minecraft:air", Map.of(), true, true, true, false, 0));
+		records.add(new CurrentWorldQueryService.BlockRecord(new BlockPos(0, 134, 1), "minecraft:snow", Map.of("layers", "1"), true, true, false, false, 0));
+		records.add(new CurrentWorldQueryService.BlockRecord(new BlockPos(0, 135, 0), "minecraft:oak_door", Map.of("half", "upper", "open", "false"), true, false, false, false, 0));
+		records.add(CurrentWorldQueryService.BlockRecord.unloaded(new BlockPos(0, 135, 1), 0));
+		for (int y = 134; y <= 135; y++) for (int z = 0; z <= 1; z++) records.add(record(new BlockPos(1, y, z), 2));
+
+		var result = CurrentWorldQueryService.areaResult(bounds, 8, records, 4);
+		assertTrue(result.text().contains("columns X: 0 1\nY=134\nZ=0: 0 ?\nZ=1: 2 ?\nY=135\nZ=0: 1 ?\nZ=1: 3 ?"), result.text());
+		assertTrue(result.text().contains("layers=1"));
+		assertTrue(result.text().contains("half=upper"));
+		assertTrue(result.text().contains("open=false"));
+		assertTrue(result.text().contains("id=unloaded, loaded=false"));
+		assertTrue(result.text().contains("?=omitted, not observed"));
+		assertTrue(result.text().contains("truncated=true"));
+		assertEquals(4, result.observedPositions().size());
+		assertTrue(result.observedPositions().stream().allMatch(pos -> pos.getX() == 0));
+	}
+
+	@Test
+	void repetitiveShelterLayerUsesLessTextWithoutLosingObservedCoordinates() {
+		var bounds = new CurrentWorldQueryService.QueryBounds("box", new BlockPos(-4, 136, 2), new BlockPos(0, 136, 6));
+		var records = bounds.positions().stream().map(pos -> record(pos, 1)).toList();
+		var result = CurrentWorldQueryService.areaResult(bounds, 25, records, 64);
+		int verboseLength = records.stream().mapToInt(record -> record.compact().length()).sum();
+		assertTrue(result.text().length() < verboseLength / 2, result.text());
+		assertEquals(25, result.observedPositions().size());
+		assertTrue(result.observedPositions().containsAll(bounds.positions()));
+		assertTrue(result.text().contains("columns X: -4 -3 -2 -1 0\nY=136\nZ=2: 0 0 0 0 0"));
+		assertTrue(result.text().contains("truncated=false"));
+	}
 }

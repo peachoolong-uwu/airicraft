@@ -107,10 +107,39 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			+ " returned=" + limited.size()
 			+ " order=nearest_query_center queryCenter=" + compactPos(center) + " distanceOrigin=player"
 			+ " truncated=" + (limited.size() < safeRecords.size())
-			+ " blocks=" + formatRecords(limited, maxResults)
+			+ formatAreaRecords(bounds, limited)
 			+ (limited.size() < safeRecords.size()
 				? "\nResult truncated. Use a smaller box or radius around the blocks you need; omitted positions have not been inspected."
 				: ""), limited.stream().map(record -> record.pos().toImmutable()).toList());
+	}
+
+	private static String formatAreaRecords(QueryBounds bounds, List<BlockRecord> records) {
+		int width = bounds.max().getX() - bounds.min().getX() + 1;
+		int height = bounds.max().getY() - bounds.min().getY() + 1;
+		int depth = bounds.max().getZ() - bounds.min().getZ() + 1;
+		if (!"box".equals(bounds.scope()) || width > 16 || depth > 16 || height > 8
+			|| width * height * depth > 256 || records.size() < 4) {
+			return " blocks=" + formatRecords(records, records.size());
+		}
+		List<String> legend = records.stream().map(BlockRecord::materialDescription).distinct().sorted().toList();
+		Map<BlockPos, Integer> cells = new LinkedHashMap<>();
+		for (BlockRecord record : records) cells.put(record.pos(), legend.indexOf(record.materialDescription()));
+		StringBuilder text = new StringBuilder("\nformat=horizontal_layers; cells are legend numbers; ?=omitted, not observed."
+			+ " Block Y labels occupied cells, not walking height. Columns increase X eastward; rows increase Z southward.\nlegend:");
+		for (int index = 0; index < legend.size(); index++) text.append('\n').append(index).append('=').append(legend.get(index));
+		text.append("\ncolumns X:");
+		for (int x = bounds.min().getX(); x <= bounds.max().getX(); x++) text.append(' ').append(x);
+		for (int y = bounds.min().getY(); y <= bounds.max().getY(); y++) {
+			text.append("\nY=").append(y);
+			for (int z = bounds.min().getZ(); z <= bounds.max().getZ(); z++) {
+				text.append("\nZ=").append(z).append(':');
+				for (int x = bounds.min().getX(); x <= bounds.max().getX(); x++) {
+					Integer cell = cells.get(new BlockPos(x, y, z));
+					text.append(' ').append(cell == null ? "?" : cell.toString());
+				}
+			}
+		}
+		return text.toString();
 	}
 
 	private static WorldQueryResult findBlocks(World world, ClientPlayerEntity player, QueryBounds bounds, JsonObject arguments) {
@@ -445,14 +474,18 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 
 		String compact() {
 			return "{pos=" + compactPos(pos)
-				+ ", id=" + blockId
+				+ ", " + materialDescription()
+				+ ", distance=" + distance
+				+ "}";
+		}
+
+		String materialDescription() {
+			return "id=" + blockId
 				+ (properties.isEmpty() ? "" : ", state=" + properties)
 				+ ", loaded=" + loaded
 				+ ", replaceable=" + replaceable
 				+ ", air=" + air
-				+ ", fluid=" + fluid
-				+ ", distance=" + distance
-				+ "}";
+				+ ", fluid=" + fluid;
 		}
 	}
 
