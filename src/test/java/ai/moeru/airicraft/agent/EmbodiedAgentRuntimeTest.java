@@ -1268,7 +1268,7 @@ class EmbodiedAgentRuntimeTest {
 		pipeline.appendRaw(21, "player.physical", Map.of("kind", "burning", "phase", "started"));
 		assertTrue(pipeline.drain(runtime::createPlannerTriggerForTests).isEmpty());
 		assertEquals(2, pipeline.plannerEventBuffer().query(null).events().size());
-		setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.AWAITING_PLANNER, "hold-1", "nav-1", null));
+		setReflexSnapshot(runtime, SurvivalReflexSnapshot.idle());
 		pipeline.appendRaw(22, "player.physical", Map.of("kind", "burning", "phase", "ended"));
 		assertEquals(1, pipeline.drain(runtime::createPlannerTriggerForTests).size());
 	}
