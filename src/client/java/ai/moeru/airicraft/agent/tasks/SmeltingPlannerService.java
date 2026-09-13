@@ -565,12 +565,12 @@ public final class SmeltingPlannerService {
 
 	static List<BlockPos> furnacePlacementCandidatePositions(BlockPos origin) {
 		ArrayList<BlockPos> candidates = new ArrayList<>();
-		for (int yOffset : List.of(0, -1, 1)) {
+		for (int yOffset : List.of(0, -1, 1, 2, -2)) {
 			for (Direction direction : Direction.Type.HORIZONTAL) {
 				candidates.add(origin.offset(direction).add(0, yOffset, 0));
 			}
 		}
-		for (int yOffset : List.of(0, -1, 1)) {
+		for (int yOffset : List.of(0, -1, 1, 2, -2)) {
 			for (int dx = -2; dx <= 2; dx++) {
 				for (int dz = -2; dz <= 2; dz++) {
 					BlockPos candidate = origin.add(dx, yOffset, dz);

@@ -42,6 +42,16 @@ class SmeltingPlannerServiceTest {
 	}
 
 	@Test
+	void furnacePlacementFindsReachableLedgeAboveMiningHole() {
+		// Paused playtest at 5,125,4: the nearby feet/head cells are occupied
+		// by the player; the first usable air with solid support is this ledge.
+		var origin = new BlockPos(5, 125, 4);
+		var ledge = new BlockPos(4, 127, 4);
+		assertTrue(SmeltingPlannerService.furnacePlacementCandidatePositions(origin).stream()
+			.anyMatch(ledge::equals), "reachable supported ledge must be considered for a carried furnace");
+	}
+
+	@Test
 	void knownRecipeMergeKeepsGenericSmeltingRecipesAndDeduplicatesByOptionId() {
 		SmeltingRecipeKnowledge gold = recipe(
 			"inferred:minecraft_raw_gold_to_minecraft_gold_ingot",
