@@ -2533,7 +2533,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				for (BlockPlacementStepArgs.Target target : blockPlacement.targets()) {
 					BlockPos targetPos = blockPos(target.targetPosition());
 					if (!worldReadLedger.isFresh(targetPos)) {
-						yield guardedModificationNeedsInspect(PlannerToolCatalog.PLACE_BLOCK, targetPos);
+						yield guardedModificationNeedsInspect(PlannerToolCatalog.PLACE_BLOCK, blockPlacement.targets().stream().map(item -> blockPos(item.targetPosition())).toList());
 					}
 				}
 				applyPlannerJobTool(ActiveJobProposal.placeBlock(blockPlacement));
@@ -2547,7 +2547,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				for (BlockUseStepArgs.Target target : blockUse.targets()) {
 					BlockPos targetPos = blockPos(target.targetPosition());
 					if (!worldReadLedger.isFresh(targetPos)) {
-						yield guardedModificationNeedsInspect(PlannerToolCatalog.USE_BLOCK, targetPos);
+						yield guardedModificationNeedsInspect(PlannerToolCatalog.USE_BLOCK, blockUse.targets().stream().map(item -> blockPos(item.targetPosition())).toList());
 					}
 				}
 				applyPlannerJobTool(ActiveJobProposal.useBlock(blockUse));
@@ -2567,7 +2567,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				for (BlockBreakStepArgs.Target target : blockBreak.targets()) {
 					BlockPos targetPos = blockPos(target.position());
 					if (!worldReadLedger.isFresh(targetPos)) {
-						yield guardedModificationNeedsInspect(PlannerToolCatalog.BREAK_BLOCKS, targetPos);
+						yield guardedModificationNeedsInspect(PlannerToolCatalog.BREAK_BLOCKS, blockBreak.targets().stream().map(item -> blockPos(item.position())).toList());
 					}
 				}
 				applyPlannerJobTool(ActiveJobProposal.breakBlocks(blockBreak));
@@ -2788,7 +2788,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				for (BlockPlacementStepArgs.Target target : blockPlacement.targets()) {
 					BlockPos targetPos = blockPos(target.targetPosition());
 					if (!worldReadLedger.isFresh(targetPos)) {
-						return CompletableFuture.completedFuture(guardedModificationNeedsInspect(PlannerToolCatalog.PLACE_BLOCK, targetPos));
+						return CompletableFuture.completedFuture(guardedModificationNeedsInspect(PlannerToolCatalog.PLACE_BLOCK, blockPlacement.targets().stream().map(item -> blockPos(item.targetPosition())).toList()));
 					}
 				}
 				proposal = ActiveJobProposal.placeBlock(blockPlacement);
@@ -2804,7 +2804,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				for (BlockUseStepArgs.Target target : blockUse.targets()) {
 					BlockPos targetPos = blockPos(target.targetPosition());
 					if (!worldReadLedger.isFresh(targetPos)) {
-						return CompletableFuture.completedFuture(guardedModificationNeedsInspect(PlannerToolCatalog.USE_BLOCK, targetPos));
+						return CompletableFuture.completedFuture(guardedModificationNeedsInspect(PlannerToolCatalog.USE_BLOCK, blockUse.targets().stream().map(item -> blockPos(item.targetPosition())).toList()));
 					}
 				}
 				proposal = ActiveJobProposal.useBlock(blockUse);
@@ -2826,7 +2826,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				for (BlockBreakStepArgs.Target target : blockBreak.targets()) {
 					BlockPos targetPos = blockPos(target.position());
 					if (!worldReadLedger.isFresh(targetPos)) {
-						return CompletableFuture.completedFuture(guardedModificationNeedsInspect(PlannerToolCatalog.BREAK_BLOCKS, targetPos));
+						return CompletableFuture.completedFuture(guardedModificationNeedsInspect(PlannerToolCatalog.BREAK_BLOCKS, blockBreak.targets().stream().map(item -> blockPos(item.position())).toList()));
 					}
 				}
 				proposal = ActiveJobProposal.breakBlocks(blockBreak);
@@ -2880,22 +2880,34 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		worldReadLedger.advanceToolCall();
 	}
 
-	private String guardedModificationNeedsInspect(String toolName, BlockPos targetPos) {
-		JsonObject inspectArgs = new JsonObject();
-		inspectArgs.addProperty("mode", "inspect_area");
-		inspectArgs.addProperty("scope", "center");
-		inspectArgs.addProperty("x", targetPos.getX());
-		inspectArgs.addProperty("y", targetPos.getY());
-		inspectArgs.addProperty("z", targetPos.getZ());
-		inspectArgs.addProperty("horizontalRadius", 1);
-		inspectArgs.addProperty("verticalRadius", 1);
-		CurrentWorldQueryService.WorldQueryResult result = guardedWorldQueryService.inspectWorldDetailed(inspectArgs).join();
-		worldReadLedger.recordObserved(result.observedPositions());
-		return "Tool result for " + toolName + ": blocked reason=target_not_inspected"
-			+ " targetPos=" + compactPos(targetPos)
-			+ ". Runtime converted this request to inspect_world first.\n"
-			+ result.text()
-			+ "\nThe target has now been inspected. Call " + toolName + " again if you still want to modify it.";
+	private String guardedModificationNeedsInspect(String toolName, List<BlockPos> targets) {
+		return inspectMissingModificationTargets(toolName, targets, worldReadLedger,
+			args -> guardedWorldQueryService.inspectWorldDetailed(args).join());
+	}
+
+	static String inspectMissingModificationTargets(String toolName, List<BlockPos> targets, WorldReadLedger ledger,
+		java.util.function.Function<JsonObject, CurrentWorldQueryService.WorldQueryResult> query) {
+		StringBuilder feedback = new StringBuilder("Tool result for " + toolName + ": blocked reason=target_not_inspected"
+			+ " targets=" + targets.size() + ". Runtime converted this request to inspect_world first.");
+		// A batch needs exact target facts, not a repeated neighborhood around each target.
+		int radius = targets.size() == 1 ? 1 : 0;
+		for (BlockPos targetPos : targets) {
+			if (ledger.isFresh(targetPos)) continue;
+			JsonObject inspectArgs = new JsonObject();
+			inspectArgs.addProperty("mode", "inspect_area");
+			inspectArgs.addProperty("scope", "center");
+			inspectArgs.addProperty("x", targetPos.getX());
+			inspectArgs.addProperty("y", targetPos.getY());
+			inspectArgs.addProperty("z", targetPos.getZ());
+			inspectArgs.addProperty("horizontalRadius", radius);
+			inspectArgs.addProperty("verticalRadius", radius);
+			CurrentWorldQueryService.WorldQueryResult result = query.apply(inspectArgs);
+			ledger.recordObserved(result.observedPositions());
+			feedback.append("\ntargetPos=").append(compactPos(targetPos)).append("\n").append(result.text());
+		}
+		long unread = targets.stream().filter(pos -> !ledger.isFresh(pos)).count();
+		return feedback + "\ninspectedTargets=" + (targets.size() - unread) + " uninspectedTargets=" + unread
+			+ "\nReview the observations and any read errors. Call " + toolName + " again if you still want to modify these targets.";
 	}
 
 	private static BlockPos blockPos(GoalPosition position) {

@@ -1600,6 +1600,38 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void modificationFallbackInspectsAllMissingTargetsInOneResponse() {
+		var first = new BlockPos(1, 64, 2);
+		var second = new BlockPos(7, 64, 2);
+		var known = new BlockPos(8, 64, 2);
+		var ledger = new ai.moeru.airicraft.agent.llm.WorldReadLedger();
+		ledger.recordObserved(List.of(known));
+		var queried = new java.util.ArrayList<BlockPos>();
+		String result = EmbodiedAgentRuntime.inspectMissingModificationTargets("place_block",
+			List.of(first, second, known), ledger, args -> {
+				BlockPos pos = new BlockPos(args.get("x").getAsInt(), args.get("y").getAsInt(), args.get("z").getAsInt());
+				queried.add(pos);
+				return new ai.moeru.airicraft.agent.llm.CurrentWorldQueryService.WorldQueryResult("observed=" + pos, List.of(pos));
+			});
+		assertEquals(List.of(first, second), queried);
+		assertTrue(ledger.isFresh(first));
+		assertTrue(ledger.isFresh(second));
+		assertTrue(result.contains("blocked reason=target_not_inspected"));
+		assertTrue(result.contains("Call place_block again"));
+	}
+
+	@Test
+	void failedFallbackReadDoesNotAuthorizeOrClaimInspection() {
+		var target = new BlockPos(1, 64, 2);
+		var ledger = new ai.moeru.airicraft.agent.llm.WorldReadLedger();
+		String result = EmbodiedAgentRuntime.inspectMissingModificationTargets("use_block", List.of(target), ledger,
+			args -> new ai.moeru.airicraft.agent.llm.CurrentWorldQueryService.WorldQueryResult("WORLD_UNAVAILABLE", List.of()));
+		assertFalse(ledger.isFresh(target));
+		assertTrue(result.contains("uninspectedTargets=1"));
+		assertFalse(result.contains("The target has now been inspected"));
+	}
+
+	@Test
 	void blockModificationToolQueuesAfterFreshWorldRead() {
 		FakeWorldTaskExecutor executor = new FakeWorldTaskExecutor();
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(executor);
