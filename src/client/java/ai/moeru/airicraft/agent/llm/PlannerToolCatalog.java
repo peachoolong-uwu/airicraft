@@ -305,7 +305,7 @@ public final class PlannerToolCatalog {
 				prop("x", integer("Intended modified target block x coordinate.")),
 				prop("y", integer("Intended modified target block y coordinate.")),
 				prop("z", integer("Intended modified target block z coordinate.")),
-				prop("facePreference", enumString("Optional adjacent support preference. auto derives best support.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
+				prop("facePreference", enumString("Direction from the target cell to its support neighbor. Use down for the floor below (clicks its top), up for the ceiling above. Prefer auto unless a specific support is required.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
 				prop("requireCurrentTargetMaterial", enumString("Required current target material before placement. Default air_or_replaceable.", List.of("air", "replaceable", "air_or_replaceable"))),
 				prop("targets", array("Ordered target blocks to place into. Maximum 16. Root facePreference and requireCurrentTargetMaterial apply as defaults.", placeBlockTargetSchema()))
 			), List.of("itemId")), PlannerToolCatalog::validatePlaceBlockArguments),
@@ -315,7 +315,7 @@ public final class PlannerToolCatalog {
 				prop("x", integer("Intended modified target block x coordinate.")),
 				prop("y", integer("Intended modified target block y coordinate.")),
 				prop("z", integer("Intended modified target block z coordinate.")),
-				prop("facePreference", enumString("Optional adjacent support preference. auto derives best support.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
+				prop("facePreference", enumString("For air/replaceable targets, direction from target to support: down selects the floor below and clicks its top (for example placing a torch). For an existing solid target, selects the clicked face. Prefer auto.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
 				prop("expectedSupportBlockIds", stringArray("Optional exact block ids expected on the clicked support block.")),
 				prop("expectedTargetMaterial", enumString("Optional current target material check before use.", List.of("air", "replaceable", "air_or_replaceable"))),
 				prop("targets", array("Ordered target blocks to use. Maximum 16. Root facePreference, expectedSupportBlockIds, and expectedTargetMaterial apply as defaults.", useBlockTargetSchema()))
@@ -1246,7 +1246,7 @@ public final class PlannerToolCatalog {
 				prop("x", integer("Intended modified target block x coordinate.")),
 				prop("y", integer("Intended modified target block y coordinate.")),
 				prop("z", integer("Intended modified target block z coordinate.")),
-				prop("facePreference", enumString("Optional adjacent support preference. Overrides root default.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
+				prop("facePreference", enumString("Direction from the target cell to its support neighbor. Use down for the floor below (clicks its top), up for the ceiling above. Prefer auto unless a specific support is required. Overrides root default.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
 				prop("requireCurrentTargetMaterial", enumString("Required current target material before placement. Overrides root default.", List.of("air", "replaceable", "air_or_replaceable")))
 			),
 			"required", List.of("x", "y", "z"),
@@ -1261,7 +1261,7 @@ public final class PlannerToolCatalog {
 				prop("x", integer("Intended modified target block x coordinate.")),
 				prop("y", integer("Intended modified target block y coordinate.")),
 				prop("z", integer("Intended modified target block z coordinate.")),
-				prop("facePreference", enumString("Optional adjacent support preference. Overrides root default.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
+				prop("facePreference", enumString("For air/replaceable targets, direction from target to support: down selects the floor below and clicks its top (for example placing a torch). For an existing solid target, selects the clicked face. Prefer auto. Overrides root default.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
 				prop("expectedSupportBlockIds", stringArray("Optional exact block ids expected on the clicked support block. Overrides root default.")),
 				prop("expectedTargetMaterial", enumString("Optional current target material check before use. Overrides root default.", List.of("air", "replaceable", "air_or_replaceable")))
 			),
