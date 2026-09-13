@@ -124,11 +124,11 @@ public final class PlannerToolCatalog {
 				prop("nearbyRequiredVerticalRadius", integer("Vertical radius for nearbyRequiredBlockIds. Default 1, maximum 8."))
 			), List.of("mode", "scope")), PlannerToolCatalog::validateInspectWorldArguments),
 		builtInTool(CLOSE_CONTAINER, false, tool(CLOSE_CONTAINER,
-			"Close the current chest or barrel after transfers. Refuses a nonempty cursor. Use before resuming travel or other work.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
+			"Close the current chest, barrel or chest-style entity container after transfers. Refuses a nonempty cursor. Use before resuming travel or other work.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
 		builtInTool(INSPECT_CONTAINER, true, tool(INSPECT_CONTAINER,
-			"Inspect the currently open chest or barrel, including its syncId, slots and carried storage. Open an observed chest with use_block first. No remote or unopened inventory access.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
+			"Inspect the currently open chest, barrel, chest minecart or chest boat, including syncId, slots and carried storage. Open blocks with use_block; find entity containers with inspect_nearby_entities and open their copied uuid with use_entity. No remote or unopened inventory access.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
 		builtInTool(TRANSFER_CONTAINER, false, tool(TRANSFER_CONTAINER,
-			"Deposit or withdraw an exact item quantity in the currently open chest/barrel. Copy syncId from inspect_container. Preflights source quantity and destination space; preserves stack components and leaves cursor empty. Result is submitted client prediction: inspect_container again to verify settled counts.", properties(
+			"Deposit or withdraw an exact item quantity in the currently open chest, barrel or chest-style entity container (including chest minecarts/boats). Copy syncId from inspect_container. Preflights source quantity and destination space; preserves stack components and leaves cursor empty. Result is submitted client prediction: inspect_container again to verify settled counts.", properties(
 				prop("syncId", integer("Open container syncId from inspect_container; stale windows are rejected.")),
 				prop("direction", enumString("Transfer direction.", List.of("deposit", "withdraw"))),
 				prop("itemId", string("Exact item ID to transfer; equipped armor and offhand are excluded.")),
@@ -292,7 +292,7 @@ public final class PlannerToolCatalog {
 				prop("entityTypeId", optionalString("Exact namespaced entity type id, for example minecraft:sheep.")),
 				prop("mode", enumString("Attack mode. Use kill unless the user asks for one hit.", List.of("kill", "hit_once")))
 			), List.of("uuid")), PlannerToolCatalog::validateAttackEntityArguments),
-		builtInTool(USE_ENTITY, false, tool(USE_ENTITY, "Use current hand or an optional item on one nearby entity. Always copy the uuid token shown by inspect_nearby_entities or focus, and optionally include name or entityTypeId.", properties(
+		builtInTool(USE_ENTITY, false, tool(USE_ENTITY, "Use current hand or an optional item on one nearby entity, including opening a chest minecart or chest boat. Then inspect_container and transfer_container using the opened syncId. Always copy the uuid token shown by inspect_nearby_entities or focus, and optionally include name or entityTypeId.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("uuid", optionalString("Entity uuid token copied from inspect_nearby_entities or focus. Full uuid also works.")),
 				prop("name", optionalString("Visible custom name or display name when available.")),

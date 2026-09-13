@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.memory;
 
 import net.minecraft.item.ItemStack;
+import net.minecraft.entity.Entity;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.*;
 import net.minecraft.screen.slot.CraftingResultSlot;
@@ -15,7 +16,7 @@ public final class InteractionLogbookRecorder {
 	private static final Map<ScreenHandler, Context> CONTEXTS = new WeakHashMap<>();
 	private static final Map<MinecraftServer, LinkedHashMap<Key, InteractionLogbook.Entry>> PENDING = new IdentityHashMap<>();
 	private record Context(BlockPos position, String type) {}
-	private record Key(String actor, String dimension, BlockPos position, String action, String itemId) {}
+	private record Key(String actor, String dimension, BlockPos position, String entityUuid, String action, String itemId) {}
 	public record Click(Map<String, Integer> containerBefore, String craftItem, int craftCountBefore) {}
 
 	public static void opened(ServerPlayerEntity player, BlockPos position, ScreenHandler handler) {
@@ -27,6 +28,7 @@ public final class InteractionLogbookRecorder {
 	}
 
 	public static Click beforeClick(ServerPlayerEntity player, ScreenHandler handler, int slotId) {
+		observeEntityContainer(player, handler);
 		String craftItem = slotId >= 0 && slotId < handler.slots.size() && handler.getSlot(slotId) instanceof CraftingResultSlot
 			? itemId(handler.getSlot(slotId).getStack()) : "";
 		return new Click(contents(handler), craftItem, craftItem.isEmpty() ? 0 : carriedCount(player, handler, craftItem));
@@ -80,20 +82,36 @@ public final class InteractionLogbookRecorder {
 
 	private static String itemId(ItemStack stack) { return stack.isEmpty() ? "" : Registries.ITEM.getId(stack.getItem()).toString(); }
 
+	/** Only inspect the inventory the server has already opened for this player. */
+	private static Entity containerEntity(ScreenHandler handler) {
+		return handler instanceof GenericContainerScreenHandler container && container.getInventory() instanceof Entity entity ? entity : null;
+	}
+
+	private static void observeEntityContainer(ServerPlayerEntity player, ScreenHandler handler) {
+		Entity entity = containerEntity(handler);
+		if (entity == null || CONTEXTS.containsKey(handler)) return;
+		CONTEXTS.put(handler, new Context(entity.getBlockPos(), Registries.ENTITY_TYPE.getId(entity.getType()).toString()));
+		add(player, handler, "container_observed", "", 0, contents(handler));
+	}
+
 	private static void add(ServerPlayerEntity player, ScreenHandler handler, String action, String item, int count, Map<String, Integer> contents) {
 		Context context = handler == null ? null : CONTEXTS.get(handler);
-		BlockPos position = context == null ? player.getBlockPos() : context.position();
+		Entity entity = containerEntity(handler);
+		BlockPos position = entity != null ? entity.getBlockPos() : context == null ? player.getBlockPos() : context.position();
+		String entityUuid = entity == null ? "" : entity.getUuidAsString();
 		String dimension = player.getWorld().getRegistryKey().getValue().toString();
-		Key key = new Key(player.getUuidAsString(), dimension, position, action, item);
+		Key key = new Key(player.getUuidAsString(), dimension, position, entityUuid, action, item);
 		var pending = PENDING.computeIfAbsent(player.getServer(), ignored -> new LinkedHashMap<>());
 		InteractionLogbook.Entry previous = pending.get(key);
 		int amount = action.equals("container_observed") ? 0 : count + (previous == null ? 0 : previous.count());
 		pending.put(key, new InteractionLogbook.Entry(System.currentTimeMillis(), player.getWorld().getTime(),
 			player.getUuidAsString(), dimension, position.getX(), position.getY(), position.getZ(), action, item, amount,
-			context == null ? "" : context.type(), contents));
+			context == null ? "" : context.type(), contents, entityUuid));
 	}
 
 	public static void flushTick(MinecraftServer server) {
+		for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList())
+			observeEntityContainer(player, player.currentScreenHandler);
 		var entries = PENDING.remove(server);
 		if (entries == null) return;
 		List<InteractionLogbook.Entry> batch = new ArrayList<>();
@@ -102,7 +120,7 @@ public final class InteractionLogbookRecorder {
 				if (entry.count() == 0) continue;
 				batch.add(new InteractionLogbook.Entry(entry.timestampMs(), entry.worldTick(), entry.actor(), entry.dimension(),
 					entry.x(), entry.y(), entry.z(), entry.count() > 0 ? "container_put" : "container_take",
-					entry.itemId(), Math.abs(entry.count()), entry.containerType(), Map.of()));
+					entry.itemId(), Math.abs(entry.count()), entry.containerType(), Map.of(), entry.containerEntityUuid()));
 			} else batch.add(entry);
 		}
 		InteractionLogbook.record(server.getSavePath(WorldSavePath.ROOT), batch);

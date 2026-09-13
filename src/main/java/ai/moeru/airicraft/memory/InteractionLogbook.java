@@ -24,8 +24,16 @@ public final class InteractionLogbook {
 	private static volatile String lastWriteError;
 
 	public record Entry(long timestampMs, long worldTick, String actor, String dimension,
-		int x, int y, int z, String action, String itemId, int count, String containerType, Map<String, Integer> contents) {
-		public Entry { contents = contents == null ? Map.of() : Map.copyOf(contents); }
+		int x, int y, int z, String action, String itemId, int count, String containerType, Map<String, Integer> contents,
+		String containerEntityUuid) {
+		public Entry {
+			contents = contents == null ? Map.of() : Map.copyOf(contents);
+			containerEntityUuid = containerEntityUuid == null ? "" : containerEntityUuid;
+		}
+		public Entry(long timestampMs, long worldTick, String actor, String dimension,
+			int x, int y, int z, String action, String itemId, int count, String containerType, Map<String, Integer> contents) {
+			this(timestampMs, worldTick, actor, dimension, x, y, z, action, itemId, count, containerType, contents, "");
+		}
 	}
 
 	public static void record(Path worldDirectory, List<Entry> entries) {
@@ -53,7 +61,9 @@ public final class InteractionLogbook {
 		java.util.Set<String> knownContainers = new java.util.HashSet<>();
 		return entry -> {
 			if (item.isEmpty()) return true;
-			String key = entry.actor() + "/" + entry.dimension() + "/" + entry.x() + "," + entry.y() + "," + entry.z();
+			String key = entry.actor() + "/" + (entry.containerEntityUuid().isEmpty()
+				? entry.dimension() + "/" + entry.x() + "," + entry.y() + "," + entry.z()
+				: "entity/" + entry.containerEntityUuid());
 			boolean matches = entry.itemId().equals(item) || entry.contents().containsKey(item);
 			if (matches && !entry.containerType().isEmpty()) knownContainers.add(key);
 			return matches || entry.action().equals("container_observed") && knownContainers.contains(key);

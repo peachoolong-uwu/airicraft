@@ -42,4 +42,26 @@ class InteractionLogbookTest {
 		assertEquals(List.of(empty), InteractionLogbook.read(directory,
 			InteractionLogbook.matchingItemHistory("minecraft:iron_ingot"), 1));
 	}
+	@Test void movedCartKeepsItsEmptyStockHistoryByIdentity() throws Exception {
+		var stocked = new InteractionLogbook.Entry(1, 1, "actor", "minecraft:overworld", 207, 25, 407,
+			"container_observed", "", 0, "minecraft:chest_minecart", Map.of("minecraft:torch", 5), "cart-a");
+		var empty = new InteractionLogbook.Entry(2, 2, "actor", "minecraft:overworld", 207, 25, 409,
+			"container_observed", "", 0, "minecraft:chest_minecart", Map.of(), "cart-a");
+		InteractionLogbook.append(directory, List.of(stocked, empty));
+		assertEquals(List.of(empty), InteractionLogbook.read(directory, InteractionLogbook.matchingItemHistory("minecraft:torch"), 1));
+	}
+	@Test void differentCartsAtTheSamePositionDoNotShareStockHistory() throws Exception {
+		var stocked = new InteractionLogbook.Entry(1, 1, "actor", "minecraft:overworld", 207, 25, 407,
+			"container_observed", "", 0, "minecraft:chest_minecart", Map.of("minecraft:torch", 5), "cart-a");
+		var other = new InteractionLogbook.Entry(2, 2, "actor", "minecraft:overworld", 207, 25, 407,
+			"container_observed", "", 0, "minecraft:chest_minecart", Map.of(), "cart-b");
+		InteractionLogbook.append(directory, List.of(stocked, other));
+		assertEquals(List.of(stocked), InteractionLogbook.read(directory, InteractionLogbook.matchingItemHistory("minecraft:torch"), 20));
+	}
+	@Test void readsExistingWorldEntriesWithoutEntityIdentity() throws Exception {
+		java.nio.file.Files.createDirectories(directory.resolve("airicraft"));
+		java.nio.file.Files.writeString(directory.resolve("airicraft/interactions.jsonl"),
+			"{\"timestampMs\":1,\"worldTick\":1,\"actor\":\"actor\",\"dimension\":\"minecraft:overworld\",\"x\":1,\"y\":64,\"z\":2,\"action\":\"container_observed\",\"itemId\":\"\",\"count\":0,\"containerType\":\"minecraft:chest\",\"contents\":{}}\n");
+		assertEquals("", InteractionLogbook.read(directory, e -> true, 1).getFirst().containerEntityUuid());
+	}
 }

@@ -17,7 +17,7 @@ public final class InteractionLogbookToolProvider implements PlannerToolProvider
 	@Override public boolean handles(String name) { return "read_logbook".equals(normalizeName(name)); }
 	@Override public List<Map<String, Object>> openAiTools() {
 		return List.of(toolForProvider("read_logbook",
-			"Read significant server-observed interactions persisted in this world: crafting, drops, chest/barrel/furnace put/take and last observed container contents. Historical observations, not guaranteed current stock. No write/delete capability.",
+			"Read significant server-observed interactions persisted in this world: crafting, drops, block/entity container put/take and last observed contents. Entity container records include stable containerEntityUuid and coordinates at interaction time. Historical observations, not guaranteed current stock. No write/delete capability.",
 			propertiesForProvider(
 				propForProvider("itemId", optionalStringForProvider("Optional exact item ID, matching transfers or observed contents.")),
 				propForProvider("action", enumStringForProvider("Optional event filter.", List.of("crafted", "dropped", "container_put", "container_take", "container_observed"))),
@@ -38,7 +38,7 @@ public final class InteractionLogbookToolProvider implements PlannerToolProvider
 		if (args.has("radius") && !args.has("place")) throw new JsonParseException("radius requires place");
 	}
 	@Override public String promptInstructions() {
-		return "Before a long supply trip, inspect inventory and use chests to store surplus while keeping tools, shield, food, torches and building blocks. Open a known chest with use_block, inspect_container, transfer_container with its exact syncId, then inspect_container to verify counts and close_container before other work. read_logbook retrieves automatic world-persistent history; query a remembered place and item before reacquiring supplies. Container contents are last-seen stock at worldTick, not current truth: reopen and inspect before relying on them. Logbook entries cannot be written or deleted by planner tools.";
+		return "Before a long supply trip, inspect inventory and use containers to store surplus while keeping tools, shield, food, torches and building blocks. Open a known chest/barrel with use_block. For chest minecarts or chest boats, inspect_nearby_entities, copy uuid and use_entity to approach/open; do not break the vehicle to access loot. Then inspect_container, transfer_container with its exact syncId, inspect_container again to verify settled counts and close_container before other work. read_logbook retrieves automatic world-persistent history; query a remembered place and item before reacquiring supplies. Entity containers retain identity by containerEntityUuid when they move; coordinates describe the recorded interaction location. Container contents are last-seen stock at worldTick, not current truth: reopen and inspect before relying on them. Logbook entries cannot be written or deleted by planner tools.";
 	}
 	@Override public CompletableFuture<String> execute(PlannerToolCall call) {
 		MinecraftClient client = MinecraftClient.getInstance();

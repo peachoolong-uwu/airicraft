@@ -135,7 +135,6 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			}
 			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_not_alive"));
 		}
-		lookAtTarget(client, target);
 		double distance = player.distanceTo(target);
 		boolean hasLineOfSight = hasBlockLineOfSight(client, player, target);
 		boolean withinInteractionRange = EntitySelectorResolver.isWithinInteractionRange(
@@ -148,6 +147,8 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 		);
 		if (withinInteractionRange && hasLineOfSight) {
 			outOfRangeTicks = 0;
+			// Baritone owns steering on indirect approaches; aim only when we own the interaction.
+			lookAtTarget(client, target);
 		}
 
 		return switch (request.type()) {

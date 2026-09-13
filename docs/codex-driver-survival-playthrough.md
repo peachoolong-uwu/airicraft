@@ -415,3 +415,12 @@ D087 implements bounded connected-air mapping with an area-weighted floor graph.
 A separate bypassable navigation failure remains: compressed downhill navigation to166,24,406 cancelled at6037, leaving the player in shallow water167,23,406. Recorder cave-map-return-cancelled.jsonl shows the path reaching estimatedTicksToGoal0, then BARITONE_CANCELLED, with reflex idle throughout. The exact cancellation cause is unresolved. The driver paused automatically; direct recovery to167,24,405 succeeded. Downhill waypoint compression was reverted, retaining every descending landing. Uphill compression was independently verified on the same slope. Do not equate the mapper's geometric route with reliable Baritone execution.
 
 The stateless map can suggest immediate backtracking; System2 must use place memory/recent travel to choose among alternatives. It also deliberately excludes swimming and reads geometry around corners, while retaining visible-only ore discovery separately. See docs/cave-route-mapping.md and D087 for the API, current validation and remaining limits.
+
+
+### 2026-09-13: Chest minecart approaches and logbook identity
+
+Confirmed and fixed in D088: use_entity could stall on an indirect cart approach because it aimed at the entity while Baritone needed camera control. A goal-refresh change failed live and was reverted. Restricting target aiming to actual interaction range let the same stalled job finish after HotSwap, without resubmission. Existing chest-style inventory tools then opened and transferred natural loot normally.
+
+Entity-container openings previously produced no logbook entry, and transfers recorded an empty container type at the player's position. Server observations now record the opened entity's type, UUID and location; history follows stable identity after movement. A restart loaded the record layout; opening, loot withdrawal, one-block deposit/withdrawal and persistent world-file entries were verified. Fifteen focused tests/full build passed. Chest boats use the same screen path but are not live verified; other inventory layouts are outside this change. See mineshaft-cart-camera-fixed.jsonl and mineshaft-cart-logbook-fixed.jsonl.
+
+A separate no-dig navigation to266,13,381 failed CALC_FAILED at263,13,381 during the diamond search. Earlier stances bypassed it; the cause remains unresolved. No diamond found in the first cart.

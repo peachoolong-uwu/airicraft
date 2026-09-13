@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** Ordinary screen clicks only; no access to unopened block-entity inventories. */
+/** Ordinary screen clicks only; no access to unopened block or entity inventories. */
 final class ContainerInventoryController {
 
 	static String close(MinecraftClient client) {
@@ -58,7 +58,7 @@ final class ContainerInventoryController {
 	private static GenericContainerScreenHandler requireContainer(MinecraftClient client) {
 		if (client == null || client.world == null || client.player == null) throw new IllegalStateException("world_not_loaded");
 		if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler handler))
-			throw new IllegalStateException("chest_not_open use_block_on_an_observed_chest_or_barrel_first");
+			throw new IllegalStateException("container_not_open use_block_for_chests_or_use_entity_for_chest_minecarts_first");
 		return handler;
 	}
 
