@@ -180,14 +180,15 @@ public final class DashboardObservationCollector {
 
 	private Map<String, Object> runtimeSnapshot(MinecraftClient client, EmbodiedAgentRuntime runtime) {
 		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("schemaVersion", 3);
+		payload.put("schemaVersion", 4);
 		var agent = runtime.snapshot();
 		payload.put("agent", Map.of("initialized", agent.initialized(), "tickCount", agent.tickCount(), "session", agent.session()));
-		payload.put("planner", runtime.plannerDebugSnapshot());
+		payload.put("planner", plannerPayload(store, runtime.plannerDebugSnapshot(), runtime.tickCount(), System.currentTimeMillis()));
 		payload.put("dialogue", Map.of("observationSequence", store.appendContext("dialogue_history", runtime.tickCount(),
 			System.currentTimeMillis(), runtime.dialogueSnapshot()).sequence()));
 		payload.put("dialogueState", runtime.debugDialogueState());
-		payload.put("conversationSources", runtime.debugConversationSources());
+		payload.put("conversationSources", Map.of("observationSequence", store.appendContext("conversation_sources",
+			runtime.tickCount(), System.currentTimeMillis(), runtime.debugConversationSources()).sequence()));
 		payload.put("activeGoal", runtime.activeGoal().orElse(null));
 		payload.put("activeJob", runtime.activeJob());
 		payload.put("task", runtime.taskSnapshot());
@@ -224,6 +225,16 @@ public final class DashboardObservationCollector {
 		return payload;
 	}
 
+	static com.google.gson.JsonObject plannerPayload(DashboardObservationStore store,
+		ai.moeru.airicraft.agent.llm.PlannerOrchestratorDebugSnapshot planner, long tick, long capturedAtMs) {
+		var payload = GSON.toJsonTree(planner).getAsJsonObject();
+		if (planner.baseRequest() != null && planner.baseRequest().missionExecution() != null) {
+			payload.getAsJsonObject("baseRequest").add("missionExecution", GSON.toJsonTree(
+				missionPayload(store, planner.baseRequest().missionExecution(), tick, capturedAtMs, "planner_base_request")));
+		}
+		return payload;
+	}
+
 	static com.google.gson.JsonObject llmPayload(DashboardObservationStore store, LlmFlightRecord record, long tick, long capturedAtMs) {
 		var payload = GSON.toJsonTree(record).getAsJsonObject();
 		if (!record.requestBody().isEmpty()) {
@@ -236,6 +247,11 @@ public final class DashboardObservationCollector {
 	}
 
 	static Map<String, Object> missionPayload(DashboardObservationStore store, MissionExecutionSnapshot mission, long tick, long capturedAtMs) {
+		return missionPayload(store, mission, tick, capturedAtMs, "recipe_catalog");
+	}
+
+	private static Map<String, Object> missionPayload(DashboardObservationStore store, MissionExecutionSnapshot mission,
+		long tick, long capturedAtMs, String catalogKey) {
 		if (mission == null) return Map.of();
 		Map<String, Object> result = new LinkedHashMap<>();
 		result.put("mission", mission.mission());
@@ -245,7 +261,7 @@ public final class DashboardObservationCollector {
 		result.put("primitiveExecution", mission.primitiveExecution());
 		var evidence = mission.evidence();
 		if (evidence != null) {
-			var catalog = store.appendContext("recipe_catalog", tick, capturedAtMs,
+			var catalog = store.appendContext("recipe_catalog", catalogKey, tick, capturedAtMs,
 				Map.of("knownCrafts", evidence.knownCrafts(), "knownSmelts", evidence.knownSmelts()));
 			Map<String, Object> facts = new LinkedHashMap<>();
 			facts.put("recipeCatalogSequence", catalog.sequence());
