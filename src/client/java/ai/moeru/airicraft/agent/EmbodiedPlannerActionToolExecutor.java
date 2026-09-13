@@ -106,7 +106,7 @@ record EmbodiedPlannerActionToolExecutor(
 			+ " activeStepKind=" + (task == null || task.activeStepKind() == null ? "UNKNOWN" : task.activeStepKind().name())
 			+ " taskExecutionState=" + (execution == null || execution.state() == null ? "UNKNOWN" : execution.state().name())
 			+ " taskExecutionProcess=" + (execution == null || execution.processName() == null ? "UNKNOWN" : execution.processName())
-			+ ". Task-changing tools would preempt the active job. Use cancel_task first only if the user explicitly changed tasks; otherwise wait for TASK UPDATE or ask the user.";
+			+ ". Task-changing tools would preempt the active job. Use wait_for_work, or cancel_work with the exact workId if another approach better serves the objective.";
 	}
 
 	private static String activeGraphError(String toolName, ActionGraphExecutionSnapshot snapshot) {
@@ -115,7 +115,7 @@ record EmbodiedPlannerActionToolExecutor(
 			+ " graphState=" + graph.state().name()
 			+ " executionId=" + graph.executionId()
 			+ " activeTaskId=" + graph.activeTaskId()
-			+ ". A graph execution owns the mutation boundary. Use list_action_goals, inspect_action_goal, or inspect_action_trace to observe progress. Additional productive work must use start_action_goal; it is accepted only when the foreground lane is free. Cancel only if the user explicitly changes tasks.";
+			+ ". A graph execution owns the mutation boundary. Use inspect_work/list_work to observe progress. Wait for the foreground lane, or cancel_work with the graph workId if another approach better serves the objective.";
 	}
 
 	record ExecutionState(

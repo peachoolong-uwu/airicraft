@@ -534,7 +534,7 @@ public final class PlannerOrchestrator {
 				return rejectToolRequest(
 					plannerResult,
 					toolRegistry.isKnownTool(toolName)
-						? "tool_not_discovered: " + toolName
+						? (toolRegistry.hasFixedPrefix() ? "tool_not_available_for_role: " : "tool_not_discovered: ") + toolName
 						: "Planner requested an invalid tool"
 				);
 			}

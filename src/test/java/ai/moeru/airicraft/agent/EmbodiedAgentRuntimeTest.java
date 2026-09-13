@@ -1482,7 +1482,7 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
-	void unknownActionGraphAcquisitionTriggersExplicitUnsupportedReplyWithoutFallback() {
+	void unknownActionGraphAcquisitionIdentifiesCapabilityFailureWithoutEndingObjective() {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 
 		PlannerTrigger trigger = runtime.createPlannerTriggerForTests(new SemanticEvent(
@@ -1502,8 +1502,8 @@ class EmbodiedAgentRuntimeTest {
 		assertEquals(PlannerTriggerType.SYSTEM, trigger.type());
 		assertEquals("action_graph", trigger.speaker());
 		assertTrue(trigger.text().contains("unknown_acquisition_method"));
-		assertTrue(trigger.text().contains("Do not substitute mine_blocks"));
-		assertTrue(trigger.text().contains("acquisition is unsupported"));
+		assertTrue(trigger.text().contains("Another observed supported action may still serve the objective"));
+		assertTrue(trigger.text().contains("requested capability is unsupported"));
 		assertEquals("action_graph_terminal:action-graph-seagrass", trigger.coalescingKey());
 	}
 

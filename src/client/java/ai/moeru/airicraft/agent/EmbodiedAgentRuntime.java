@@ -294,6 +294,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private Map<String, Integer> nearbyHarvestableBlockSnapshot;
 	private final Map<UUID, String> seenPlayerNames = new LinkedHashMap<>();
 	private volatile PendingCraftToolResult pendingCraftToolResult;
+	private record ObservedInteractions(net.minecraft.server.MinecraftServer server, List<ai.moeru.airicraft.memory.InteractionLogbook.Entry> entries) { }
+	private final java.util.concurrent.ArrayBlockingQueue<ObservedInteractions> pendingInteractions = new java.util.concurrent.ArrayBlockingQueue<>(128);
+	private final java.util.concurrent.atomic.AtomicInteger droppedInteractionBatches = new java.util.concurrent.atomic.AtomicInteger();
+	private Object lastObservedObjective;
 	private final AtomicReference<PendingBlockModificationToolResult> pendingBlockModificationToolResult = new AtomicReference<>();
 	private TaskTerminalEvent pendingActionGraphTerminalEvent;
 
@@ -341,6 +345,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			);
 		this.visionService = plannerShell.visionService();
 		this.dialogueRuntime = plannerShell.dialogueRuntime();
+		ai.moeru.airicraft.memory.InteractionLogbookRecorder.observe((server, entries) -> {
+			if (!pendingInteractions.offer(new ObservedInteractions(server, entries))) droppedInteractionBatches.incrementAndGet();
+		});
 		this.dialogueRuntime.configureDecisionContext(this::currentPlannerDecisionContext);
 		this.llmFlightRecorder.configureClock(() -> tickCount, EmbodiedAgentRuntime::integratedServerTick);
 		if (codexDriverActive) {
@@ -446,6 +453,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void tickClient(MinecraftClient client) {
+		drainInteractionEvidence(client);
 		ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.tick(client, activeTaskInProgress());
 		stopWorkOutsideTravelBounds(client);
 		dialogueRuntime.refreshPlannerGoalWorld();
@@ -652,7 +660,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		refreshWorkHistory();
 		var client = MinecraftClient.getInstance();
 		var facts = new java.util.LinkedHashMap<String, Object>();
-		facts.put("objective", dialogueRuntime.currentPlannerObjective());
+		Object objective = dialogueRuntime.currentPlannerObjective();
+		if (!Objects.equals(lastObservedObjective, objective)) {
+			lastObservedObjective = objective;
+			eventBuffer.append(tickCount,"objective.changed",Map.of("objective",objective));
+		}
+		facts.put("objective", objective);
 		facts.put("session", sessionSnapshot.mode());
 		facts.put("travelRestrictions", ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.snapshot());
 		facts.put("physical", currentPhysicalState());
@@ -2265,6 +2278,16 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return plannerActionToolExecutor.execute(toolCall);
 	}
 
+	private void drainInteractionEvidence(MinecraftClient client) {
+		int missing = droppedInteractionBatches.getAndSet(0);
+		if (missing > 0) eventBuffer.append(tickCount,"interaction.history_gap",Map.of("missingBatches",missing,"recovery","Inspect current inventory/container and read the persistent logbook."));
+		ObservedInteractions batch;
+		while ((batch = pendingInteractions.poll()) != null) {
+			if (client == null || client.getServer() != batch.server()) continue;
+			for (var entry : batch.entries()) eventBuffer.append(tickCount,"interaction." + entry.action(),Map.of("observed",entry));
+		}
+	}
+
 	private void stopWorkOutsideTravelBounds(MinecraftClient client) {
 		if (client == null || client.player == null || client.world == null || !activeTaskInProgress()) return;
 		var pos = client.player.getBlockPos();
@@ -2344,6 +2367,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			if (admitted.isPresent()) {
 				var work = workHistory.find(admitted.get().handle()).orElseThrow();
 				receipt.put("work", work.payload());
+				receipt.put("workId", work.handle().id());
+				receipt.put("state", work.state().name());
 			} else if (accepted) {
 				var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION,
 					java.util.UUID.randomUUID().toString());
@@ -2353,6 +2378,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					Map.of("result", text, "afterEventSequence", eventBuffer.latestSeqNo()));
 				recordWork(work);
 				receipt.put("work", work.payload());
+				receipt.put("workId", work.handle().id());
+				receipt.put("state", work.state().name());
 			}
 			receipt.put("result", text);
 			return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(receipt);
@@ -2408,7 +2435,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			default -> throw new IllegalArgumentException("unknown_work_tool");
 		}
 		refreshWorkHistory();
-		return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(workHistory.find(handle).orElseThrow().payload());
+		var result = new LinkedHashMap<>(workHistory.find(handle).orElseThrow().payload());
+		if (!call.name().equals("inspect_work")) result.put("accepted", true);
+		return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(result);
 	}
 
 	private EmbodiedPlannerActionToolExecutor.ExecutionState plannerActionToolExecutionState() {
@@ -4183,10 +4212,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			+ " message=" + (failureMessage == null ? "" : failureMessage)
 			+ ". Explain the terminal failure accurately. ";
 		if ("unknown_acquisition_method".equals(normalizedCode) || "unsupported_resource_kind".equals(normalizedCode)) {
-			message += "Airicraft has no registered acquisition method for this request. Do not substitute mine_blocks, ensure_blocks_in_inventory, collect_resource, or another legacy action; tell the user that this acquisition is unsupported.";
+			message += "Airicraft has no registered acquisition method for this request. This requested capability is unsupported; do not retry it unchanged or invent an acquisition method. Another observed supported action may still serve the objective.";
 		}
 		else {
-			message += "Do not claim completion. Use another action only when the failure itself identifies a safe supported recovery or the user changes the task.";
+			message += "Do not claim completion. Assess the identified failure and choose a supported next attempt toward the objective.";
 		}
 		return PlannerTrigger.autonomous(
 			PlannerTriggerType.SYSTEM,

@@ -13,6 +13,9 @@ import java.util.*;
 
 /** Server-thread observations, aggregated at the completed tick before asynchronous persistence. */
 public final class InteractionLogbookRecorder {
+	private static volatile java.util.function.BiConsumer<MinecraftServer,List<InteractionLogbook.Entry>> observer = (server, entries) -> { };
+	public static void observe(java.util.function.BiConsumer<MinecraftServer,List<InteractionLogbook.Entry>> replacement) { observer = java.util.Objects.requireNonNull(replacement); }
+
 	private static final Map<ScreenHandler, Context> CONTEXTS = new WeakHashMap<>();
 	private static final Map<MinecraftServer, LinkedHashMap<Key, InteractionLogbook.Entry>> PENDING = new IdentityHashMap<>();
 	private record Context(BlockPos position, String type) {}
@@ -124,5 +127,6 @@ public final class InteractionLogbookRecorder {
 			} else batch.add(entry);
 		}
 		InteractionLogbook.record(server.getSavePath(WorldSavePath.ROOT), batch);
+		observer.accept(server, List.copyOf(batch));
 	}
 }

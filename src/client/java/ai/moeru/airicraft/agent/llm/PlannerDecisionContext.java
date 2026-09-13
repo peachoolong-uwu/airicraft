@@ -44,6 +44,6 @@ public record PlannerDecisionContext(
 
 	private static boolean relevant(String type) {
 		return List.of("task.", "work.", "player.", "combat.", "pickup.", "crafting.", "smelting.",
-			"container.", "reflex.", "survival.", "session.", "lighting.", "food.").stream().anyMatch(type::startsWith);
+			"container.", "interaction.", "objective.", "policy.", "inventory.", "reflex.", "survival.", "session.", "lighting.", "food.").stream().anyMatch(type::startsWith);
 	}
 }

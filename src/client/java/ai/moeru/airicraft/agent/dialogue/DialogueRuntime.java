@@ -147,9 +147,9 @@ public final class DialogueRuntime {
 		delegationWorkIdle = workIdle;
 		boolean delegated = delegation != null && delegation.active();
 		if (delegated && (delegation.starting() || delegation.returning())) return true;
+		if (waitingForWork != null) return true;
 		if (!delegated && plannerGoal != null && plannerGoal.blocked()) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
-		if (waitingForWork != null) return true;
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
 		if ((!workIdle && !awaitingSafetyDecision) || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
 			|| reflexActive || session == null || !session.companionActuationAllowed()

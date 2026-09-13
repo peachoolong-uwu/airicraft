@@ -18,6 +18,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerToolRegistryTest {
 	@Test
+	void fixedRoleCatalogDoesNotChangeOnDiscoveryOrReflexAndOmitsOldLifecycle() {
+		var registry = PlannerToolRegistry.of(new ai.moeru.airicraft.agent.work.WorkToolProvider(PlannerActionToolExecutor.DISABLED));
+		registry.freezeToolPrefix();
+		String before = new Gson().toJson(registry.openAiTools());
+		String discovery = registry.discoverTools("resume work",8).renderToolResult();
+		registry.setSafetyHoldActive(true);
+		assertEquals(before,new Gson().toJson(registry.openAiTools()));
+		assertTrue(registry.isActiveTool("resume_work"));
+		assertFalse(registry.isActiveTool("resume_task"));
+		assertFalse(registry.isActiveTool("cancel_task"));
+		assertTrue(discovery.contains("does not change"));
+		registry.setSafetyHoldActive(false);
+		assertEquals(before,new Gson().toJson(registry.openAiTools()));
+	}
+
+	@Test
 	void initialSurfaceContainsOnlyCoreToolsAndDiscoverTools() {
 		PlannerToolRegistry registry = PlannerToolRegistry.empty();
 

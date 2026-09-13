@@ -73,7 +73,7 @@ public final class PlannerToolCatalog {
 
 	private static List<BuiltInTool> createBuiltInTools() {
 		return List.of(
-		builtInTool(DISCOVER_TOOLS, true, false, tool(DISCOVER_TOOLS, "Discover a small set of specialist tools by capability. The result activates matching full schemas for the next planner request.", properties(
+		builtInTool(DISCOVER_TOOLS, true, false, tool(DISCOVER_TOOLS, "Find tools by capability in the advertised catalog. Discovery does not change the fixed role schemas.", properties(
 				prop("query", string("Short capability or tool search, for example smelting, navigation, exact world blocks, or map waypoints.")),
 				prop("maxResults", integer("Maximum concise tool cards to return, from 1 to 5. Defaults to 4."))
 			), List.of("query")), PlannerToolCatalog::validateDiscoverToolsArguments),
@@ -225,7 +225,7 @@ public final class PlannerToolCatalog {
 				prop("useTowering", bool("Whether the executor may build a pillar underfoot while jumping if path navigation cannot return to the surface. Defaults to true when omitted.")),
 				prop("fillerBlockIds", stringArray("Optional namespaced block/item ids to use for towering. Omit to use defaults: " + String.join(", ", ReturnToSurfaceStepArgs.DEFAULT_FILLER_BLOCK_IDS) + "."))
 			), List.of()), PlannerToolCatalog::validateReturnToSurfaceArguments),
-		builtInTool(MINE_BLOCKS, false, tool(MINE_BLOCKS, "Acquire matching blocks inside a fixed loaded area, using System 1 target selection and bounded excavation approaches, including fully buried sources. Use for an explicit block-mining request or a registered acquisition route, never as a fallback after unknown_acquisition_method. Do not pass item ids from inventory itemCounts. Likely underground work requires at least one torch unless explicitly overridden.", properties(
+		builtInTool(MINE_BLOCKS, false, tool(MINE_BLOCKS, "Acquire matching blocks inside a fixed loaded area, using System 1 target selection and bounded excavation approaches, including fully buried sources. Use when observed block resources and this supported mining capability serve the objective. Do not pass item ids from inventory itemCounts. Likely underground work requires at least one torch unless explicitly overridden.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("blockIds", stringArray("Namespaced block ids to mine, for example minecraft:iron_ore. These must be block ids, not item ids such as minecraft:raw_iron.")),
 				prop("quantity", integer("Number of blocks to mine.")),
@@ -360,7 +360,7 @@ public final class PlannerToolCatalog {
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("settings", BaritonePathfindSettings.plannerSettingsSchema())
 			), List.of("settings")), PlannerToolCatalog::validateConfigurePathfindArguments),
-		builtInTool(CONFIGURE_REFLEX, false, tool(CONFIGURE_REFLEX, "Read or replace System 1 automatic survival policy. Call with {} to read; provide all four settings to replace. Defaults: combatEnabled=true, drowningEnabled=true, maxThreatDistance=16, requireLineOfSight=true. Applies to known aggressive mobs, with melee mobs additionally limited to 6 blocks. Ignored distant/hidden mobs do not trigger pursuit, including previously tracked attackers. Disabling combat also disables automatic shield/melee actions; manual gameplay tools remain available. Policy lasts until agent reload/recreation, including across death. Allowed during a reflex; stops disabled reflex actuation next tick but does not resume an interrupted job: wait for the survival update and use resume_task or replace/cancel. Use deliberately when automatic behavior conflicts with your task, and restore settings when that tactic ends.", properties(
+		builtInTool(CONFIGURE_REFLEX, false, tool(CONFIGURE_REFLEX, "Read or replace System 1 automatic survival policy. Call with {} to read; provide all four settings to replace. Defaults: combatEnabled=true, drowningEnabled=true, maxThreatDistance=16, requireLineOfSight=true. Applies to known aggressive mobs, with melee mobs additionally limited to 6 blocks. Ignored distant/hidden mobs do not trigger pursuit, including previously tracked attackers. Disabling combat also disables automatic shield/melee actions; manual gameplay tools remain available. Policy lasts until agent reload/recreation, including across death. Allowed during a reflex; stops disabled reflex actuation next tick but does not resume an interrupted job: wait for the survival update and use resume_work with exact workId/holdId or cancel_work. Use deliberately when automatic behavior conflicts with your task, and restore settings when that tactic ends.", properties(
 			prop("combatEnabled", bool("Enable automatic combat, including melee defense and shield blocking.")),
 			prop("drowningEnabled", bool("Enable automatic drowning recovery.")),
 			prop("maxThreatDistance", integer("Maximum eligible mob distance in blocks, 1..32; default 16.")),

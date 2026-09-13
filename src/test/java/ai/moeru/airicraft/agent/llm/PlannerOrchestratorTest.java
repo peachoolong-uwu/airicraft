@@ -2175,6 +2175,29 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void changedWorldOrDecisionOwnerRejectsPreviouslyRequestedActuation() {
+		for (boolean changeWorld : List.of(true,false)) {
+			RecordingBackend backend = new RecordingBackend();
+			var invoked = new java.util.concurrent.atomic.AtomicInteger();
+			var world = new java.util.concurrent.atomic.AtomicReference<>("world-A");
+			var owns = new java.util.concurrent.atomic.AtomicBoolean(true);
+			var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+			PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+				PlannerVisionMode.EXTERNAL_SUMMARY, PlannerToolRegistry.empty(), call -> {
+					invoked.incrementAndGet(); return CompletableFuture.completedFuture("unexpected");
+				});
+			orchestrator.configureDecisionContext(() -> new PlannerDecisionContext(world.get(),10,10,"controller","idle",Map.of(),events.query(null)));
+			orchestrator.configureDecisionAuthority(owns::get);
+			orchestrator.submit(requestAt(10,1000,"Alice","gather wood"));
+			backend.awaitCalls(1,Duration.ofSeconds(1));
+			if (changeWorld) world.set("world-B"); else owns.set(false);
+			backend.succeed(0,PlannerResponse.toolCalls(List.of(new PlannerToolCall("late","cancel_task",new JsonObject(),null,null)),null));
+			assertEquals(1,awaitStaleRejections(orchestrator).size());
+			assertEquals(0,invoked.get());
+		}
+	}
+
+	@Test
 	void taskOutcomeArrivingDuringToolSequenceIsIncludedOnceBeforeTheNextDecision() {
 		RecordingBackend backend = new RecordingBackend();
 		StubInventoryTool inventory = new StubInventoryTool("inventory", "craftables");

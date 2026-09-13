@@ -7,15 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerPromptPolicyTest {
 	@Test
-	void initialPromptNamesOnlyTheCoreSurfaceAndDiscovery() {
+	void promptUsesEvidenceWorkAndFixedCatalogContracts() {
 		String prompt = PlannerPromptPolicy.systemPrompt(PlannerVisionMode.EXTERNAL_SUMMARY);
 
 		assertTrue(prompt.startsWith("You are the planner for a Minecraft companion."));
 		assertTrue(prompt.contains("Available tools: discover_tools, start_action_goal, inspect_action_goal, cancel_action_goal, clear_goal."));
-		assertTrue(prompt.contains("Tool discovery is gradual."));
-		assertTrue(prompt.contains("active tool schema is authoritative"));
+		assertTrue(prompt.contains("discover_tools is catalog assistance"));
+		assertTrue(prompt.contains("advertised typed schema is authoritative"));
 		assertFalse(prompt.contains("navigate_to"));
-		assertFalse(prompt.contains("inspect_world"));
+		assertTrue(prompt.contains("check_position"));
 		assertFalse(prompt.contains("craft_recipe"));
 		assertFalse(prompt.contains("{{"));
 	}
@@ -24,18 +24,16 @@ class PlannerPromptPolicyTest {
 	void compactPolicyPreservesGraphAndTerminalUpdateRules() {
 		String prompt = PlannerPromptPolicy.systemPrompt(PlannerVisionMode.EXTERNAL_SUMMARY);
 
-		assertTrue(prompt.contains("preserve that exact high-level goal"));
+		assertTrue(prompt.contains("there is no graph-first or legacy-fallback requirement"));
 		assertTrue(prompt.contains("INVENTORY_DELTA_AT_LEAST"));
-		assertTrue(prompt.contains("terminal TASK UPDATE"));
-		assertTrue(prompt.contains("Terminal updates are authoritative"));
+		assertTrue(prompt.contains("Outcomes belong to their work identities"));
 		assertTrue(prompt.contains("same-client admin messages"));
 		assertTrue(prompt.contains("unknown_acquisition_method"));
-		assertTrue(prompt.contains("must not start exploration"));
-		assertTrue(prompt.contains("smelt a log into minecraft:charcoal"));
+		assertTrue(prompt.contains("does not finish the objective"));
+		assertTrue(prompt.contains("minecraft:charcoal"));
 		assertTrue(prompt.contains("craft minecraft:torch from charcoal and sticks"));
 		assertTrue(prompt.contains("allowUnilluminated"));
-		assertTrue(prompt.contains("executionPhase=PLANNING"));
-		assertTrue(prompt.contains("A smelting_output goal describes the desired output"));
+		assertTrue(prompt.contains("Accepted means admitted, not completed"));
 	}
 
 	@Test
