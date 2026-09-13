@@ -427,3 +427,8 @@ A separate no-dig navigation to266,13,381 failed CALC_FAILED at263,13,381 during
 
 
 D089 follow-up: six more chest carts opened and transferred loot after the fix, with one24-segment mapped approach completed. No diamonds in seven inspected carts total. One upper cart214,32,529 remains unopened: both no-place and placement-enabled approaches failed target_unreachable from the lower tunnel, and the floor map found no walking route. Saved both paused incidents and a world bookmark; cause unresolved, bypassed using other carts. This is a local access limitation, not evidence that generic cart opening or transfers failed.
+
+
+### 2026-09-13: Navigation reports arrival before landing
+
+Confirmed in D090 after resuming the diamond search: a mapped one-block descent from318,-9,281 to318,-10,280 reported COMPLETED while falling, then settled at318,-12,279 outside the intended corridor. Recorder diamond-west-corridor-drop.jsonl shows airborne state, task.completed/Goal reached with BARITONE_CANCELLED, and the later wrong landing; reflex stayed IDLE and health20. LiveBaritoneFacade.navigationGoalReached checks playerFeet block equality without a stable-landing condition, and cancellation is promoted to success through that check. The physical overshoot cause is not fully established; no patch claimed. Game left paused for diagnosis because false arrival undermines safe automated ledge traversal. A geometric return exists but is not live validated; no diamonds found yet.
