@@ -1174,7 +1174,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			&& Objects.equals(previous.activeTaskId(), pendingActionGraphTerminalEvent.taskId())) {
 			pendingActionGraphTerminalEvent = null;
 		}
-		if (!previous.activeTaskId().isBlank()) {
+		if (!previous.activeTaskId().isBlank() && (previous.activeTaskId().startsWith(activeJobRuntime.current().jobId())
+			|| taskExecutionSnapshot != null && previous.activeTaskId().equals(taskExecutionSnapshot.taskId()))) {
 			cancelActiveJobOnly(reason == null || reason.isBlank() ? "action_graph_cancelled" : reason);
 		}
 		else if (Objects.equals(
@@ -2310,7 +2311,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (world != workWorld) { workHistory.clear(); workWorld = world; }
 		var reflex = survivalReflexRuntime.snapshot();
 		var projected = ai.moeru.airicraft.agent.work.WorkProjection.project(activeJobRuntime.current(), taskExecutionSnapshot,
-			actionGraphExecutions(), smeltingProcessManager.processSnapshots(), reflex.holdsNormalTasks(), reflex.holdId(), tickCount);
+			actionGraphExecutions(), smeltingProcessManager.processSnapshots(), reflex.holdsNormalTasks(), reflex.holdId(), reflex.interruptedJobId(), reflex.interruptedActionExecutionId(), tickCount);
 		for (var work : projected) recordWork(work);
 		for (String id : smeltingProcessManager.drainCollectedProcesses()) {
 			workHistory.find(ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.SMELTING, id))

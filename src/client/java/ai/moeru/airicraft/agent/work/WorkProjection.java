@@ -11,7 +11,7 @@ import java.util.Objects;
 public final class WorkProjection {
 	private WorkProjection() { }
 	public static List<WorkSnapshot> project(ActiveJob job, TaskExecutionSnapshot primitive,
-		List<ActionGraphExecutionView> graphs, List<SmeltingProcessSnapshot> processes, boolean held, String holdId, long tick) {
+		List<ActionGraphExecutionView> graphs, List<SmeltingProcessSnapshot> processes, boolean held, String holdId, String interruptedJobId, String interruptedGraphId, long tick) {
 		var result = new ArrayList<WorkSnapshot>();
 		String parent = "";
 		for (var view : graphs) {
@@ -26,7 +26,7 @@ public final class WorkProjection {
 				case BLOCKED, WATCHING -> WorkSnapshot.State.WAITING;
 				default -> WorkSnapshot.State.RUNNING;
 			};
-			if (held && (foreground || view.residency() == ActionGraphResidency.SUSPENDED) && !state.terminal()) state = WorkSnapshot.State.PAUSED;
+			if (held && graph.executionId().equals(interruptedGraphId) && !state.terminal()) state = WorkSnapshot.State.PAUSED;
 			result.add(new WorkSnapshot(handle, "", state, "resource goal", graph.state().name(), foreground, view.updatedTick(),
 				Map.of("goal", Objects.toString(graph.goal(), ""), "failureCode", graph.failureCode(), "message", graph.message(),
 					"activeTaskId", graph.activeTaskId(), "holdId", Objects.toString(holdId, ""))));
@@ -42,7 +42,7 @@ public final class WorkProjection {
 				case FAILED -> WorkSnapshot.State.FAILED;
 				case CANCELLED -> WorkSnapshot.State.CANCELLED;
 			};
-			if (held && !state.terminal()) state = WorkSnapshot.State.PAUSED;
+			if (held && job.jobId().equals(interruptedJobId) && !state.terminal()) state = WorkSnapshot.State.PAUSED;
 			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.JOB, job.jobId()), parent, state, job.type().name(),
 				primitive == null ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(),
 				Map.of("collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""),
@@ -52,7 +52,7 @@ public final class WorkProjection {
 		for (var process : processes) {
 			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.SMELTING, process.processId()), "",
 				WorkSnapshot.State.WAITING, "furnace: " + process.outputItemId(), process.outputReady() ? "CHECK_OUTPUT" : "COOKING", false, tick,
-				Map.of("station", process.stationKey(), "outputItemId", process.outputItemId(), "expectedCount", process.expectedOutputCount(),
+				Map.of("station", process.stationKey(), "outputItemId", Objects.toString(process.outputItemId(), ""), "outputKnown", process.outputItemId() != null, "expectedCount", process.expectedOutputCount(),
 					"needsCollection", true, "readiness", "May be estimated; inspect slots and verify collection.")));
 		}
 		return List.copyOf(result);
