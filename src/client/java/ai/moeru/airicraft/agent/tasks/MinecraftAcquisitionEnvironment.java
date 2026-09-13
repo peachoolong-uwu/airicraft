@@ -92,8 +92,15 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 			if (!spec.matchingItemIds().contains(Registries.ITEM.getId(item.getStack().getItem()).toString())) continue;
 			GoalPosition pos = position(item.getBlockPos());
 			if (!inScope(pos, constraints, true)) continue;
-			Candidate drop = new Candidate(Kind.DROP, item.getUuidAsString(), pos, pos);
-			if (!rejected.contains(drop.key())) result.add(drop);
+			// A drop's cell may be water even when a dry adjacent landing collects it.
+			List<BlockPos> pickupSites = new ArrayList<>(AcquisitionPickupSites.find(block(pos), this::standable));
+			if (!pickupSites.contains(block(pos))) pickupSites.add(block(pos));
+			for (BlockPos site : pickupSites) {
+				GoalPosition work = position(site);
+				if (!inScope(work, constraints, true)) continue;
+				Candidate drop = new Candidate(Kind.DROP, item.getUuidAsString(), pos, work);
+				if (!rejected.contains(drop.key())) result.add(drop);
+			}
 		}
 		List<BlockPos> blocks = new ArrayList<>();
 		Iterable<BlockPos> sources = constraints.visibleOnly()

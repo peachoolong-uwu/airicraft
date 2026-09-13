@@ -399,3 +399,10 @@ Bypassable acquisition failure, D084: visible-only surface wood collection cente
 A tighter six-log request succeeded, but left the observed top block279,68,478. A fresh one-log request directly below it reported zero observed sources. Saved next-resupply-last-log.jsonl before bypassing with inspected higher footing280,65,478 and exact break_blocks; the remaining log was collected and the trunk rechecked empty. Sparse sampling omits exact up/down rays, a plausible explanation requiring a dedicated reproduction before changing the sampler.
 
 The workaround completed the cycle: original trunk rechecked empty, naturally dropped sapling replanted at279,63,478 and read back stage0. Updated the world bookmark. Stored coal plus harvested wood produced40 torches, corroborated by inventory and ten server logbook crafting events. No runtime patch was needed for this resupply.
+
+
+### 2026-09-13: Water-edge drops need adjacent pickup targets
+
+Confirmed and fixed in D085: floor iron at155,22,383 and154,22,383 was mined, but collection failed with zero items because Baritone received exact pickup goals in the water cells. Both drops were recovered immediately by normal navigation to adjacent supported154,23,384 with unchanged no-break/no-place settings. Paused/exported the failure and reproduction before editing.
+
+System1 now offers adjacent standable pickup positions within the existing scope and keeps the original drop cell as fallback. Three geometry tests,18 acquisition tests and the full build passed. HotSwap loaded the change without restart. The next visible pair in the same vein was mined and collected automatically (inventory2→4); recorder cave-pickup-sites-fixed.jsonl confirms adjacent targets were attempted. Two transient approach_CANCELED retries remain; do not claim all route failures are eliminated. Automatic lighting placed another torch during mining, light1→13. The earlier dark idle snapshot did not establish a lighting bug; no lighting patch was made.
