@@ -1221,7 +1221,7 @@ public final class PlannerToolCatalog {
 					"required", List.of("x", "y", "z"))),
 				prop("radius", integer("Horizontal search radius, 1..32 blocks.")),
 				prop("verticalRadius", integer("Vertical search radius, 1..32 blocks.")),
-				prop("visibleOnly", bool("Select block sources from sparse first-hit rays within 24 blocks of the current player instead of searching buried blocks. Re-sample after mining and movement. Drops are still collected in scope. May miss visible sources; false preserves loaded-block excavation. Does not change pathfinding terrain permissions.")),
+				prop("visibleOnly", bool("Discover block sources from sparse first-hit rays within 24 blocks of the current player instead of searching buried blocks. Remember seen sources for this attempt and re-sample after mining and movement; recheck blocks before working them. Drops are still collected in scope. May miss visible sources; false preserves loaded-block excavation. Does not change pathfinding terrain permissions.")),
 				prop("surfaceOnly", bool("Restrict sources and work positions to the top ground layer or above, ignoring tree logs/leaves as roofs. Stop acquisition if travel leaves this scope; does not override survival reflexes."))));
 	}
 

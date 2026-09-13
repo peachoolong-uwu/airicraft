@@ -21,6 +21,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	private Candidate target;
 	private Phase phase = Phase.SELECT;
 	private final Set<String> rejected = new HashSet<>();
+	private final Set<GoalPosition> observedSources = new HashSet<>();
 	private int activeTicks;
 	private int phaseTicks;
 	private int progressTicks;
@@ -61,6 +62,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			request = next;
 			constraints = next.goal().mineSpec().constraints().anchoredAt(environment.position());
 			rejected.clear();
+			observedSources.clear();
 			lastRejection = "none";
 			activeTicks = 0;
 			target = null;
@@ -89,7 +91,10 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			if (phaseTicks >= 20) enter(Phase.SELECT);
 		}
 		else if (phase == Phase.SELECT) {
-			List<Candidate> candidates = environment.candidates(spec, constraints, rejected);
+			// Pickup movement can hide a vein we already saw. Keep that knowledge for
+			// this attempt, while the environment rechecks blocks and work positions.
+			if (constraints.visibleOnly()) observedSources.addAll(environment.observeSources(spec, constraints));
+			List<Candidate> candidates = environment.candidates(spec, constraints, rejected, observedSources);
 			if (candidates.isEmpty()) {
 				boolean brokenEnough = ((WorldTaskRequest.Mine) request.task()).mineGoalSatisfied();
 				return finish(brokenEnough, (brokenEnough ? "requested_blocks_broken" : "no_reachable_resource_in_scope")
@@ -191,7 +196,8 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		environment.cancelBreaking();
 	}
 	private void setSnapshot(TaskExecutionState state, String detail) {
-		snapshot = new TaskExecutionSnapshot(state, request.taskId(), request.goal(), "TargetAcquisition", detail, null,
+		snapshot = new TaskExecutionSnapshot(state, request.taskId(), request.goal(), "TargetAcquisition",
+			detail + " observedSources=" + observedSources.size(), null,
 			terminal == null ? null : terminal.terminationCause());
 	}
 	static double distanceSquared(GoalPosition a, GoalPosition b) {
@@ -199,7 +205,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		return x*x + y*y + z*z;
 	}
 	@Override public TaskExecutionSnapshot snapshot() { return snapshot; }
-	@Override public void onWorldLeave() { release(); request = null; snapshot = TaskExecutionSnapshot.idle(); }
+	@Override public void onWorldLeave() { release(); request = null; observedSources.clear(); snapshot = TaskExecutionSnapshot.idle(); }
 	@Override public void shutdown() { onWorldLeave(); }
 
 	enum Phase { SELECT, APPROACH, BREAK, PICKUP, SETTLE, RELEASE }
@@ -213,7 +219,8 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		int inventoryCount(GoalMineSpec spec);
 		boolean requiredToolAvailable(GoalMineSpec spec);
 		boolean inScope(GoalPosition position, AcquisitionConstraints constraints, boolean standing);
-		List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected);
+		Set<GoalPosition> observeSources(GoalMineSpec spec, AcquisitionConstraints constraints);
+		List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected, Set<GoalPosition> observedSources);
 		boolean targetPresent(Candidate target);
 		boolean canInteract(Candidate target);
 		BreakResult breakTarget(Candidate target, GoalMineSpec spec);

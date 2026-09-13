@@ -9,6 +9,65 @@ import static org.junit.jupiter.api.Assertions.*;
 import static ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor.*;
 
 class TargetAcquisitionTaskExecutorTest {
+	@Test void retainsSeenVeinWhenPickupMovementHidesItButDoesNotDiscoverHiddenOre() {
+		Fixture f = visibleVein(3);
+		f.tick(4);
+		assertEquals(1, f.env.count);
+		f.env.visible = Set.of(); // Pickup moved the eye below the rim of the vein.
+		f.tick(60);
+		assertEquals(2, f.env.breaks, "Both observed blocks remain usable, but the unseen third does not");
+		assertEquals(2, f.env.count);
+		assertEquals(TaskExecutionState.FAILED, f.events.getFirst().terminalState());
+		assertTrue(f.events.getFirst().message().contains("no_reachable_resource_in_scope"));
+	}
+
+	@Test void seenVeinSurvivesTemporaryWithdrawalOfTheSameRequest() {
+		Fixture f = visibleVein(2);
+		f.tick(4);
+		f.env.visible = Set.of();
+		f.executor.tick(SessionSnapshot.initial(), Optional.empty());
+		f.tick(40);
+		assertEquals(2, f.env.count);
+		assertEquals(TaskExecutionState.COMPLETED, f.events.getFirst().terminalState());
+	}
+
+	@Test void replacementTaskAndWorldLeaveDiscardSeenSources() {
+		for (boolean worldLeave : List.of(false, true)) {
+			Fixture f = visibleVein(2);
+			f.tick(4);
+			f.env.visible = Set.of();
+			if (worldLeave) f.executor.onWorldLeave();
+			else f.request = WorldTaskRequest.collectMine("replacement", "other-job", f.request.goal());
+			f.tick(1);
+			assertEquals(1, f.env.breaks);
+			assertEquals(TaskExecutionState.FAILED, f.events.getFirst().terminalState());
+		}
+	}
+
+	@Test void disappearedObservedBlocksAreNotHarvestedFromMemory() {
+		Fixture f = visibleVein(2);
+		f.tick(4);
+		f.env.visible = Set.of();
+		f.env.sources = List.of();
+		f.tick(40);
+		assertEquals(1, f.env.breaks);
+		assertEquals(TaskExecutionState.FAILED, f.events.getFirst().terminalState());
+	}
+
+	private static Fixture visibleVein(int quantity) {
+		Fixture f = new Fixture();
+		f.request = WorldTaskRequest.collectMine("visible", "job", new GoalSnapshot(GoalType.MINE_BLOCKS, null, null,
+			new GoalMineSpec(List.of("ore"), quantity).withConstraints(new AcquisitionConstraints(null, 8, 4, false, true)), 0, "test"));
+		f.env.sources = List.of(
+			new Candidate(Kind.BLOCK, "ore", pos(1,64,0), pos(0,64,0)),
+			new Candidate(Kind.BLOCK, "ore", pos(2,64,0), pos(1,64,0)),
+			new Candidate(Kind.BLOCK, "ore", pos(3,64,0), pos(2,64,0)));
+		f.env.visible = Set.of(pos(1,64,0), pos(2,64,0));
+		f.env.interactable = true;
+		f.env.countOnBreak = true;
+		return f;
+	}
+
 	@Test void anchoringPreservesVisibleDiscoveryAndLegacyDefaults() {
 		var constraints = new AcquisitionConstraints(null, 8, 4, false, true).anchoredAt(pos(1, 64, 2));
 		assertTrue(constraints.visibleOnly());
@@ -175,18 +234,30 @@ class TargetAcquisitionTaskExecutorTest {
 		List<Candidate> sources = List.of(new Candidate(Kind.BLOCK,"log",pos(5,64,0),pos(4,64,0)));
 		boolean interactable, inScope = true;
 		boolean requiredToolAvailable = true;
+		Set<GoalPosition> visible;
+		boolean countOnBreak;
 		public boolean requiredToolAvailable(GoalMineSpec spec) { return requiredToolAvailable; }
 		int count, breaks, rejections;
 		public GoalPosition position() { return position; }
 		public int inventoryCount(GoalMineSpec s) { return count; }
 		public boolean inScope(GoalPosition p, AcquisitionConstraints c, boolean standing) { return inScope && c.contains(p); }
-		public List<Candidate> candidates(GoalMineSpec s, AcquisitionConstraints c, Set<String> rejected) {
+		public Set<GoalPosition> observeSources(GoalMineSpec s, AcquisitionConstraints c) {
+			return sources.stream().filter(t -> t.kind() == Kind.BLOCK && (visible == null || visible.contains(t.position())))
+				.map(Candidate::position).collect(java.util.stream.Collectors.toSet());
+		}
+		public List<Candidate> candidates(GoalMineSpec s, AcquisitionConstraints c, Set<String> rejected, Set<GoalPosition> observedSources) {
 			rejections = rejected.size();
-			return sources.stream().filter(t -> !rejected.contains(t.key())).toList();
+			return sources.stream().filter(t -> !rejected.contains(t.key()))
+				.filter(t -> !c.visibleOnly() || t.kind() == Kind.DROP || observedSources.contains(t.position())).toList();
 		}
 		public boolean targetPresent(Candidate t) { return sources.contains(t); }
 		public boolean canInteract(Candidate t) { return interactable; }
-		public BreakResult breakTarget(Candidate t, GoalMineSpec s) { breaks++; sources = List.of(); return BreakResult.BROKEN; }
+		public BreakResult breakTarget(Candidate t, GoalMineSpec s) {
+			breaks++;
+			if (countOnBreak) count++;
+			sources = sources.stream().filter(source -> !source.equals(t)).toList();
+			return BreakResult.BROKEN;
+		}
 		public void cancelBreaking() {}
 	}
 	static final class FakeNavigation implements BaritoneFacade {

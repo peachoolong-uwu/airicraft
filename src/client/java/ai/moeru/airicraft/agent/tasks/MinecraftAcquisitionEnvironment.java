@@ -66,7 +66,24 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		return SurfaceTerrain.groundY(client().world, column);
 	}
 
-	@Override public List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected) {
+	@Override public Set<GoalPosition> observeSources(GoalMineSpec spec, AcquisitionConstraints constraints) {
+		var client = client();
+		return VisibleSurfaceSampler.sample(client.player.getEyePos(), 24, (eye, end) -> client.world.raycast(
+			new RaycastContext(eye, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.ANY, client.player)))
+			.stream().map(hit -> hit.getBlockPos().toImmutable())
+			.filter(pos -> eligibleSource(pos, spec, constraints)).map(MinecraftAcquisitionEnvironment::position)
+			.collect(java.util.stream.Collectors.toUnmodifiableSet());
+	}
+
+	private boolean eligibleSource(BlockPos pos, GoalMineSpec spec, AcquisitionConstraints constraints) {
+		var world = client().world;
+		if (!world.isChunkLoaded(pos) || !inScope(position(pos), constraints, false)) return false;
+		BlockState state = world.getBlockState(pos);
+		return spec.blockIds().contains(id(state)) && HarvestableBlocks.ready(state) && !WorldPlacePreservation.contains(world, pos);
+	}
+
+	@Override public List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected,
+		Set<GoalPosition> observedSources) {
 		var world = client().world;
 		BlockPos center = block(constraints.center());
 		List<Candidate> result = new ArrayList<>();
@@ -80,19 +97,14 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		}
 		List<BlockPos> blocks = new ArrayList<>();
 		Iterable<BlockPos> sources = constraints.visibleOnly()
-			? VisibleSurfaceSampler.sample(client().player.getEyePos(), 24, (eye, end) -> world.raycast(
-				new RaycastContext(eye, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.ANY, client().player)))
-				.stream().map(hit -> hit.getBlockPos().toImmutable()).distinct().toList()
+			? observedSources.stream().map(MinecraftAcquisitionEnvironment::block).toList()
 			: BlockPos.iterate(center.add(-constraints.radius(), -constraints.verticalRadius(), -constraints.radius()),
 				center.add(constraints.radius(), constraints.verticalRadius(), constraints.radius()));
 		for (BlockPos cursor : sources) {
-			if (!world.isChunkLoaded(cursor) || !constraints.contains(position(cursor))) continue;
-			BlockState state = world.getBlockState(cursor);
-			if (spec.blockIds().contains(id(state)) && HarvestableBlocks.ready(state)
-				&& !WorldPlacePreservation.contains(world, cursor)
-				&& inScope(position(cursor), constraints, false)) blocks.add(cursor.toImmutable());
+			if (eligibleSource(cursor, spec, constraints)) blocks.add(cursor.toImmutable());
 		}
-		blocks.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())));
+		blocks.sort(Comparator.comparingDouble((BlockPos pos) -> pos.getSquaredDistance(client().player.getPos()))
+			.thenComparingInt(BlockPos::getX).thenComparingInt(BlockPos::getY).thenComparingInt(BlockPos::getZ));
 		for (BlockPos pos : blocks) {
 			String blockId = id(world.getBlockState(pos));
 			for (GoalPosition work : workPositions(pos, constraints)) {
