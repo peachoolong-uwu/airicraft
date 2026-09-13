@@ -390,3 +390,12 @@ Two other route failures were bypassed, not fixed: old landing216,66,400 failed 
 ### 2026-09-13: Guard resumed ascent routes
 
 D083 driver issue: new navigation had a local distance guard, but manually resumed navigation did not. After a skeleton interruption, a resumed216,68,401 ascent with placement disabled traveled to321,15,348. Paused/exported cave-iron-ascent-detour.jsonl, cancelled that route, enabled carried footholds and followed recorded return stances. The eventual upper ascent consumed one dirt and completed. A new ignored playtest watcher applies distance/time guards to exact resumed jobs too. This is a driver policy/monitoring correction, not a claim that Baritone detours are fixed. Distinguish the earlier legitimate lower return detour: its guard paused at166,29,411, but the same productive job reached180,33,381 after bounded continued observation. Full return and six ingots stored at home are verified in D083.
+
+
+### 2026-09-13: Broad shore wood request chose an uphill tree
+
+Bypassable acquisition failure, D084: visible-only surface wood collection centered259,63,482 (radius32, vertical24) chose dark oak253,85,483 and failed acquisition_scope_left19763, zero logs, during the climb. The surface predicate applies to transit positions as well as sources. Recorder next-resupply-wood-scope.jsonl preserves the attempt. A separate exact read confirmed the replanted shore oak279,63,478 had grown to six logs; the broad request did not target it. Retry close to that tree with a tighter scope. Also record a driver error separately:276,63,478 was an unsupported water waypoint, CALC_FAILED; inspected dry278,63,476 succeeded. No runtime patch yet.
+
+A tighter six-log request succeeded, but left the observed top block279,68,478. A fresh one-log request directly below it reported zero observed sources. Saved next-resupply-last-log.jsonl before bypassing with inspected higher footing280,65,478 and exact break_blocks; the remaining log was collected and the trunk rechecked empty. Sparse sampling omits exact up/down rays, a plausible explanation requiring a dedicated reproduction before changing the sampler.
+
+The workaround completed the cycle: original trunk rechecked empty, naturally dropped sapling replanted at279,63,478 and read back stage0. Updated the world bookmark. Stored coal plus harvested wood produced40 torches, corroborated by inventory and ten server logbook crafting events. No runtime patch was needed for this resupply.
