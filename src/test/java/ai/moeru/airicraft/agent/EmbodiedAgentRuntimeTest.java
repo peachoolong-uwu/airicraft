@@ -102,6 +102,33 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EmbodiedAgentRuntimeTest {
 	@Test
+	void eatingHoldsGraphAdvancementUntilConsumptionEnds() throws Exception {
+		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		runtime.overrideSessionSnapshotForTests(new SessionSnapshot(SessionMode.SINGLEPLAYER_LAN_HOST,
+			true, true, "minecraft:overworld", true, 25565, 1));
+		runtime.execute(new PlannerToolCall("food-graph", PlannerToolCatalog.START_ACTION_GOAL,
+			JsonParser.parseString("{\"kind\":\"resource_collection\",\"resourceKind\":\"WOOD_LOGS\",\"quantity\":1}").getAsJsonObject(), null, null)).join();
+		Field controllerField = EmbodiedAgentRuntime.class.getDeclaredField("playerItemUseController");
+		controllerField.setAccessible(true);
+		Object controller = controllerField.get(runtime);
+		Field eatingField = PlayerItemUseController.class.getDeclaredField("eating");
+		eatingField.setAccessible(true);
+		var constructor = eatingField.getType().getDeclaredConstructors()[0];
+		constructor.setAccessible(true);
+		eatingField.set(controller, constructor.newInstance("minecraft:bread", 12, 2, Long.MAX_VALUE));
+		Method tick = EmbodiedAgentRuntime.class.getDeclaredMethod("tickActionGraph", WorldEvidence.class, boolean.class);
+		tick.setAccessible(true);
+		var evidence = new WorldEvidence(Map.of(), Map.of(), Map.of(), "minecraft:overworld", 0, 64, 0, "minecraft:bread", 1);
+		tick.invoke(runtime, evidence, true);
+		assertTrue(runtime.actionGraphExecutionSnapshot().trace().stream().noneMatch(e -> e.eventType().equals("resolution_scheduled")));
+		assertEquals(ActionGraphExecutionState.RESOLVING, runtime.actionGraphExecutionSnapshot().state());
+		eatingField.set(controller, null);
+		tick.invoke(runtime, evidence, true);
+		assertTrue(runtime.actionGraphExecutionSnapshot().trace().stream().anyMatch(e -> e.eventType().equals("resolution_scheduled")));
+		runtime.shutdown();
+	}
+
+	@Test
 	void terminalSemanticTaskDoesNotRemainBusyFromStaleReflexExecution() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		setTaskSnapshot(runtime, new TaskSnapshot(

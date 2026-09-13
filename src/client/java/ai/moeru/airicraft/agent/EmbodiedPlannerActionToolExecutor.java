@@ -80,13 +80,13 @@ record EmbodiedPlannerActionToolExecutor(
 			case PlannerToolCatalog.CANCEL_TASK, PlannerToolCatalog.CLEAR_GOAL -> ToolPolicy.GRAPH_CONTROL;
 			case PlannerToolCatalog.UPDATE_EVENT_POLICY, PlannerToolCatalog.CONFIGURE_PATHFIND,
 				PlannerToolCatalog.CONFIGURE_LIGHTING -> ToolPolicy.DEAD_SAFE;
-			case PlannerToolCatalog.START_ACTION_GOAL -> ToolPolicy.TASK_MUTATION;
+			case PlannerToolCatalog.START_ACTION_GOAL, PlannerToolCatalog.EAT_FOOD -> ToolPolicy.TASK_MUTATION;
 			case PlannerToolCatalog.CLOSE_CONTAINER, PlannerToolCatalog.TRANSFER_CONTAINER, PlannerToolCatalog.FOLLOW_PLAYER, PlannerToolCatalog.NAVIGATE_TO,
 				PlannerToolCatalog.RETURN_TO_SURFACE, PlannerToolCatalog.MINE_BLOCKS,
 				PlannerToolCatalog.ENSURE_BLOCKS_IN_INVENTORY, PlannerToolCatalog.COLLECT_RESOURCE,
 				PlannerToolCatalog.SMELT_ITEMS, PlannerToolCatalog.COLLECT_SMELTED_ITEMS,
 				PlannerToolCatalog.DROP_ITEMS, PlannerToolCatalog.GIVE_PLAYER,
-				PlannerToolCatalog.EQUIP_ITEM, PlannerToolCatalog.EAT_FOOD,
+				PlannerToolCatalog.EQUIP_ITEM,
 				PlannerToolCatalog.ATTACK_ENTITY, PlannerToolCatalog.USE_ENTITY, PlannerToolCatalog.LURE_ENTITIES -> ToolPolicy.TASK_AND_GRAPH_MUTATION;
 			case PlannerToolCatalog.CRAFT_RECIPE -> ToolPolicy.CRAFT;
 			case PlannerToolCatalog.PLACE_BLOCK, PlannerToolCatalog.USE_BLOCK,

@@ -1741,6 +1741,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void tickActionGraph(WorldEvidence worldEvidence, boolean foregroundAllowed) {
+		// Eating is admitted only between tasks. Keep the graph from dispatching
+		// another primitive until consumption finishes; the furnace keeps ticking.
+		if (playerItemUseController.eating()) return;
 		if (!actionGraphCoordinator.hasNonterminal() && pendingActionGraphTerminalEvent == null) {
 			return;
 		}
