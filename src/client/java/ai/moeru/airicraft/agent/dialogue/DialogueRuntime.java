@@ -85,6 +85,8 @@ public final class DialogueRuntime {
 		return thinkingOrchestrator == null ? List.of(plannerOrchestrator) : List.of(plannerOrchestrator, thinkingOrchestrator);
 	}
 
+	public void updateGameplayWorkIdle(boolean idle) { delegationWorkIdle = idle; }
+
 	public boolean delegationWorkIdle() { return delegationWorkIdle && !reflexActive; }
 
 	public Map<String, Object> system2Snapshot() {

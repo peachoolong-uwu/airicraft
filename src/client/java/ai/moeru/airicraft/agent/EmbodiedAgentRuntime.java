@@ -490,13 +490,18 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		drainEventPipeline();
 
 		WorldEvidence worldEvidence = currentWorldEvidence(client);
+		dialogueRuntime.updateGameplayWorkIdle(!actionGraphCoordinator.hasNonterminal()
+			&& isIdleForIdleIdeaScheduling(activeJobRuntime.current()) && activeGoal().isEmpty()
+			&& !playerItemUseController.eating());
 		DialogueResponse completedDialogueResponse = dialogueRuntime.poll(
 			tickCount,
 			eventBuffer,
 			sessionSnapshot,
 			activeGoal(),
 			taskSnapshot,
-			missionExecutionSnapshot
+			new MissionExecutionSnapshot(missionExecutionSnapshot.mission(), missionExecutionSnapshot.ledger(),
+				missionExecutionSnapshot.activeStep(), worldEvidence, missionExecutionSnapshot.lastStepResult(),
+				missionExecutionSnapshot.primitiveExecution())
 		);
 		recordStalePlannerRejections();
 		if (completedDialogueResponse != null) {
