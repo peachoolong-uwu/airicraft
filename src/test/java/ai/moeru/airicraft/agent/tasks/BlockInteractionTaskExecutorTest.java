@@ -3,6 +3,7 @@ package ai.moeru.airicraft.agent.tasks;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
 import ai.moeru.airicraft.agent.session.SessionMode;
 import ai.moeru.airicraft.agent.session.SessionSnapshot;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
@@ -18,6 +19,43 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BlockInteractionTaskExecutorTest {
+	@Test
+	void roofLipCanBeClickedBelowItsOccludedFaceCenter() {
+		BlockPos support = new BlockPos(0, 136, 4);
+		Vec3d eye = new Vec3d(-0.5D, 135.62D, 5.5D);
+		List<BlockPos> roof = List.of(support, new BlockPos(-1, 136, 4), new BlockPos(-1, 136, 5));
+		Vec3d center = new Vec3d(0.5D, 136.5D, 5D);
+		assertEquals(new BlockPos(-1, 136, 5), roofHit(roof, eye, center, Direction.SOUTH).getBlockPos());
+		Vec3d lower = new Vec3d(0.5D, 136.1D, 5D);
+		assertEquals(support, roofHit(roof, eye, lower, Direction.SOUTH).getBlockPos());
+		assertEquals(Direction.SOUTH, roofHit(roof, eye, lower, Direction.SOUTH).getSide());
+
+		Optional<Vec3d> selected = BlockInteractionTaskExecutor.selectPlacementHitPoint(support, Direction.SOUTH, point -> {
+			BlockHitResult hit = roofHit(roof, eye, point, Direction.SOUTH);
+			return hit != null && hit.getBlockPos().equals(support) && hit.getSide() == Direction.SOUTH;
+		});
+		assertTrue(selected.isPresent(), "A visible part of the roof face must not require climbing onto the roof");
+	}
+
+	@Test
+	void seeingTheUndersideDoesNotExposeTheRequestedSideFace() {
+		BlockPos support = new BlockPos(0, 136, 4);
+		BlockHitResult underside = roofHit(List.of(support),
+			new Vec3d(0.5D, 135.62D, 4.5D), new Vec3d(0.5D, 136.5D, 5D), Direction.SOUTH);
+		assertEquals(Direction.DOWN, underside.getSide());
+		assertFalse(BlockInteractionTaskExecutor.matchesSupportFace(underside, support, Direction.SOUTH));
+		assertTrue(BlockInteractionTaskExecutor.matchesSupportFace(underside, support, Direction.DOWN));
+	}
+
+	private static BlockHitResult roofHit(List<BlockPos> roof, Vec3d eye, Vec3d point, Direction face) {
+		Vec3d end = BlockInteractionTaskExecutor.supportRaycastEndpoint(point, face);
+		return roof.stream()
+			.map(pos -> Box.raycast(List.of(new Box(0, 0, 0, 1, 1, 1)), eye, end, pos))
+			.filter(java.util.Objects::nonNull)
+			.min(java.util.Comparator.comparingDouble(hit -> eye.squaredDistanceTo(hit.getPos())))
+			.orElse(null);
+	}
+
 	@Test
 	void directWaterPlacementRequiresAHorizontalCavity() {
 		assertFalse(BlockInteractionTaskExecutor.isSafeDirectWaterTarget(0));

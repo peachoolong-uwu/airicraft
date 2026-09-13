@@ -289,7 +289,9 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		}
 		movementController.stop(client);
 		cameraController.lookAtNow(client, hitTarget.hitVec());
-		boolean raycastMatchesHitTarget = raycastMatchesHitTarget(client, player, hitTarget);
+		boolean raycastMatchesHitTarget = requiresSupportRaycast(before, target, hitTarget)
+			? raycastMatchesSupport(client, player, hitTarget.supportPos(), hitTarget.hitVec(), hitTarget.face())
+			: raycastMatchesHitTarget(client, player, hitTarget);
 		boolean shouldNavigateForMissingRaycast = shouldNavigateForMissingRaycast(request, player, hand, before, target, hitTarget, raycastMatchesHitTarget);
 		if (shouldNavigateForMissingRaycast) {
 			return navigateTowardInteractionRange(
@@ -934,14 +936,10 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 			stand.getY() + player.getStandingEyeHeight(),
 			stand.getZ() + 0.5D
 		);
-		return raycastMatchesTarget(
-			client,
-			player,
-			hitTarget.supportPos(),
-			eyePos,
-			supportRaycastEndpoint(hitTarget.hitVec(), hitTarget.face()),
-			RaycastContext.FluidHandling.NONE
-		);
+		return selectPlacementHitPoint(hitTarget.supportPos(), hitTarget.face(), point ->
+			withinInteractionRange(stand, point)
+				&& raycastMatchesSupport(client, player, hitTarget.supportPos(), eyePos, point, hitTarget.face())
+		).isPresent();
 	}
 
 	static BlockInteractionNavigationOutcome blockInteractionNavigationOutcome(Optional<String> pathEvent, long elapsedTicks) {
@@ -990,8 +988,11 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 			if (fallback == null) {
 				fallback = hitTarget;
 			}
-			if (withinInteractionRange(player, hitTarget.hitVec()) && raycastMatchesHitTarget(client, player, hitTarget)) {
-				return Optional.of(hitTarget);
+			Optional<Vec3d> point = selectPlacementHitPoint(support, face,
+				candidate -> withinInteractionRange(player, candidate)
+					&& raycastMatchesSupport(client, player, support, candidate, face));
+			if (point.isPresent()) {
+				return Optional.of(hitOnBlock(support, supportState, face, point.get()));
 			}
 		}
 		return Optional.ofNullable(fallback);
@@ -1001,7 +1002,8 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		if (client == null || client.world == null || player == null || hitTarget == null) {
 			return false;
 		}
-		return raycastMatchesSupport(client, player, hitTarget.supportPos(), hitTarget.hitVec(), hitTarget.face());
+		return raycastMatchesTarget(client, player, hitTarget.supportPos(),
+			supportRaycastEndpoint(hitTarget.hitVec(), hitTarget.face()), RaycastContext.FluidHandling.NONE);
 	}
 
 	static boolean raycastMatchesSupport(
@@ -1014,13 +1016,21 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		if (client == null || client.world == null || player == null || supportPos == null || surfacePoint == null || outwardFace == null) {
 			return false;
 		}
-		return raycastMatchesTarget(
-			client,
-			player,
-			supportPos,
-			supportRaycastEndpoint(surfacePoint, outwardFace),
-			RaycastContext.FluidHandling.NONE
-		);
+		return raycastMatchesSupport(client, player, supportPos, player.getEyePos(), surfacePoint, outwardFace);
+	}
+
+	private static boolean raycastMatchesSupport(
+		MinecraftClient client, ClientPlayerEntity player, BlockPos supportPos,
+		Vec3d eyePos, Vec3d surfacePoint, Direction outwardFace
+	) {
+		BlockHitResult hit = client.world.raycast(new RaycastContext(
+			eyePos, supportRaycastEndpoint(surfacePoint, outwardFace),
+			RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, player));
+		return matchesSupportFace(hit, supportPos, outwardFace);
+	}
+
+	static boolean matchesSupportFace(BlockHitResult hit, BlockPos support, Direction face) {
+		return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(support) && hit.getSide() == face;
 	}
 
 	static Vec3d supportRaycastEndpoint(Vec3d surfacePoint, Direction outwardFace) {
@@ -1087,6 +1097,23 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 			&& raycast.getBlockPos().equals(target);
 	}
 
+	static Optional<Vec3d> selectPlacementHitPoint(BlockPos support, Direction face, Predicate<Vec3d> usable) {
+		Vec3d center = Vec3d.ofCenter(support).add(
+			face.getOffsetX() * 0.5D, face.getOffsetY() * 0.5D, face.getOffsetZ() * 0.5D);
+		if (usable.test(center)) return Optional.of(center);
+		// Sample inside the face edges; a neighboring roof block can hide its center.
+		for (double first : new double[] {0D, -0.4D, 0.4D}) {
+			for (double second : new double[] {0D, -0.4D, 0.4D}) {
+				if (first == 0D && second == 0D) continue;
+				Vec3d point = face.getAxis() == Direction.Axis.X ? center.add(0D, first, second)
+					: face.getAxis() == Direction.Axis.Y ? center.add(first, 0D, second)
+					: center.add(first, second, 0D);
+				if (usable.test(point)) return Optional.of(point);
+			}
+		}
+		return Optional.empty();
+	}
+
 	private static HitTarget hitOnBlock(BlockPos support, BlockState supportState, Direction face) {
 		Vec3d center = Vec3d.ofCenter(support);
 		Vec3d hitVec = center.add(
@@ -1094,6 +1121,10 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 			face.getOffsetY() * 0.5D,
 			face.getOffsetZ() * 0.5D
 		);
+		return hitOnBlock(support, supportState, face, hitVec);
+	}
+
+	private static HitTarget hitOnBlock(BlockPos support, BlockState supportState, Direction face, Vec3d hitVec) {
 		return new HitTarget(support, supportState, face, hitVec, new BlockHitResult(hitVec, face, support, false));
 	}
 
