@@ -103,6 +103,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EmbodiedAgentRuntimeTest {
+	private static void assertTaskEvidence(EmbodiedAgentRuntime runtime, String type, Map<String, String> expected) {
+		var matching = runtime.recentEvents(null).events().stream().filter(event -> type.equals(event.type()))
+			.filter(event -> expected.entrySet().stream().allMatch(entry -> entry.getValue().equals(String.valueOf(event.payload().get(entry.getKey())))))
+			.toList();
+		assertFalse(matching.isEmpty(), "Expected identified task evidence: " + expected);
+		String context = runtime.currentPlannerDecisionContext().message(0).content();
+		assertTrue(context.contains(type), context);
+		for (String value : expected.values()) assertTrue(context.contains(value), context);
+	}
+
 	@Test
 	void reflexPauseKeepsFreshEvidenceInsteadOfTheInterruptedJobsOldSample() throws Exception {
 		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
@@ -1789,12 +1799,7 @@ class EmbodiedAgentRuntimeTest {
 		assertFalse(result.contains("accepted queued"));
 		runtime.onClientTick(null);
 		assertEquals(TaskState.FAILED, runtime.taskSnapshot().state());
-		assertTrue(runtime.dialogueSnapshot().recentTurns().stream().anyMatch(turn ->
-			"system".equals(turn.speaker())
-				&& turn.text().contains("TASK UPDATE: state=FAILED")
-				&& turn.text().contains("activeStepKind=USE_BLOCK")
-				&& turn.text().contains("failure=interaction_failed itemRaycastMatches=false")
-		));
+		assertTaskEvidence(runtime, "task.failed", Map.of("activeStepKind", "USE_BLOCK", "failure", "interaction_failed itemRaycastMatches=false"));
 	}
 
 	@Test
@@ -2469,12 +2474,7 @@ class EmbodiedAgentRuntimeTest {
 		assertEquals(TaskState.FAILED, runtime.taskSnapshot().state());
 		assertEquals("missing_ingredients", runtime.taskSnapshot().lastFailure());
 		assertTrue(runtime.recentEvents(null).events().stream().anyMatch(event -> "task.failed".equals(event.type())));
-		assertTrue(runtime.dialogueSnapshot().recentTurns().stream().anyMatch(turn ->
-			"system".equals(turn.speaker())
-				&& turn.text().contains("TASK UPDATE: state=FAILED")
-				&& turn.text().contains("activeStepKind=CRAFT_RECIPE")
-				&& turn.text().contains("failure=missing_ingredients")
-			));
+		assertTaskEvidence(runtime, "task.failed", Map.of("activeStepKind", "CRAFT_RECIPE", "failure", "missing_ingredients"));
 	}
 
 	@Test
@@ -2506,13 +2506,7 @@ class EmbodiedAgentRuntimeTest {
 		runtime.onClientTick(null);
 
 		assertTrue(runtime.recentEvents(null).events().stream().anyMatch(event -> "task.failed".equals(event.type())));
-		assertTrue(runtime.dialogueSnapshot().recentTurns().stream().anyMatch(turn ->
-			"system".equals(turn.speaker())
-				&& turn.text().contains("TASK UPDATE: state=FAILED")
-				&& turn.text().contains("goalType=NAVIGATE_TO")
-				&& turn.text().contains("message=CALC_FAILED")
-				&& turn.text().contains("terminationCause=CALCULATION_FAILED")
-		));
+		assertTaskEvidence(runtime, "task.failed", Map.of("goalType", "NAVIGATE_TO", "message", "CALC_FAILED", "terminationCause", "CALCULATION_FAILED"));
 	}
 
 	@Test
@@ -2641,9 +2635,7 @@ class EmbodiedAgentRuntimeTest {
 		runtime.onClientTick(null);
 
 		assertTrue(runtime.recentEvents(null).events().stream().anyMatch(event -> "task.completed".equals(event.type())));
-		assertTrue(runtime.dialogueSnapshot().recentTurns().stream().anyMatch(turn ->
-			"system".equals(turn.speaker()) && turn.text().contains("TASK UPDATE: state=COMPLETED")
-		));
+		assertTaskEvidence(runtime, "task.completed", Map.of());
 	}
 
 	@Test
@@ -2680,12 +2672,7 @@ class EmbodiedAgentRuntimeTest {
 		runtime.onClientTick(null);
 
 		assertTrue(runtime.recentEvents(null).events().stream().anyMatch(event -> "task.failed".equals(event.type())));
-		assertTrue(runtime.dialogueSnapshot().recentTurns().stream().anyMatch(turn ->
-			"system".equals(turn.speaker())
-				&& turn.text().contains("TASK UPDATE: state=FAILED")
-				&& turn.text().contains("goalType=NAVIGATE_TO")
-				&& turn.text().contains("Path calculation failed")
-		));
+		assertTaskEvidence(runtime, "task.failed", Map.of("goalType", "NAVIGATE_TO", "message", "Path calculation failed"));
 	}
 
 	@Test
@@ -3042,9 +3029,7 @@ class EmbodiedAgentRuntimeTest {
 
 		assertEquals(TaskState.FAILED, runtime.taskSnapshot().state());
 		assertTrue(runtime.recentEvents(null).events().stream().anyMatch(event -> "task.failed".equals(event.type())));
-		assertTrue(runtime.dialogueSnapshot().recentTurns().stream().anyMatch(turn ->
-			"system".equals(turn.speaker()) && turn.text().contains("TASK UPDATE: state=FAILED")
-		));
+		assertTaskEvidence(runtime, "task.failed", Map.of("state", "FAILED"));
 	}
 
 	@Test

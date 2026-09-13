@@ -17,6 +17,13 @@ public final class LlmFlightRecorder {
 	private final ArrayDeque<MutableRecord> records = new ArrayDeque<>();
 	private final Map<Long, MutableRecord> pendingByThread = new HashMap<>();
 	private long nextSequenceId = 1L;
+	private java.util.function.LongSupplier tickSource = () -> -1L;
+	private java.util.function.LongSupplier serverTickSource = () -> -1L;
+
+	public synchronized void configureClock(java.util.function.LongSupplier tick, java.util.function.LongSupplier serverTick) {
+		tickSource = java.util.Objects.requireNonNull(tick);
+		serverTickSource = java.util.Objects.requireNonNull(serverTick);
+	}
 
 	public LlmFlightRecorder() {
 		this(DEFAULT_CAPACITY);
@@ -48,6 +55,23 @@ public final class LlmFlightRecorder {
 		record.messageCount = conversation == null ? 0 : conversation.messages().size();
 		record.imageAttached = conversation != null && conversation.messages().stream().anyMatch(message -> message.imageAttachment() != null);
 		record.requestBody = requestBody;
+		record.dispatchTick = tickSource.getAsLong();
+		record.dispatchServerTick = serverTickSource.getAsLong();
+		if (conversation != null) {
+			for (var message : conversation.messages().reversed()) {
+				String text = message.content();
+				if (message.kind() != ai.moeru.airicraft.agent.llm.LlmMessageKind.NOTICE || text == null || !text.startsWith("DECISION CONTEXT: ")) continue;
+				var context = com.google.gson.JsonParser.parseString(text.substring("DECISION CONTEXT: ".length())).getAsJsonObject();
+				var metadata = new java.util.LinkedHashMap<String, Object>();
+				for (String key : List.of("worldSessionId", "tick", "serverTick", "decisionOwner", "actuatorOwner", "afterEventSequence", "throughEventSequence", "missingEventRange")) {
+					if (context.has(key)) metadata.put(key, context.get(key).deepCopy());
+				}
+				var current = context.getAsJsonObject("current");
+				if (current.has("job")) metadata.put("work", current.get("job").deepCopy());
+				record.decisionContext = Map.copyOf(metadata);
+				break;
+			}
+		}
 		records.addLast(record);
 		pendingByThread.put(javaThreadId, record);
 		trim();
@@ -155,6 +179,9 @@ public final class LlmFlightRecorder {
 		private Object parsedResponse;
 		private String failureType = "";
 		private String failureMessage = "";
+		private long dispatchTick = -1L;
+		private long dispatchServerTick = -1L;
+		private Map<String, Object> decisionContext = Map.of();
 
 		private MutableRecord(long sequenceId, long requestedAtMs, long javaThreadId) {
 			this.sequenceId = sequenceId;
@@ -185,7 +212,10 @@ public final class LlmFlightRecorder {
 				parsedResponseKind,
 				parsedResponse,
 				failureType,
-				failureMessage
+				failureMessage,
+				dispatchTick,
+				dispatchServerTick,
+				decisionContext
 			);
 		}
 	}

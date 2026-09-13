@@ -15,6 +15,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DashboardObservationCollectorTest {
 	@Test
+	void requestMetadataSeparatesContextDispatchAndCollectionClocks() {
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(4);
+		events.append(10, "task.failed", Map.of("workId", "wood"));
+		var context = new ai.moeru.airicraft.agent.llm.PlannerDecisionContext("world-A", 10, 8,
+			"controller", "idle", Map.of("job", Map.of("id", "wood")), events.query(null));
+		var recorder = new ai.moeru.airicraft.agent.debug.LlmFlightRecorder(4);
+		var dispatch = new java.util.concurrent.atomic.AtomicLong(12);
+		recorder.configureClock(dispatch::get, () -> dispatch.get() - 2);
+		recorder.recordRequest("planner", "one", "test", java.net.URI.create("http://localhost"), "qwen", 1000,
+			ai.moeru.airicraft.agent.llm.LlmConversation.of(List.of(context.message(0))), "request");
+		dispatch.set(30);
+		var store = new DashboardObservationStore(1024L * 1024L);
+		store.advanceClock(28, false, true);
+		DashboardObservationCollector.llmPayload(store, recorder.query(null).records().getFirst(), 30, 100);
+		var request = com.google.gson.JsonParser.parseString(store.retainedObservations().getFirst().payloadJson()).getAsJsonObject();
+		assertEquals(12, request.get("dispatchTick").getAsLong());
+		assertEquals(10, request.get("dispatchServerTick").getAsLong());
+		assertEquals(10, request.getAsJsonObject("decisionContext").get("tick").getAsLong());
+		assertEquals(1, request.getAsJsonObject("decisionContext").get("throughEventSequence").getAsLong());
+		assertEquals(30, store.retainedObservations().getFirst().tick());
+	}
+
+	@Test
 	void plannerBaseRequestDoesNotDuplicateRecipeCatalogInEveryRuntimeSnapshot() {
 		var recipes = java.util.stream.IntStream.range(0, 2000)
 			.mapToObj(i -> new CraftingOpportunity("recipe-" + i, "minecraft:bread", 1, List.of("minecraft:wheat")))

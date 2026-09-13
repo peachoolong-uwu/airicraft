@@ -249,6 +249,34 @@ public final class PlannerOrchestrator {
 		return (truncated ? "[older context or long entries truncated]\n" : "") + String.join("\n", entries);
 	}
 
+	private java.util.function.Supplier<PlannerDecisionContext> decisionContextSource;
+	private String decisionWorldSessionId;
+	private long incorporatedDecisionEventSequence;
+
+	/** The supplier reads game state synchronously on this orchestrator's owning client thread. */
+	public void configureDecisionContext(java.util.function.Supplier<PlannerDecisionContext> source) {
+		decisionContextSource = Objects.requireNonNull(source);
+		toolRegistry.freezeToolPrefix();
+	}
+
+	public boolean hasIncorporatedDecisionEvent(long sequence) {
+		return decisionContextSource != null && sequence <= incorporatedDecisionEventSequence;
+	}
+
+	private LlmConversation appendDecisionContext(LlmConversation conversation) {
+		if (decisionContextSource == null) return conversation;
+		PlannerDecisionContext context = decisionContextSource.get();
+		if (!context.worldSessionId().equals(decisionWorldSessionId)) {
+			decisionWorldSessionId = context.worldSessionId();
+			incorporatedDecisionEventSequence = 0;
+		}
+		LlmConversation updated = conversation.withAppended(context.message(incorporatedDecisionEventSequence));
+		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
+		contextAggregator.retainConversation(updated);
+		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
+		return updated;
+	}
+
 	public long lastObservedEventSeqNo() {
 		return contextAggregator.lastObservedEventSeqNo();
 	}
@@ -805,6 +833,8 @@ public final class PlannerOrchestrator {
 	}
 
 	public void reset() {
+		decisionWorldSessionId = null;
+		incorporatedDecisionEventSequence = 0;
 		cancelPendingTool();
 		sessionCoordinator.reset();
 		compactionService.reset();
@@ -928,7 +958,7 @@ public final class PlannerOrchestrator {
 		if (overflowSnapshot == null) {
 			return true;
 		}
-		sessionCoordinator.submit(overflowSnapshot, currentTurnContext());
+		sessionCoordinator.submit(overflowSnapshot.withConversation(appendDecisionContext(overflowSnapshot.plannerConversation())), currentTurnContext());
 		return true;
 	}
 
@@ -945,7 +975,7 @@ public final class PlannerOrchestrator {
 			return true;
 		}
 		snapshot = withInventoryBootstrapIfAvailable(snapshot);
-		sessionCoordinator.submit(snapshot, currentTurnContext());
+		sessionCoordinator.submit(snapshot.withConversation(appendDecisionContext(snapshot.plannerConversation())), currentTurnContext());
 		return true;
 	}
 
@@ -1111,10 +1141,8 @@ public final class PlannerOrchestrator {
 		PlannerRequest followUpRequest = snapshot.request()
 			.withToolResult(toolOutcome.toolResultText())
 			.withSafetyContext(minimumSafetyEpoch, currentSafetyHoldId);
-		PlannerContextSnapshot followUpSnapshot = withRecordedToolExchanges(
-			snapshot,
-			recordedToolExchanges(toolExecution.generation())
-		);
+		PlannerContextSnapshot followUpSnapshot = snapshot.withConversation(
+			sessionCoordinator.conversationFor(toolExecution.generation()));
 		List<ToolExecutionResult> toolResults = toolOutcome.toolResults(toolExecution.toolCalls());
 		for (ToolExecutionResult toolResult : toolResults) {
 			recordToolExchange(
@@ -1160,7 +1188,7 @@ public final class PlannerOrchestrator {
 		sessionCoordinator.submitToolFollowUp(
 			toolExecution.generation(),
 			followUpRequest,
-			completedToolConversation
+			appendDecisionContext(completedToolConversation)
 		);
 		for (ToolExecutionResult toolResult : toolResults) {
 			lifecycleListener.onToolCompleted(toolExecution.generation(), toolResult.toolResultText(), toolResult.imageAttached());

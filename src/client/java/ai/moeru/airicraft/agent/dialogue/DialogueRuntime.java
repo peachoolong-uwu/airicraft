@@ -43,7 +43,7 @@ public final class DialogueRuntime {
 	private final Clock clock;
 	private final int maxRecentTurns;
 	private final List<DialogueTurn> recentTurns = new ArrayList<>();
-	private final Deque<PendingInternalTaskUpdate> pendingInternalTaskUpdates = new ArrayDeque<>();
+	private final Deque<PendingTaskWakeup> pendingTaskWakeups = new ArrayDeque<>();
 	private final Deque<PendingDialogueReply> pendingVisibleReplies = new ArrayDeque<>();
 
 	private DialogueState state = DialogueCore.initialState();
@@ -75,6 +75,15 @@ public final class DialogueRuntime {
 	public void configureDelegation(PlannerOrchestrator thinker, ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation handoff) {
 		thinkingOrchestrator = Objects.requireNonNull(thinker);
 		delegation = Objects.requireNonNull(handoff);
+	}
+
+	public void configureDecisionContext(java.util.function.Supplier<ai.moeru.airicraft.agent.llm.PlannerDecisionContext> source) {
+		plannerOrchestrator.configureDecisionContext(() -> source.get().forOwner("controller"));
+		if (thinkingOrchestrator != null) thinkingOrchestrator.configureDecisionContext(() -> source.get().forOwner("thinking"));
+	}
+
+	public Object currentPlannerObjective() {
+		return plannerGoal == null || plannerGoal.snapshot() == null ? Map.of() : plannerGoal.snapshot();
 	}
 
 	private PlannerOrchestrator activePlanner() {
@@ -118,7 +127,7 @@ public final class DialogueRuntime {
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
 		if ((!workIdle && !awaitingSafetyDecision) || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
 			|| reflexActive || session == null || !session.companionActuationAllowed()
-			|| activePlanner().hasInFlight() || !pendingInternalTaskUpdates.isEmpty()) {
+			|| activePlanner().hasInFlight() || !pendingTaskWakeups.isEmpty()) {
 			nextGoalContinuationTick = tick + 20;
 			return true;
 		}
@@ -198,7 +207,7 @@ public final class DialogueRuntime {
 		}
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
-		pendingInternalTaskUpdates.clear();
+		pendingTaskWakeups.clear();
 		pendingVisibleReplies.clear();
 		state = state.withPendingReply(false, null);
 	}
@@ -207,7 +216,7 @@ public final class DialogueRuntime {
 		externalDriverActive = true;
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
-		pendingInternalTaskUpdates.clear();
+		pendingTaskWakeups.clear();
 		resetPlanners("runtime reset");
 	}
 
@@ -428,23 +437,12 @@ public final class DialogueRuntime {
 	) {
 		long timestampMs = clock.millis();
 		appendTurn(new DialogueTurn("system", updateMessage, tick, timestampMs));
+		var event = eventBuffer.append(tick, "task.notice", Map.of("message", updateMessage));
 		if (externalDriverActive || (state.degraded() && activePlanner().isEnabled()) || !activePlanner().isConfigured()) {
 			return;
 		}
-		PendingInternalTaskUpdate pendingUpdate = new PendingInternalTaskUpdate(
-			updateMessage,
-			tick,
-			timestampMs,
-			userGuidanceRevision,
-			missionId(activeTask, missionExecution),
-			sessionSnapshot == null ? SessionSnapshot.initial() : sessionSnapshot,
-			activeGoal.orElse(null),
-			activeTask,
-			missionExecution
-		);
-		if (!submitInternalTaskUpdate(pendingUpdate, eventBuffer)) {
-			pendingInternalTaskUpdates.addLast(pendingUpdate);
-		}
+		queueTaskWakeup(missionId(activeTask, missionExecution), tick, event.seqNo());
+		submitNextPendingInternalTaskUpdate(eventBuffer, sessionSnapshot, activeGoal, activeTask, missionExecution);
 	}
 
 	public void onInternalTaskUpdate(
@@ -556,7 +554,7 @@ public final class DialogueRuntime {
 		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
-		pendingInternalTaskUpdates.clear();
+		pendingTaskWakeups.clear();
 		pendingVisibleReplies.clear();
 		userGuidanceRevision = 0L;
 		if (state.degraded()) {
@@ -569,7 +567,7 @@ public final class DialogueRuntime {
 		state = DialogueCore.initialState();
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
-		pendingInternalTaskUpdates.clear();
+		pendingTaskWakeups.clear();
 		pendingVisibleReplies.clear();
 		recentTurns.clear();
 		userGuidanceRevision = 0L;
@@ -581,7 +579,7 @@ public final class DialogueRuntime {
 		state = DialogueCore.initialState();
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
-		pendingInternalTaskUpdates.clear();
+		pendingTaskWakeups.clear();
 		pendingVisibleReplies.clear();
 		recentTurns.clear();
 		userGuidanceRevision = 0L;
@@ -633,69 +631,53 @@ public final class DialogueRuntime {
 		pendingTimeoutVisibleReply = directUserGuidance && submitted;
 	}
 
+	public void queueTaskWakeup(String missionId, long tick, long eventSequence) {
+		if (!externalDriverActive) pendingTaskWakeups.addLast(new PendingTaskWakeup(tick, userGuidanceRevision, missionId, eventSequence));
+	}
+
 	private boolean submitNextPendingInternalTaskUpdate(
-		SemanticEventBuffer eventBuffer,
-		SessionSnapshot sessionSnapshot,
-		Optional<GoalSnapshot> activeGoal,
-		TaskSnapshot activeTask,
-		MissionExecutionSnapshot missionExecution
+		SemanticEventBuffer eventBuffer, SessionSnapshot sessionSnapshot, Optional<GoalSnapshot> activeGoal,
+		TaskSnapshot activeTask, MissionExecutionSnapshot missionExecution
 	) {
-		if (externalDriverActive || pendingInternalTaskUpdates.isEmpty()) {
-			return false;
-		}
+		if (externalDriverActive || pendingTaskWakeups.isEmpty() || activePlanner().hasInFlight()) return false;
 		if ((state.degraded() && activePlanner().isEnabled()) || !activePlanner().isConfigured()) {
-			pendingInternalTaskUpdates.clear();
+			pendingTaskWakeups.clear();
 			return false;
 		}
-		if (activePlanner().hasInFlight()) {
-			return false;
-		}
-		while (!pendingInternalTaskUpdates.isEmpty()) {
-			PendingInternalTaskUpdate pendingUpdate = pendingInternalTaskUpdates.removeFirst();
+		while (!pendingTaskWakeups.isEmpty()) {
+			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
+			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
 			String currentMissionId = missionId(activeTask, missionExecution);
-			if (pendingUpdate.userGuidanceRevision() != userGuidanceRevision) {
-				recordSupersededInternalTaskUpdate(
-					pendingUpdate,
-					"new_user_guidance",
-					currentMissionId,
-					pendingUpdate.tick(),
-					eventBuffer
-				);
+			String superseded = wake.userGuidanceRevision() != userGuidanceRevision ? "new_user_guidance"
+				: wake.missionId() != null && currentMissionId != null && !Objects.equals(wake.missionId(), currentMissionId) ? "mission_changed" : null;
+			if (superseded != null) {
+				recordSupersededInternalTaskUpdate(wake, superseded, currentMissionId, wake.tick(), eventBuffer);
 				continue;
 			}
-			if (
-				pendingUpdate.missionId() != null
-					&& currentMissionId != null
-					&& !Objects.equals(pendingUpdate.missionId(), currentMissionId)
-			) {
-				recordSupersededInternalTaskUpdate(
-					pendingUpdate,
-					"mission_changed",
-					currentMissionId,
-					pendingUpdate.tick(),
-					eventBuffer
-				);
-				continue;
-			}
-			pendingUpdate = pendingUpdate.withCurrentContext(sessionSnapshot, activeGoal, activeTask, missionExecution);
-			if (submitInternalTaskUpdate(pendingUpdate, eventBuffer)) {
-				return true;
-			}
-			pendingInternalTaskUpdates.addFirst(pendingUpdate);
-			return false;
+			// A wake contains no historical state. Evidence remains in the shared event buffer.
+			String message = eventBuffer.query(wake.eventSequence() - 1).events().stream()
+				.filter(event -> event.seqNo() == wake.eventSequence() && event.type().equals("task.notice"))
+				.map(event -> Objects.toString(event.payload().get("message"))).findFirst()
+				.orElse("WORK CHANGED: review current work and observed outcomes in DECISION CONTEXT.");
+			submitPlannerTrigger(new PlannerRequest(wake.tick(), clock.millis(),
+				sessionSnapshot == null ? SessionSnapshot.initial().mode() : sessionSnapshot.mode(), null,
+				activeGoal == null ? null : activeGoal.orElse(null), activeTask, missionExecution,
+				PlannerTriggerBatch.of(List.of(PlannerTrigger.pending(PlannerTriggerType.SYSTEM, "runtime", message, wake.tick(), clock.millis()))), null
+			).withSafetyContext(safetyEpoch, safetyHoldId), eventBuffer, clock.millis(), false);
+			return true;
 		}
 		return false;
 	}
 
 	private void supersedePendingInternalTaskUpdates(String reason, long tick, SemanticEventBuffer eventBuffer) {
 		userGuidanceRevision++;
-		while (!pendingInternalTaskUpdates.isEmpty()) {
-			recordSupersededInternalTaskUpdate(pendingInternalTaskUpdates.removeFirst(), reason, null, tick, eventBuffer);
+		while (!pendingTaskWakeups.isEmpty()) {
+			recordSupersededInternalTaskUpdate(pendingTaskWakeups.removeFirst(), reason, null, tick, eventBuffer);
 		}
 	}
 
 	private void recordSupersededInternalTaskUpdate(
-		PendingInternalTaskUpdate pendingUpdate,
+		PendingTaskWakeup pendingUpdate,
 		String reason,
 		String currentMissionId,
 		long supersededAtTick,
@@ -735,43 +717,6 @@ public final class DialogueRuntime {
 		return null;
 	}
 
-	private boolean submitInternalTaskUpdate(PendingInternalTaskUpdate pendingUpdate, SemanticEventBuffer eventBuffer) {
-		if (
-			externalDriverActive
-				|| pendingUpdate == null
-				|| (state.degraded() && activePlanner().isEnabled())
-				|| activePlanner().hasInFlight()
-				|| !activePlanner().isConfigured()
-		) {
-			return false;
-		}
-		Long sinceSeqNo = activePlanner().lastObservedEventSeqNo();
-		activePlanner().recordEvents(
-			eventBuffer.query(sinceSeqNo <= 0L ? null : sinceSeqNo),
-			new PlannerRequestSeed(
-				pendingUpdate.tick(),
-				pendingUpdate.timestampMs(),
-				pendingUpdate.sessionSnapshot().mode(),
-				null,
-				pendingUpdate.activeGoal()
-			)
-		);
-		activePlanner().submit(new PlannerRequest(
-			pendingUpdate.tick(),
-			pendingUpdate.timestampMs(),
-			pendingUpdate.sessionSnapshot().mode(),
-			null,
-			pendingUpdate.activeGoal(),
-			pendingUpdate.activeTask(),
-			pendingUpdate.missionExecution(),
-			PlannerTriggerBatch.of(List.of(
-				PlannerTrigger.pending(PlannerTriggerType.SYSTEM, "runtime", pendingUpdate.updateMessage(), pendingUpdate.tick(), pendingUpdate.timestampMs())
-			)),
-			null
-		).withSafetyContext(safetyEpoch, safetyHoldId));
-		pendingTimeoutVisibleReply = false;
-		return true;
-	}
 
 	private void recordAgentTurn(String text, long tick) {
 		DialogueTurn turn = new DialogueTurn(DialogueSpeakerLabels.AGENT, text, tick, clock.millis());
@@ -821,35 +766,6 @@ public final class DialogueRuntime {
 		);
 	}
 
-	private record PendingInternalTaskUpdate(
-		String updateMessage,
-		long tick,
-		long timestampMs,
-		long userGuidanceRevision,
-		String missionId,
-		SessionSnapshot sessionSnapshot,
-		GoalSnapshot activeGoal,
-		TaskSnapshot activeTask,
-		MissionExecutionSnapshot missionExecution
-	) {
-		private PendingInternalTaskUpdate withCurrentContext(
-			SessionSnapshot currentSessionSnapshot,
-			Optional<GoalSnapshot> currentActiveGoal,
-			TaskSnapshot currentActiveTask,
-			MissionExecutionSnapshot currentMissionExecution
-		) {
-			return new PendingInternalTaskUpdate(
-				updateMessage,
-				tick,
-				timestampMs,
-				userGuidanceRevision,
-				missionId,
-				currentSessionSnapshot == null ? sessionSnapshot : currentSessionSnapshot,
-				currentActiveGoal == null ? activeGoal : currentActiveGoal.orElse(null),
-				currentActiveTask == null ? activeTask : currentActiveTask,
-				currentMissionExecution == null ? missionExecution : currentMissionExecution
-			);
-		}
-	}
+	private record PendingTaskWakeup(long tick, long userGuidanceRevision, String missionId, long eventSequence) { }
 
 }

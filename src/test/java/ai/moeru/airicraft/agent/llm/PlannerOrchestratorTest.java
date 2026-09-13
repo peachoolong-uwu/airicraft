@@ -2160,6 +2160,41 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void taskOutcomeArrivingDuringToolSequenceIsIncludedOnceBeforeTheNextDecision() {
+		RecordingBackend backend = new RecordingBackend();
+		StubInventoryTool inventory = new StubInventoryTool("inventory", "craftables");
+		RecordingPlannerToolProvider provider = new RecordingPlannerToolProvider();
+		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), inventory,
+			PlannerVisionMode.EXTERNAL_SUMMARY, PlannerToolRegistry.of(provider));
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(16);
+		var tick = new java.util.concurrent.atomic.AtomicLong(10);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world-A", tick.get(), tick.get(),
+			"controller", "idle", Map.of("position", tick.get()), events.query(null)));
+		orchestrator.submit(requestAt(10L, 1_000L, "Alice", "@agent gather wood"));
+		backend.awaitCalls(1, Duration.ofSeconds(1));
+		backend.succeed(0, new PlannerResponse("", new PlannerIntent("none", null, null), new PlannerToolRequest("check_craftables", null)));
+		awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(1));
+		// Gameplay terminates while the provider is deciding which read to make next.
+		tick.set(20);
+		events.append(20, "task.failed", Map.of("workId", "wood-job", "failure", "search_exhausted"));
+		JsonObject args = new JsonObject();
+		args.addProperty("query", "torch");
+		backend.succeed(1, new PlannerResponse("", new PlannerToolCall("read-two", "search_recipes", args, null, null), null));
+		awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(1));
+		String updated = backend.conversation(2).messages().toString();
+		assertTrue(updated.contains("wood-job"), updated);
+		assertTrue(updated.contains("search_exhausted"), updated);
+		assertTrue(backend.conversation(2).messages().getLast().content().contains("\"position\":20"));
+		backend.succeed(2, new PlannerResponse("", new PlannerToolCall("read-three", "search_recipes", args, null, null), null));
+		awaitBackendCallCount(orchestrator, backend, 4, Duration.ofSeconds(1));
+		var messages = backend.conversation(3).messages();
+		assertEquals(1, messages.stream().filter(m -> m.content() != null && m.content().contains("wood-job")).count());
+		assertEquals("user", messages.getLast().role());
+		assertEquals("tool", messages.get(messages.size() - 2).role());
+		assertEquals(0, events.droppedCount());
+	}
+
+	@Test
 	void consecutiveToolFollowUpKeepsPriorToolExchangeInPrompt() {
 		RecordingBackend backend = new RecordingBackend();
 		StubInventoryTool inventoryTool = new StubInventoryTool(

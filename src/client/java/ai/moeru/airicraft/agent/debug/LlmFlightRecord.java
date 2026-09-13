@@ -24,7 +24,10 @@ public record LlmFlightRecord(
 	String parsedResponseKind,
 	Object parsedResponse,
 	String failureType,
-	String failureMessage
+	String failureMessage,
+	long dispatchTick,
+	long dispatchServerTick,
+	java.util.Map<String, Object> decisionContext
 ) {
 	public LlmFlightRecord {
 		status = status == null || status.isBlank() ? "REQUESTED" : status;

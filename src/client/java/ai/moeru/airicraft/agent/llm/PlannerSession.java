@@ -71,7 +71,7 @@ final class PlannerSession {
 	}
 
 	boolean awaitingLaunch() {
-		return conversation != null && attemptCount == 0 && !retryPending();
+		return phase != PlannerSessionPhase.TOOL_WAIT && conversation != null && attemptCount == 0 && !retryPending();
 	}
 
 	boolean replaceable() {
@@ -109,7 +109,7 @@ final class PlannerSession {
 
 	void moveToToolWait() {
 		phase = PlannerSessionPhase.TOOL_WAIT;
-		conversation = null;
+		// A tool wait suspends model execution, not the conversation that produced it.
 		attemptCount = 0;
 		clearConsecutiveFailures();
 		retryReadyAtMs = -1L;

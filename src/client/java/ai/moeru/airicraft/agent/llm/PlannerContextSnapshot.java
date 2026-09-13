@@ -12,6 +12,11 @@ public record PlannerContextSnapshot(
 	PlannerAmbientContext renderedAmbientContext,
 	long renderedTimeContextAtMs
 ) {
+	public PlannerContextSnapshot withConversation(LlmConversation conversation) {
+		return new PlannerContextSnapshot(request, mode, triggerBatch, conversation,
+			includedSemanticEventSeqNoUpperBound, includedSemanticGapVersion, renderedAmbientContext, renderedTimeContextAtMs);
+	}
+
 	public PlannerContextSnapshot {
 		request = Objects.requireNonNull(request, "request");
 		mode = Objects.requireNonNull(mode, "mode");

@@ -268,7 +268,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final boolean codexDriverActive;
 
 	private boolean initialized;
-	private long tickCount;
+	private volatile long tickCount;
 	private long worldLoadTick = -1L;
 	private Boolean proactiveSocialModeOverride;
 	private boolean evaluationPlannerSuppressed;
@@ -339,6 +339,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			);
 		this.visionService = plannerShell.visionService();
 		this.dialogueRuntime = plannerShell.dialogueRuntime();
+		this.dialogueRuntime.configureDecisionContext(this::currentPlannerDecisionContext);
+		this.llmFlightRecorder.configureClock(() -> tickCount, EmbodiedAgentRuntime::integratedServerTick);
 		if (codexDriverActive) {
 			this.dialogueRuntime.enableExternalDriver();
 		}
@@ -635,6 +637,35 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return Map.of("position", Map.of("x",player.getX(),"y",player.getY(),"z",player.getZ()),
 			"velocity", Map.of("x",velocity.x,"y",velocity.y,"z",velocity.z),
 			"grounded",player.isOnGround(),"touchingWater",player.isTouchingWater(),"climbing",player.isClimbing());
+	}
+
+	ai.moeru.airicraft.agent.llm.PlannerDecisionContext currentPlannerDecisionContext() {
+		var client = MinecraftClient.getInstance();
+		var facts = new java.util.LinkedHashMap<String, Object>();
+		facts.put("objective", dialogueRuntime.currentPlannerObjective());
+		facts.put("session", sessionSnapshot.mode());
+		facts.put("physical", currentPhysicalState());
+		ActiveJob job = activeJobRuntime.current();
+		if (job != null) facts.put("job", Map.of("id", job.jobId(), "type", job.type(), "state", job.status(),
+			"collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""), "error", Objects.toString(job.lastError(), "")));
+		facts.put("graphs", actionGraphExecutions().stream().map(view -> view.toPayload(false)).toList());
+		facts.put("reflex", survivalReflexRuntime.snapshot());
+		String worldSession = "out_of_world";
+		if (client != null && client.world != null && client.player != null) {
+			worldSession = client.world.getRegistryKey().getValue() + ":" + System.identityHashCode(client.world);
+			facts.put("dimension", client.world.getRegistryKey().getValue().toString());
+			var inventory = new java.util.TreeMap<String, Integer>();
+			for (int i = 0; i < client.player.getInventory().size(); i++) {
+				var stack = client.player.getInventory().getStack(i);
+				if (!stack.isEmpty()) inventory.merge(net.minecraft.registry.Registries.ITEM.getId(stack.getItem()).toString(), stack.getCount(), Integer::sum);
+			}
+			facts.put("inventory", inventory);
+			facts.put("vitals", Map.of("health", client.player.getHealth(), "food", client.player.getHungerManager().getFoodLevel(), "air", client.player.getAir()));
+		}
+		String actuator = survivalReflexRuntime.snapshot().holdsNormalTasks() ? "reflex"
+			: activeTaskInProgress() ? "work" : "idle";
+		return new ai.moeru.airicraft.agent.llm.PlannerDecisionContext(worldSession, tickCount, integratedServerTick(),
+			"controller", actuator, facts, eventBuffer.query(null));
 	}
 
 	private void observePhysicalEvents(MinecraftClient client) {
@@ -4452,27 +4483,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				|| current.state() == TaskState.FAILED
 				|| current.state() == TaskState.CANCELLED
 		) {
-			String inventorySnapshot = inventorySnapshotForTaskUpdate(current.activeStepKind(), current.activeStepId());
-			dialogueRuntime.onInternalTaskUpdate(
-				"TASK UPDATE: state=" + current.state().name()
-					+ " missionId=" + (current.mission() == null ? "" : current.mission().missionId())
-					+ " missionType=" + (current.mission() == null ? "" : current.mission().missionType().name())
-					+ " activeStepId=" + (current.activeStepId() == null ? "" : current.activeStepId())
-					+ " activeStepKind=" + (current.activeStepKind() == null ? "" : current.activeStepKind().name())
-					+ " taskType=" + (current.spec() == null ? "" : current.spec().type().name())
-					+ " resourceKind=" + (current.spec() == null ? "" : current.spec().resourceKind().name())
-					+ " collected=" + current.progress().collected()
-					+ " remaining=" + current.progress().remaining()
-					+ " failure=" + (current.lastFailure() == null ? "" : current.lastFailure())
-					+ (terminalDetails.isBlank() ? "" : " message=" + terminalDetails)
-					+ inventorySnapshot,
-				tickCount,
-				sessionSnapshot,
-				activeGoal(),
-				current,
-				missionExecutionSnapshot,
-				eventBuffer
-			);
+			dialogueRuntime.queueTaskWakeup(current.mission() == null ? current.taskId() : current.mission().missionId(),
+				tickCount, eventBuffer.latestSeqNo());
 		}
 	}
 
@@ -4620,22 +4632,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			eventBuffer.append(tickCount, eventType, payload);
 		}
 
-		String inventorySnapshot = inventorySnapshotForTaskUpdate(event, activeTaskRequest);
-		String physicalState = event.goal().type() == GoalType.NAVIGATE_TO ? " physicalState=" + new com.google.gson.Gson().toJson(currentPhysicalState()) : "";
-		dialogueRuntime.onInternalTaskUpdate(
-			"TASK UPDATE: state=" + event.terminalState().name()
-				+ " taskId=" + event.taskId()
-				+ " goalType=" + event.goal().type().name()
-				+ " message=" + (event.message() == null ? "" : event.message())
-				+ " terminationCause=" + (event.terminationCause() == null ? "" : event.terminationCause().name())
-				+ inventorySnapshot + physicalState,
-			tickCount,
-			sessionSnapshot,
-			activeGoal(),
-			taskSnapshot,
-			missionExecutionSnapshot,
-			eventBuffer
-		);
+		dialogueRuntime.queueTaskWakeup(event.taskId(), tickCount, eventBuffer.latestSeqNo());
 	}
 
 	private void handleInternalTaskWarning(String warning) {

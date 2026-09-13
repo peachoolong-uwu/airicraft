@@ -240,7 +240,9 @@ public final class DashboardObservationCollector {
 		var payload = GSON.toJsonTree(record).getAsJsonObject();
 		if (!record.requestBody().isEmpty()) {
 			var request = store.appendContext("llm_request", Long.toString(record.sequenceId()), tick, capturedAtMs,
-				Map.of("requestBody", record.requestBody()));
+				Map.of("requestBody", record.requestBody(), "requestedAtMs", record.requestedAtMs(),
+					"dispatchTick", record.dispatchTick(), "dispatchServerTick", record.dispatchServerTick(),
+					"decisionContext", record.decisionContext()));
 			payload.remove("requestBody");
 			payload.add("request", GSON.toJsonTree(Map.of("observationSequence", request.sequence())));
 		}
