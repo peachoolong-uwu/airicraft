@@ -11,8 +11,14 @@ public record PlannerExecutionResult(
 	long generation,
 	int attempt,
 	PlannerSessionPhase phase,
-	boolean stale
+	boolean stale,
+	long retryAfterMillis
 ) {
+	public PlannerExecutionResult(PlannerRequest request, PlannerResponse response, LlmUsageSnapshot usage,
+		LlmFailureType failureType, String failureMessage, long generation, int attempt, PlannerSessionPhase phase, boolean stale) {
+		this(request, response, usage, failureType, failureMessage, generation, attempt, phase, stale, 0L);
+	}
+
 	public PlannerExecutionResult(
 		PlannerRequest request,
 		PlannerResponse response,

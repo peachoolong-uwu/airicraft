@@ -88,13 +88,15 @@ public final class OpenAiCompatibleChatClient {
 		HttpResponse<String> response = sendHttpRequest(uri, conversation, requestBody, options.plannerTools(), preview);
 		if (response.statusCode() >= 400) {
 			String message = providerErrorMessage(response.statusCode(), response.body());
+			long retryAfter = response.statusCode() == 429
+				? retryAfterMillis(response.headers().firstValue("Retry-After").orElse(null), java.time.Instant.now()) : 0L;
 			observability.recordFailure(
 				Context.current(),
 				LlmFailureType.PROVIDER_ERROR.name(),
 				message,
 				null
 			);
-			throw new LlmBackendException(LlmFailureType.PROVIDER_ERROR, message);
+			throw new LlmBackendException(LlmFailureType.PROVIDER_ERROR, message, null, retryAfter);
 		}
 		return LlmCallResult.of(
 			response.body(),
@@ -103,6 +105,22 @@ public final class OpenAiCompatibleChatClient {
 			responseModel(response.body()).orElse(config.model()),
 			requestBody
 		);
+	}
+
+	static long retryAfterMillis(String header, java.time.Instant now) {
+		if (header == null || header.isBlank()) return 30_000L;
+		try {
+			long seconds = Long.parseLong(header.trim());
+			if (seconds < 0) return 30_000L;
+			return Math.max(1_000L, seconds > Long.MAX_VALUE / 1_000L ? Long.MAX_VALUE : seconds * 1_000L);
+		} catch (NumberFormatException ignored) {
+			try {
+				var date = java.time.ZonedDateTime.parse(header.trim(), java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME);
+				return Math.max(1_000L, java.time.Duration.between(now, date.toInstant()).toMillis());
+			} catch (java.time.DateTimeException | ArithmeticException invalidHeader) {
+				return 30_000L;
+			}
+		}
 	}
 
 	private URI buildUri() throws LlmBackendException {

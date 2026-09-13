@@ -33,6 +33,7 @@ public final class PlannerSessionCoordinator {
 	public void shareGenerationSequence(java.util.concurrent.atomic.AtomicLong sequence) { sharedGenerations = sequence; }
 	private long allocateGeneration() { return sharedGenerations == null ? nextGeneration++ : sharedGenerations.getAndIncrement(); }
 	private long supersededCount;
+	private long providerRetryNotBeforeMillis;
 
 	public PlannerSessionCoordinator(PlannerExecutor plannerExecutor, Clock clock, int maxConcurrentAttempts, int maxConsecutiveRepairableFailures, long retryBackoffMs) {
 		this(plannerExecutor, clock, maxConcurrentAttempts, maxConsecutiveRepairableFailures, retryBackoffMs, NO_OP_SUBMISSION_OBSERVER);
@@ -158,6 +159,7 @@ public final class PlannerSessionCoordinator {
 		if (activeSession != null) {
 			if (
 				activeSession.readyForRetry(clock.millis())
+				&& clock.millis() >= providerRetryNotBeforeMillis
 				&& plannerExecutor.activeAttemptCount() < maxConcurrentAttempts
 				&& activeSession.conversation() != null
 			) {
@@ -284,6 +286,10 @@ public final class PlannerSessionCoordinator {
 		if (session == null || !session.awaitingLaunch() || plannerExecutor.activeAttemptCount() >= maxConcurrentAttempts) {
 			return;
 		}
+		if (clock.millis() < providerRetryNotBeforeMillis) {
+			session.scheduleRetry(providerRetryNotBeforeMillis);
+			return;
+		}
 		session.beginAttempt();
 		submissionObserver.onSubmitted(
 			session.generation(),
@@ -311,11 +317,23 @@ public final class PlannerSessionCoordinator {
 	}
 
 	private void handleCompletedResult(PlannerExecutionResult result) {
+		if (result.retryAfterMillis() > 0L) {
+			long now = clock.millis();
+			providerRetryNotBeforeMillis = Math.max(providerRetryNotBeforeMillis,
+				now + Math.min(result.retryAfterMillis(), Long.MAX_VALUE - now));
+		}
 		if (
 			activeSession == null
 			|| result.generation() != activeSession.generation()
 			|| result.phase() != activeSession.phase()
 		) {
+			return;
+		}
+
+		if (result.retryAfterMillis() > 0L) {
+			activeSession.scheduleRetry(providerRetryNotBeforeMillis);
+			ai.moeru.airicraft.Airicraft.LOGGER.info("Planner rate limited; retry scheduled generation={} retryReadyAtMs={}",
+				result.generation(), providerRetryNotBeforeMillis);
 			return;
 		}
 

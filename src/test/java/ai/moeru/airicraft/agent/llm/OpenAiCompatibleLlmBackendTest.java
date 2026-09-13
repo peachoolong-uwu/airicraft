@@ -26,6 +26,39 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
+	@Test void rateLimitCarriesTheServerDelayWhileOtherProviderErrorsStayTerminal() throws Exception {
+		for (int status : new int[]{429, 401}) {
+			var server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+			server.createContext("/chat/completions", exchange -> {
+				exchange.getRequestBody().readAllBytes();
+				exchange.getResponseHeaders().add("Retry-After", "45");
+				byte[] bytes = "{\"error\":{\"message\":\"busy\"}}".getBytes(StandardCharsets.UTF_8);
+				exchange.sendResponseHeaders(status, bytes.length);
+				exchange.getResponseBody().write(bytes);
+				exchange.close();
+			});
+			server.start();
+			try {
+				var backend = new OpenAiCompatibleLlmBackend(config(server.getAddress().getPort(), false));
+				var error = assertThrows(LlmBackendException.class, () -> backend.generate(
+					LlmConversation.of(List.of(LlmChatMessage.user("Continue.", LlmMessageKind.USER_TURN)))));
+				assertEquals(LlmFailureType.PROVIDER_ERROR, error.failureType());
+				assertEquals(status == 429 ? 45_000L : 0L, error.retryAfterMillis());
+			} finally { server.stop(0); }
+		}
+	}
+
+	@Test void retryAfterSupportsHttpDatesAndConservativeMissingHeaderDelay() {
+		var now = java.time.Instant.parse("2026-09-13T11:00:00Z");
+		assertEquals(60_000L, OpenAiCompatibleChatClient.retryAfterMillis("Sun, 13 Sep 2026 11:01:00 GMT", now));
+		assertEquals(1_000L, OpenAiCompatibleChatClient.retryAfterMillis("0", now));
+		assertEquals(1_000L, OpenAiCompatibleChatClient.retryAfterMillis("Sun, 13 Sep 2026 10:00:00 GMT", now));
+		assertEquals(30_000L, OpenAiCompatibleChatClient.retryAfterMillis(null, now));
+		assertEquals(30_000L, OpenAiCompatibleChatClient.retryAfterMillis("invalid", now));
+		assertEquals(30_000L, OpenAiCompatibleChatClient.retryAfterMillis("-1", now));
+		assertEquals(Long.MAX_VALUE, OpenAiCompatibleChatClient.retryAfterMillis(Long.toString(Long.MAX_VALUE), now));
+	}
+
 	@Test void independentProfilesKeepTheirCacheIdentityAndEffortOnRepeatedRequests() throws Exception {
 		var bodyRef = new AtomicReference<String>();
 		try (TestServer server = TestServer.start(bodyRef, plaintextResponse("Ready."))) {

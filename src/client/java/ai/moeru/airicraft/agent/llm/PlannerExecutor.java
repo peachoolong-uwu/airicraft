@@ -188,7 +188,8 @@ public final class PlannerExecutor {
 						attempt.generation(),
 						attempt.attempt(),
 						attempt.phase(),
-						false
+						false,
+						backendException.retryAfterMillis()
 					);
 				}
 				observability.recordFailure(

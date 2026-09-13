@@ -1393,6 +1393,51 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void repeatedRateLimitsWaitWithoutFailingOrChangingTheFrozenConversation() {
+		RecordingBackend backend = new RecordingBackend();
+		MutableClock clock = new MutableClock(Instant.ofEpochMilli(1_000L), ZoneId.of("UTC"));
+		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, 3, clock);
+		orchestrator.submit(requestAt(10L, 1_000L, "Alice", "Finish the shelter."));
+		backend.awaitCalls(1, Duration.ofSeconds(1));
+		String original = conversationText(backend.conversation(0));
+		for (int attempt = 0; attempt < 4; attempt++) {
+			backend.rateLimit(attempt, 60_000L);
+			awaitRetryPending(orchestrator, Duration.ofSeconds(1));
+			clock.advanceMillis(59_999L);
+			assertNull(orchestrator.poll());
+			assertEquals(attempt + 1, backend.callCount());
+			clock.advanceMillis(1L);
+			awaitBackendCallCount(orchestrator, backend, attempt + 2, Duration.ofSeconds(1));
+			assertEquals(original, conversationText(backend.conversation(attempt + 1)));
+		}
+		backend.succeed(4, replyOnly("Continuing."));
+		var result = awaitResult(orchestrator);
+		assertTrue(result.succeeded());
+		assertEquals(1L, result.generation());
+		assertEquals(5, result.attempt());
+	}
+
+	@Test
+	void newGuidanceDoesNotBypassProviderCooldown() {
+		RecordingBackend backend = new RecordingBackend();
+		MutableClock clock = new MutableClock(Instant.ofEpochMilli(1_000L), ZoneId.of("UTC"));
+		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, 3, clock);
+		orchestrator.submit(requestAt(10L, 1_000L, "Alice", "Build the roof."));
+		backend.awaitCalls(1, Duration.ofSeconds(1));
+		backend.rateLimit(0, 30_000L);
+		awaitRetryPending(orchestrator, Duration.ofSeconds(1));
+		orchestrator.submit(requestAt(11L, 1_100L, "Alice", "Check food first."));
+		clock.advanceMillis(29_999L);
+		assertNull(orchestrator.poll());
+		assertEquals(1, backend.callCount());
+		clock.advanceMillis(1L);
+		awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(1));
+		assertTrue(conversationText(backend.conversation(1)).contains("Check food first."));
+		backend.succeed(1, replyOnly("Checking food."));
+		assertTrue(awaitResult(orchestrator).succeeded());
+	}
+
+	@Test
 	void conversationSnapshotTracksOutboundMessagesAndAssistantReplyCard() {
 		RecordingBackend backend = new RecordingBackend();
 		PlannerOrchestrator orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY);
@@ -3800,6 +3845,10 @@ class PlannerOrchestratorTest {
 
 		private synchronized void fail(int index, LlmFailureType failureType, String message) {
 			responses.get(index).completeExceptionally(new LlmBackendException(failureType, message));
+		}
+
+		private synchronized void rateLimit(int index, long delay) {
+			responses.get(index).completeExceptionally(new LlmBackendException(LlmFailureType.PROVIDER_ERROR, "Rate limited", null, delay));
 		}
 	}
 
