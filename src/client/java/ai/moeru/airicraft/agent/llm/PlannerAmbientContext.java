@@ -56,18 +56,18 @@ public record PlannerAmbientContext(
 			return null;
 		}
 		StringBuilder description = new StringBuilder()
-			.append("Active job ")
+			.append("Job state=").append(task.state()).append(" ")
 			.append(task.mission().missionType().name())
 			.append(": ")
 			.append(task.mission().goalText() == null ? "no goal text" : task.mission().goalText());
 		if (task.activeStepId() != null && task.activeStepKind() != null) {
-			description.append(". Current job step ").append(task.activeStepId()).append(" (").append(task.activeStepKind().name()).append(")");
+			description.append(". Job step ").append(task.activeStepId()).append(" (").append(task.activeStepKind().name()).append(")");
 		}
 		if (missionExecution != null && missionExecution.lastStepResult() != null && missionExecution.lastStepResult().status() != null) {
 			description.append(". Last step result ").append(missionExecution.lastStepResult().status().name());
 		}
 		if (task.progress() != null) {
-			description.append(". Active job progress: collected=")
+			description.append(". Job progress: collected=")
 				.append(task.progress().collected())
 				.append(", remaining=")
 				.append(task.progress().remaining());
@@ -88,7 +88,7 @@ public record PlannerAmbientContext(
 			if (description.length() > 0) {
 				description.append(' ');
 			}
-			description.append("Active job evidence snapshot: ").append(renderEvidence(missionExecution.evidence()));
+			description.append("World evidence snapshot: ").append(renderEvidence(missionExecution.evidence()));
 		}
 		if (missionExecution.lastStepResult() != null && missionExecution.lastStepResult().status() != null
 			&& missionExecution.lastStepResult().status() != ai.moeru.airicraft.agent.tasks.StepExecutionStatus.IDLE) {

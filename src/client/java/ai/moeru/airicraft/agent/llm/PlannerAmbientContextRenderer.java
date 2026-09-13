@@ -65,12 +65,12 @@ public final class PlannerAmbientContextRenderer {
 
 	private static String describeActiveGoal(String activeGoalDescription) {
 		return activeGoalDescription == null
-			? "There is no active goal right now."
-			: "Active goal: " + activeGoalDescription;
+			? "No direct action goal is active (navigation, following or mining). Planner objectives and action graphs are reported separately."
+			: "Direct action goal: " + activeGoalDescription;
 	}
 
 	private static String describeActiveMission(String activeMissionDescription) {
-		return activeMissionDescription == null ? null : "Active job: " + activeMissionDescription;
+		return activeMissionDescription;
 	}
 
 	private static String describeMissionEvidence(String missionEvidenceDescription) {

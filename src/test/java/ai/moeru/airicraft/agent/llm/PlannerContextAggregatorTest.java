@@ -41,6 +41,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerContextAggregatorTest {
 	@Test
+	void completedJobContextDoesNotClaimWorkOrPlannerGoalIsActive() {
+		var aggregator = new PlannerContextAggregator(Clock.systemUTC(), 65_536, PlannerVisionMode.EXTERNAL_SUMMARY);
+		var task = new TaskSnapshot(TaskState.COMPLETED,
+			new MissionSpec("finished-job", MissionType.COLLECT_RESOURCE, "Collect logs"), null, null,
+			new TaskProgressSnapshot(2, 0), TaskStep.NONE, TaskOwnership.NONE, "action_graph", null,
+			"collect_logs", LedgerStepKind.COLLECT_RESOURCE, StepExecutionResult.idle(), 200L);
+		var request = new PlannerRequest(200L, 10_000L, SessionMode.SINGLEPLAYER_LAN_HOST,
+			"Alice", null, task, null, "Alice", "continue", null);
+		String context = aggregator.buildPlannerConversation(request).messages().toString();
+		assertTrue(context.contains("Job state=COMPLETED COLLECT_RESOURCE"));
+		assertTrue(context.contains("No direct action goal is active"));
+		assertFalse(context.contains("There is no active goal right now"));
+		assertFalse(context.contains("Active job"));
+	}
+
+	@Test
 	void discardedSnapshotConsumesInputWithoutAddingItToHistory() {
 		PlannerContextAggregator aggregator = new PlannerContextAggregator(
 			Clock.systemUTC(),
@@ -73,7 +89,7 @@ class PlannerContextAggregatorTest {
 		assertTrue(first.messages().get(1).content().contains("local time"));
 		assertTrue(first.messages().stream().anyMatch(message -> message.content().contains("Session mode is currently out of world.")));
 		assertTrue(first.messages().stream().anyMatch(message -> message.content().contains("There is no primary interaction player right now.")));
-		assertTrue(first.messages().stream().anyMatch(message -> message.content().contains("There is no active goal right now.")));
+		assertTrue(first.messages().stream().anyMatch(message -> message.content().contains("No direct action goal is active")));
 		aggregator.commitAcceptedTriggerBatch(firstSnapshot);
 
 		PlannerContextSnapshot secondSnapshot = freezeSnapshot(aggregator, requestAt(10 * 60_000L, "Alice", "@agent follow me"));
@@ -112,7 +128,7 @@ class PlannerContextAggregatorTest {
 		LlmConversation conversation = snapshot.plannerConversation();
 
 		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Primary interaction player is Alice.")));
-		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Active goal: Follow Alice.")));
+		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Direct action goal: Follow Alice.")));
 		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Started following Alice")));
 		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("The planner set goal FOLLOW_PLAYER for Alice")));
 	}
@@ -279,9 +295,9 @@ class PlannerContextAggregatorTest {
 			null
 		));
 
-		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Active job: Active job COLLECT_RESOURCE")));
-		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Active job progress: collected=2, remaining=2.")));
-		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Active job evidence snapshot:")));
+		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Job state=RUNNING COLLECT_RESOURCE")));
+		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Job progress: collected=2, remaining=2.")));
+		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("World evidence snapshot:")));
 		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Compatibility ledger snapshot:")));
 		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Last step result:")));
 		assertTrue(conversation.messages().stream().anyMatch(message -> message.content().contains("Compatibility history summary:")));
