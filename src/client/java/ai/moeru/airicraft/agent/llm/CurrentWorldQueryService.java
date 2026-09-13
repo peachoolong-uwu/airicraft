@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.DoorBlock;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.registry.Registries;
@@ -67,12 +68,27 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 		QueryBounds bounds = QueryBounds.from(client.player.getBlockPos(), arguments);
 		ensureWithinDistance(bounds, client.player.getBlockPos());
 		ensureWithinBlockCap(bounds);
-		return switch (mode) {
+		WorldQueryResult result = switch (mode) {
 			case "inspect_area" -> inspectArea(client.world, client.player, bounds, arguments);
 			case "find_blocks" -> findBlocks(client.world, client.player, bounds, arguments);
 			case "find_placement_sites" -> findPlacementSites(client.world, client.player, bounds, arguments);
 			default -> throw new WorldQueryException("unsupported_mode " + mode);
 		};
+		if ("find_placement_sites".equals(mode)) return result;
+		World world = client.world;
+		Map<BlockPos, BlockPos> doors = new LinkedHashMap<>();
+		for (BlockPos pos : result.observedPositions()) {
+			if (!world.isChunkLoaded(pos)) continue;
+			BlockState state = world.getBlockState(pos);
+			if (state.getBlock() instanceof DoorBlock) doors.putIfAbsent(DoorPassageGeometry.lowerPos(pos, state), pos);
+		}
+		if (doors.isEmpty()) return result;
+		StringBuilder text = new StringBuilder(result.text()).append("\nDoor passages (local collision heuristic; no route guarantee):");
+		for (BlockPos door : doors.values().stream().limit(8).toList()) {
+			DoorPassageGeometry.describe(world, door).ifPresent(description -> text.append('\n').append(description));
+		}
+		if (doors.size() > 8) text.append("\nAdditional door summaries omitted; narrow the query.");
+		return new WorldQueryResult(text.toString(), result.observedPositions());
 	}
 
 	private static WorldQueryResult inspectArea(World world, ClientPlayerEntity player, QueryBounds bounds, JsonObject arguments) {
