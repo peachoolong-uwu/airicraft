@@ -29,9 +29,9 @@ public final class PlannerDelegationToolProvider implements PlannerToolProvider 
 	}
 	@Override public String id() { return "system2_" + role.name().toLowerCase(java.util.Locale.ROOT); }
 	private String toolName() { return role == Role.CONTROLLER ? "delegate_task" : "return_control"; }
-	@Override public boolean handles(String name) { return toolName().equals(name); }
+	@Override public boolean handles(String name) { return toolName().equals(name) || role == Role.THINKING && name.equals("record_decision"); }
 	@Override public boolean isReadTool(String name) { return false; }
-	@Override public boolean endsTurn(String name) { return role == Role.THINKING && handles(name); }
+	@Override public boolean endsTurn(String name) { return name.equals("return_control"); }
 	@Override public String promptInstructions() {
 		return role == Role.CONTROLLER
 			? "You are the non-thinking main controller. Handle most gameplay directly: gathering ordinary resources, crafting known recipes, using furnaces, inspecting inventory, and navigating to known locations do not need thinking, even when they take several tool calls. Reserve delegate_task for substantial spatial reasoning or planning across interacting constraints: designing a shelter, choosing a suitable farm site and layout, or organising inventory and storage. Routine inventory checks and known item transfers stay with you; deciding what to keep, store, retrieve, and allocate across a trip or build may benefit from thinking. A long task or one failed tool call alone is not a reason to delegate; inspect the result and try a straightforward correction first. When delegation is warranted or explicitly requested, provide a bounded task and observable success criteria. State the purpose and real constraints; leave design choices to the thinker. For construction, distinguish interior dimensions from exterior bounds and prefer a usable result over an unnecessarily exact blueprint. The thinking planner takes over gameplay until it returns. Review its observed actions and final facts before choosing the next step."
@@ -44,10 +44,12 @@ public final class PlannerDelegationToolProvider implements PlannerToolProvider 
 			: List.of(toolForProvider("return_control", "End the delegated task and hand gameplay back to the controller. Requires all gameplay work idle.", propertiesForProvider(
 			propForProvider("delegationId", stringForProvider("Exact current delegation identity.")),
 			propForProvider("status", Map.of("type", "string", "enum", List.of("success", "give_up"))),
-			propForProvider("outcome", stringForProvider("Evidence for completion or concrete reason for giving up, up to 2048 characters."))), List.of("delegationId", "status", "outcome")));
+			propForProvider("outcome", stringForProvider("Evidence for completion or concrete reason for giving up, up to 2048 characters."))), List.of("delegationId", "status", "outcome")), toolForProvider("record_decision", "Store or replace a bounded named decision for this assignment; this cannot change the overall objective.", propertiesForProvider(
+			propForProvider("delegationId", stringForProvider("Current assignment identity.")), propForProvider("name", stringForProvider("Stable name up to 64 characters.")),
+			propForProvider("decision", stringForProvider("Planning choice, not observed world facts.")), propForProvider("reason", stringForProvider("Why this choice is appropriate."))), List.of("delegationId", "name", "decision", "reason")));
 	}
 	@Override public void validateArguments(String name, JsonObject args) {
-		List<String> fields = role == Role.CONTROLLER ? List.of("task", "successCriteria") : List.of("delegationId", "status", "outcome");
+		List<String> fields = name.equals("record_decision") ? List.of("delegationId", "name", "decision", "reason") : role == Role.CONTROLLER ? List.of("task", "successCriteria") : List.of("delegationId", "status", "outcome");
 		if (!handles(name)) throw new JsonParseException("Unknown delegation tool");
 		for (String field : fields) {
 			if (!args.has(field) || !args.get(field).isJsonPrimitive() || !args.getAsJsonPrimitive(field).isString()
@@ -63,6 +65,7 @@ public final class PlannerDelegationToolProvider implements PlannerToolProvider 
 				var args = call.arguments();
 				if (role == Role.CONTROLLER)
 					return delegation.delegate(args.get("task").getAsString(), args.get("successCriteria").getAsString(), controllerContext.get());
+				if (call.name().equals("record_decision")) return CompletableFuture.completedFuture("Tool result for record_decision: " + delegation.decide(args.get("delegationId").getAsString(), args.get("name").getAsString(), args.get("decision").getAsString(), args.get("reason").getAsString()));
 				delegation.requestReturn(args.get("delegationId").getAsString(), args.get("status").getAsString(), args.get("outcome").getAsString(), workIdle.getAsBoolean());
 				return CompletableFuture.completedFuture("Tool result for return_control: accepted; gameplay decisions return to the controller.");
 			} catch (RuntimeException exception) {

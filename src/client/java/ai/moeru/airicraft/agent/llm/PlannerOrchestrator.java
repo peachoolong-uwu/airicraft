@@ -251,6 +251,8 @@ public final class PlannerOrchestrator {
 
 	private java.util.function.Supplier<PlannerDecisionContext> decisionContextSource;
 	private String decisionWorldSessionId;
+	private java.util.function.BooleanSupplier decisionAuthority = () -> true;
+	public void configureDecisionAuthority(java.util.function.BooleanSupplier authority) { decisionAuthority = authority; }
 	private long incorporatedDecisionEventSequence;
 
 	/** The supplier reads game state synchronously on this orchestrator's owning client thread. */
@@ -1500,7 +1502,8 @@ public final class PlannerOrchestrator {
 	}
 
 	private boolean isStaleSafetyRequest(PlannerRequest request) {
-		return request != null && (
+		return !decisionAuthority.getAsBoolean() || decisionContextSource != null && decisionWorldSessionId != null
+			&& !decisionWorldSessionId.equals(decisionContextSource.get().worldSessionId()) || request != null && (
 			request.safetyEpoch() < minimumSafetyEpoch
 				|| request.safetyEpoch() == minimumSafetyEpoch
 				&& !Objects.equals(request.safetyHoldId(), currentSafetyHoldId)

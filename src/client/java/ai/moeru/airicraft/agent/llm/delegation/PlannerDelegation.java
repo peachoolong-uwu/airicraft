@@ -24,6 +24,7 @@ public final class PlannerDelegation {
 		final String task;
 		final String successCriteria;
 		final String controllerContext;
+		final Map<String, ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Decision> decisions = new LinkedHashMap<>();
 		final CompletableFuture<String> result = new CompletableFuture<>();
 		final ArrayDeque<String> evidence = new ArrayDeque<>();
 		int evidenceChars;
@@ -66,6 +67,15 @@ public final class PlannerDelegation {
 			+ ". Continue from fresh evidence or call return_control with success/give_up. A plaintext reply only yields.";
 	}
 
+	public String decide(String id, String name, String decision, String reason) {
+		if (!(state instanceof Thinking) || !id().equals(id)) throw new IllegalStateException("stale_delegation");
+		name = checked(name);
+		if (name.length() > 64 || !work().decisions.containsKey(name) && work().decisions.size() >= 16) throw new IllegalArgumentException("decision_limit");
+		var previous = work().decisions.get(name);
+		work().decisions.put(name, new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Decision(checked(decision), checked(reason), previous == null ? "" : previous.reason()));
+		return GSON.toJson(work().decisions);
+	}
+
 	public void requestReturn(String id, String status, String outcome, boolean workIdle) {
 		if (!(state instanceof Thinking thinking) || !thinking.work().id.equals(id))
 			throw new IllegalStateException("Delegation identity is not the current thinking task");
@@ -83,7 +93,7 @@ public final class PlannerDelegation {
 	public void recordEvent(long sequence, String type, Object payload) {
 		if (!active() || sequence <= work().lastEventSequence) return;
 		work().lastEventSequence = sequence;
-		append(Map.of("kind", "observed_event", "sequence", sequence, "type", type, "payload", payload));
+		append(Map.of("kind", "observed_event", "sequence", sequence, "type", type));
 	}
 
 	public void recordGuidance(String sender, String message) {
@@ -105,6 +115,8 @@ public final class PlannerDelegation {
 		report.put("task", work.task);
 		report.put("status", returned.status());
 		report.put("plannerReportedOutcome", returned.outcome());
+		report.put("planningDecisions", work.decisions);
+		report.put("evidenceContract", "Observed event entries reference shared DECISION CONTEXT sequence identities; tool results report executor responses. Neither the assignment outcome nor planning decisions are world facts.");
 		report.put("observedEvidence", work.evidence.stream().map(value -> GSON.fromJson(value, Object.class)).toList());
 		report.put("omittedEvidenceEntries", work.omittedEntries);
 		report.put("finalFacts", finalFacts);

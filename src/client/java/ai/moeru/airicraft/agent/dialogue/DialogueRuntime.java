@@ -78,7 +78,11 @@ public final class DialogueRuntime {
 		delegation = Objects.requireNonNull(handoff);
 	}
 
+	private java.util.function.Supplier<ai.moeru.airicraft.agent.llm.PlannerDecisionContext> decisionContextSource;
 	public void configureDecisionContext(java.util.function.Supplier<ai.moeru.airicraft.agent.llm.PlannerDecisionContext> source) {
+		decisionContextSource = source;
+		plannerOrchestrator.configureDecisionAuthority(() -> delegation == null || !delegation.active());
+		if (thinkingOrchestrator != null) thinkingOrchestrator.configureDecisionAuthority(() -> delegation != null && delegation.active());
 		plannerOrchestrator.configureDecisionContext(() -> source.get().forOwner("controller"));
 		if (thinkingOrchestrator != null) thinkingOrchestrator.configureDecisionContext(() -> source.get().forOwner("thinking"));
 	}
@@ -141,6 +145,7 @@ public final class DialogueRuntime {
 		delegationWorkIdle = workIdle;
 		boolean delegated = delegation != null && delegation.active();
 		if (delegated && (delegation.starting() || delegation.returning())) return true;
+		if (!delegated && plannerGoal != null && plannerGoal.blocked()) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
 		if (waitingForWork != null) return true;
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
@@ -552,6 +557,7 @@ public final class DialogueRuntime {
 	private Map<String, Object> delegationFacts(long tick, TaskSnapshot task, MissionExecutionSnapshot mission) {
 		Map<String, Object> facts = new java.util.LinkedHashMap<>();
 		facts.put("tick", tick);
+		if (decisionContextSource != null) facts.put("decisionContext", decisionContextSource.get());
 		facts.put("workIdle", delegationWorkIdle());
 		if (plannerGoal != null) facts.put("plannerGoal", plannerGoal.context());
 		if (task != null) {
@@ -666,6 +672,8 @@ public final class DialogueRuntime {
 		while (!pendingTaskWakeups.isEmpty()) {
 			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
 			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
+			if (plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()
+				.anyMatch(event -> event.seqNo() == wake.eventSequence() && plannerGoal.relevantToBlock(event.type()))) continue;
 			String currentMissionId = missionId(activeTask, missionExecution);
 			String superseded = wake.userGuidanceRevision() != userGuidanceRevision ? "new_user_guidance"
 				: wake.missionId() != null && currentMissionId != null && !Objects.equals(wake.missionId(), currentMissionId) ? "mission_changed" : null;

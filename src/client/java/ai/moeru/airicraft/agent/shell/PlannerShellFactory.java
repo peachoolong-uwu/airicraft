@@ -184,7 +184,6 @@ public final class PlannerShellFactory {
 		plannerGoal.refreshWorld();
 		var sharedProviders = List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
 			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
-			new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, command -> MinecraftClient.getInstance().execute(command)),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),
@@ -203,9 +202,10 @@ public final class PlannerShellFactory {
 		var dialogueRef = new java.util.concurrent.atomic.AtomicReference<DialogueRuntime>();
 		java.util.concurrent.Executor clientExecutor = command -> MinecraftClient.getInstance().execute(command);
 		var controllerProviders = new java.util.ArrayList<>(sharedProviders);
+		controllerProviders.add(new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, clientExecutor, true, () -> !handoff.active()));
 		if (dual) controllerProviders.add(new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider(
 			ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.CONTROLLER, handoff, clientExecutor,
-			() -> controllerRef.get().delegationContext(), () -> dialogueRef.get().delegationWorkIdle()));
+			plannerGoal::context, () -> dialogueRef.get().delegationWorkIdle()));
 		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(controllerProviders.toArray(ai.moeru.airicraft.agent.llm.PlannerToolProvider[]::new));
 		if (dual) toolRegistry.freezeToolPrefix();
 		var controllerConfig = dual ? config.llm().forRole(config.llm().model(), "none") : config.llm();
@@ -221,6 +221,7 @@ public final class PlannerShellFactory {
 		dialogueRef.set(dialogue);
 		if (dual) {
 			var thinkingProviders = new java.util.ArrayList<>(sharedProviders);
+			thinkingProviders.add(new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, clientExecutor, false, () -> false));
 			thinkingProviders.add(new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider(
 				ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.THINKING, handoff, clientExecutor,
 				() -> "", dialogue::delegationWorkIdle));
