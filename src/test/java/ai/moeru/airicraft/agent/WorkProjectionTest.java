@@ -7,6 +7,19 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class WorkProjectionTest {
+	@Test void primitiveCleanupDoesNotPublishAnotherTerminalOutcome() {
+		var job = new ai.moeru.airicraft.agent.job.ActiveJob("one", ai.moeru.airicraft.agent.job.ActiveJobType.COLLECT_RESOURCE,
+			ai.moeru.airicraft.agent.job.ActiveJobStatus.COMPLETED, null, null, null, null, 0, 0, 3, "planner_tool", null, null, 100);
+		var primitive = new TaskExecutionSnapshot(TaskExecutionState.RUNNING, "one", null, "acquisition", "APPROACH", null, null);
+		var beforeCleanup = WorkProjection.project(job, primitive, List.of(), List.of(), false, null, null, null, 100).getFirst();
+		var afterCleanup = WorkProjection.project(job, TaskExecutionSnapshot.idle(), List.of(), List.of(), false, null, null, null, 100).getFirst();
+		assertEquals(beforeCleanup, afterCleanup);
+		var history = new WorkHistory();
+		assertTrue(history.observe(beforeCleanup));
+		assertFalse(history.observe(afterCleanup));
+		assertEquals("COMPLETED", afterCleanup.phase());
+	}
+
 	private ActionGraphExecutionView graph(String id) {
 		return new ActionGraphExecutionView(ActionGraphResidency.SUSPENDED,0,0,0,
 			new ActionGraphExecutionSnapshot(true,id,ActionGraphExecutionState.WATCHING,null,null,0,null,0,0,0,"", "", "", "",Map.of(),List.of(),List.of(),Map.of(),Map.of(),Map.of()));

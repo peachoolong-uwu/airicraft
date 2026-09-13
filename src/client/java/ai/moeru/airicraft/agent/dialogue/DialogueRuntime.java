@@ -694,7 +694,8 @@ public final class DialogueRuntime {
 			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
 			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
 			if (plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()
-				.anyMatch(event -> event.seqNo() == wake.eventSequence() && plannerGoal.relevantToBlock(event.type()))) continue;
+				.anyMatch(event -> event.seqNo() == wake.eventSequence() && (plannerGoal.relevantToBlock(event.type())
+					|| isSupervisoryEvent(event.type())))) continue;
 			String currentMissionId = missionId(activeTask, missionExecution);
 			String superseded = wake.userGuidanceRevision() != userGuidanceRevision ? "new_user_guidance"
 				: wake.missionId() != null && currentMissionId != null && !Objects.equals(wake.missionId(), currentMissionId) ? "mission_changed" : null;
@@ -715,6 +716,13 @@ public final class DialogueRuntime {
 			return true;
 		}
 		return false;
+	}
+
+	private static boolean isSupervisoryEvent(String type) {
+		return switch (type) {
+			case "reflex.started", "reflex.resolved", "reflex.threat_detected", "reflex.actuator_failed" -> true;
+			default -> false;
+		};
 	}
 
 	private void supersedePendingInternalTaskUpdates(String reason, long tick, SemanticEventBuffer eventBuffer) {

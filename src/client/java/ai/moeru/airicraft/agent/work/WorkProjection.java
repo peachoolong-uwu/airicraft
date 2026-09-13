@@ -44,10 +44,10 @@ public final class WorkProjection {
 			};
 			if (held && job.jobId().equals(interruptedJobId) && !state.terminal()) state = WorkSnapshot.State.PAUSED;
 			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.JOB, job.jobId()), parent, state, job.type().name(),
-				primitive == null ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(),
+				primitive == null || state.terminal() ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(),
 				Map.of("collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""),
 					"failure", Objects.toString(job.lastError(), ""), "holdId", Objects.toString(holdId, ""),
-					"message", primitive == null ? "" : Objects.toString(primitive.lastPathEvent(), ""))));
+					"message", primitive == null || state.terminal() ? "" : Objects.toString(primitive.lastPathEvent(), ""))));
 		}
 		for (var process : processes) {
 			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.SMELTING, process.processId()), "",

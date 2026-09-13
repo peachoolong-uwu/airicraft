@@ -44,7 +44,9 @@ public final class PlannerDelegation {
 
 	public CompletableFuture<String> delegate(String task, String successCriteria, String controllerContext) {
 		if (active()) throw new IllegalStateException("A delegated task already owns gameplay decisions");
-		Work work = new Work(checked(task), checked(successCriteria), clip(controllerContext, 24_000));
+		// The goal store bounds intent fields and decision count. Cutting its serialized
+		// context here can erase a constraint or split a decision in the middle.
+		Work work = new Work(checked(task), checked(successCriteria), controllerContext == null ? "" : controllerContext);
 		state = new Starting(work);
 		return work.result;
 	}

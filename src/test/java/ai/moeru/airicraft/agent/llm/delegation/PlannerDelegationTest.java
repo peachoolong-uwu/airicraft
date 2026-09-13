@@ -19,6 +19,19 @@ import java.util.function.IntFunction;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PlannerDelegationTest {
+	@Test void handoffPreservesAllBoundedObjectiveDecisions(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		var objective = goal.set("Repair shelter", "Preserve equipment", "Supported approach");
+		for (int i = 0; i < 16; i++) goal.decide(objective.id(), "decision-" + i, "x".repeat(2000), "observed constraint " + i);
+		var handoff = new PlannerDelegation();
+		handoff.delegate("Repair approach", "Safe doorway", goal.context());
+		var input = JsonParser.parseString(handoff.start(Map.of(), 0).substring("DELEGATED TASK: ".length())).getAsJsonObject();
+		assertEquals(goal.context(), input.get("controllerContext").getAsString());
+		var intent = JsonParser.parseString(input.get("controllerContext").getAsString()).getAsJsonObject();
+		assertEquals(16, intent.getAsJsonObject("decisions").size());
+		assertEquals("Preserve equipment", intent.get("constraints").getAsString());
+	}
+
 	@Test void returnRequiresCurrentIdentityAndIdleWorkAndCarriesObservedEvidence() {
 		var handoff = new PlannerDelegation();
 		var future = handoff.delegate("Smelt charcoal", "Two charcoal in inventory", "Known furnace nearby");

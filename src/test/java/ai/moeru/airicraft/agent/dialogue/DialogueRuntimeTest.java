@@ -155,6 +155,33 @@ class DialogueRuntimeTest {
 	}
 
 	@Test
+	void blockedObjectiveStillAllowsOneReflexSupervisionDecision(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		var objective = goal.set("Build chest");
+		goal.block(objective.id(), "no wood", "search exhausted", "wood available", java.util.List.of("interaction.container_take"));
+		var backend = new BlockingLlmBackend();
+		var runtime = newDialogueRuntime(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, goal);
+		var events = new SemanticEventBuffer(32);
+		var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST, true, true, "minecraft:overworld", true, 25565, 1);
+		try {
+			runtime.poll(1, events, session, Optional.empty(), null, null);
+			runtime.updateSafetyContext(1, "hold-defend", true);
+			backend.injectMockResponse(new PlannerResponse("I will leave defense active.", new PlannerIntent("none", null, null)));
+			var event = events.append(2, "reflex.started", java.util.Map.of("holdId", "hold-defend"));
+			runtime.queueTaskWakeup(null, 2, event.seqNo());
+			runtime.poll(2, events, session, Optional.empty(), null, null);
+			awaitResponse(runtime, events, Duration.ofSeconds(1));
+			assertEquals(1, backend.conversationCount());
+			assertTrue(goal.blocked(), "Supervision does not resume the objective");
+			for (int tick = 3; tick < 80; tick++) {
+				runtime.continuePlannerGoal(tick, false, session, null, Optional.empty(), null, null, events);
+				runtime.poll(tick, events, session, Optional.empty(), null, null);
+			}
+			assertEquals(1, backend.conversationCount());
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void unchangedSafetyHoldDoesNotRepeatPlaintextDecisions(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
 		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
 		goal.set("Gather logs and finish shelter");
