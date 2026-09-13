@@ -12,6 +12,8 @@ The thinking planner explicitly returns with success or give_up. It cannot recur
 
 Stable prefixes also require moving changing goal data out of system instructions and preventing tool discovery from rebuilding the role's prefix. Goal/world updates are appended as context. Context compaction deliberately starts a new prefix when necessary; cache retention/hits still depend on the provider.
 
+Compaction requests use fixed `reasoning_effort: none` and a separate `:compaction` cache identity. Their job is to summarize observed history. This does not change the gameplay thinker's configured effort or switch profiles within a gameplay history.
+
 Verification gates:
 
 - Controller request effort is always none; thinking request effort stays at its own configured value.

@@ -377,7 +377,10 @@ class OpenAiCompatibleLlmBackendTest {
 	void chatClientCompactionKeepsJsonResponseFormatAndOmitsTools() throws Exception {
 		AtomicReference<String> bodyRef = new AtomicReference<>();
 		try (TestServer server = TestServer.start(bodyRef, plaintextResponse("{}"))) {
-			OpenAiCompatibleChatClient chatClient = new OpenAiCompatibleChatClient(config(server.port(), false));
+			OpenAiCompatibleChatClient chatClient = new OpenAiCompatibleChatClient(
+				config(server.port(), false).forRole("thinker", "medium"),
+				ai.moeru.airicraft.agent.observability.NoopObservability.INSTANCE,
+				PlannerToolRegistry.empty(), "test:thinking:compaction");
 
 			chatClient.complete(
 				LlmConversation.of(List.of(LlmChatMessage.user("COMPACTION TASK:", LlmMessageKind.TASK))),
@@ -386,6 +389,8 @@ class OpenAiCompatibleLlmBackendTest {
 
 				JsonObject body = JsonParser.parseString(bodyRef.get()).getAsJsonObject();
 				assertEquals("json_object", body.getAsJsonObject("response_format").get("type").getAsString());
+				assertEquals("none", body.get("reasoning_effort").getAsString());
+				assertEquals("test:thinking:compaction", body.get("prompt_cache_key").getAsString());
 				assertFalse(body.has("tools"));
 				assertFalse(body.has("tool_choice"));
 			}

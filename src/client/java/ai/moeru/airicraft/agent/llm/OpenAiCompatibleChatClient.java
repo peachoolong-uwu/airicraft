@@ -225,8 +225,10 @@ public final class OpenAiCompatibleChatClient {
 		LinkedHashMap<String, Object> payload = new LinkedHashMap<>();
 		payload.put("model", config.model());
 		if (cacheKey != null) payload.put("prompt_cache_key", cacheKey);
-		if (config.reasoningEffort() != null && !config.reasoningEffort().isBlank()) {
-			payload.put("reasoning_effort", config.reasoningEffort());
+		// Compaction has its own client/cache identity and summarizes evidence without gameplay reasoning.
+		String reasoningEffort = options.equals(LlmRequestOptions.compaction()) ? "none" : config.reasoningEffort();
+		if (reasoningEffort != null && !reasoningEffort.isBlank()) {
+			payload.put("reasoning_effort", reasoningEffort);
 		}
 		if (options.jsonObjectResponseFormat()) {
 			payload.put("response_format", Map.of("type", JSON_OBJECT_RESPONSE_FORMAT));
