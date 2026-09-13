@@ -74,7 +74,6 @@ public final class LureEntitiesTaskExecutor implements WorldTaskExecutor {
 		if (++activeTicks > 6000) return finish(false, "lure_timeout");
 		phaseTicks++;
 		Vec3d player = environment.position();
-		if (followers.stream().anyMatch(f -> f.position().squaredDistanceTo(player) > 32 * 32)) return finish(false, "follower_out_of_range");
 		String error = environment.holdItem();
 		if (error != null) return finish(false, error);
 		environment.beginTravel();

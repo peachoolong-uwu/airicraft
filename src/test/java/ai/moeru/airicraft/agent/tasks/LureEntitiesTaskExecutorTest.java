@@ -117,6 +117,17 @@ class LureEntitiesTaskExecutorTest {
 		assertTrue(f.events.isEmpty());
 	}
 
+	@Test void approachingOneAnimalMayIncreaseDistanceToAnotherInitiallyNearbyAnimal() {
+		Fixture f = new Fixture("aaaaaaaa", "bbbbbbbb");
+		f.env.animals = List.of(animal("aaaaaaaa", -25, false, true), animal("bbbbbbbb", 25, false, true));
+		f.tick(2);
+		f.env.player = point(-24);
+		f.tick(20);
+		assertTrue(f.events.isEmpty(), "A loaded follower remains valid after the player approaches the other end of the herd");
+		assertTrue(f.nav.goals.contains(goal(25)));
+		assertTrue(f.env.settingsOwned);
+	}
+
 	@Test void missingAnimalFailsInsteadOfSilentlyCompletingSubset() {
 		Fixture f = new Fixture();
 		f.tick(2);

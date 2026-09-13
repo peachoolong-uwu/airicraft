@@ -361,3 +361,12 @@ Two observed placement sites near mushrooms, `(212,104,494)` and `(213,105,493)`
 Combat left the player beside fence199,103,488 with an active Baritone ascent that made no progress. Paused/probed/exported; removing and replacing our fence bypassed it. The native task now times out its leading phase, but the underlying fence-route stall remains unresolved. Two birds entered the small enclosure, yet one body did not fully fit the requested destination box. The action reported failure; expanding the pen is a layout correction. D079 distinguishes the already-inside check after expansion from a fresh entrance traversal.
 
 An adult escaped around our earlier exit while the gate remained open; the actual crossing was not captured. Do not treat the earlier contained snapshot as durable containment. The repaired pen currently has two adults and a newborn, seeds put away and gate closed. Improve exit handling and verify longer containment before treating husbandry as a sustained food supply.
+
+
+### 2026-09-13: Scattered followers and safe gate passage
+
+Fixed a reproduced luring cutoff: selecting animals initially within32 blocks could fail when approaching one increased the distance to another still-loaded animal. Removed the mid-task cutoff while retaining initial validation and task budgets. A live retry retained a follower at33.57 blocks and brought the group back; focused tests/full build passed. See D080.
+
+Integer destination boxes can exclude usable slivers inside fence blocks. A bird at x196.8 inside the enclosure failed a requested x>=197 arrival region. Do not equate that bounded task failure with an escaped animal, or loosen the box and call it proof of enclosure safety. The current narrow pen still needs careful goal selection.
+
+A two-gate entrance and prompt passage sequence were tested for1200 ticks with no simultaneous opening and no escaped chickens. Earlier delayed closure allowed escapes; no crossing frame proved the exact route, but a separate closed-gate trace retained all three. One adult lost a health point in a visually recorded creeper blast; perimeter remained intact. Carpet-route and outside-face placement attempts failed and were bypassed/reverted, not patched. See D080 for coordinates, traces and the current checkpoint.
