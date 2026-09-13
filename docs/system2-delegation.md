@@ -10,6 +10,8 @@ On entry, append the delegated task, completion conditions, relevant controller 
 
 The thinking planner explicitly returns with success or give_up. It cannot recursively delegate. Returning normally requires no running gameplay work; provider failures return a failure report to the controller for recovery. Safety/world/reset/disabled transitions must clean up both sessions and reject stale transfers. Switching roles preserves both histories; switching world or resetting runtime clears both.
 
+For reversible construction, the thinker builds a small workable section, inspects the result and adapts. It can break and replace its own new blocks while preserving equipment, user constraints and an exit. Repeated whole-structure calculations should not delay the next useful action. The controller delegates purpose and real constraints, distinguishes interior dimensions from exterior bounds, and leaves design choices to the thinker.
+
 Stable prefixes also require moving changing goal data out of system instructions and preventing tool discovery from rebuilding the role's prefix. Goal/world updates are appended as context. Context compaction deliberately starts a new prefix when necessary; cache retention/hits still depend on the provider.
 
 Compaction requests use fixed `reasoning_effort: none` and a separate `:compaction` cache identity. Their job is to summarize observed history. This does not change the gameplay thinker's configured effort or switch profiles within a gameplay history.
