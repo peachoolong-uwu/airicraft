@@ -115,7 +115,8 @@ public final class DialogueRuntime {
 		boolean delegated = delegation != null && delegation.active();
 		if (delegated && (delegation.starting() || delegation.returning())) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
-		if (!workIdle || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
+		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
+		if ((!workIdle && !awaitingSafetyDecision) || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
 			|| reflexActive || session == null || !session.companionActuationAllowed()
 			|| activePlanner().hasInFlight() || !pendingInternalTaskUpdates.isEmpty()) {
 			nextGoalContinuationTick = tick + 20;
@@ -123,10 +124,14 @@ public final class DialogueRuntime {
 		}
 		if (tick < nextGoalContinuationTick) return true;
 		nextGoalContinuationTick = tick + 20;
+		String continuation = delegated ? delegation.continuation() : "GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
+			+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
+			+ plannerGoal.context();
+		if (awaitingSafetyDecision) continuation = "Safety hold " + safetyHoldId
+			+ " still awaits your decision. The previous job remains paused. Use resume_task with this holdId, replace the task, or cancel it."
+			+ " Saying you will act does not release the hold.\n" + continuation;
 		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
-			(delegated ? delegation.continuation() : "GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
-				+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
-				+ plannerGoal.context()), tick, clock.millis(), "planner_goal"),
+			continuation, tick, clock.millis(), "planner_goal"),
 			session, primaryPlayer, actionGoal, task, mission, events);
 		return true;
 	}

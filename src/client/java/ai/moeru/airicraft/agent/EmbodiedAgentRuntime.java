@@ -516,6 +516,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			tickActionGraph(worldEvidence, false);
 			pauseNormalWorkForReflex(client);
 			drainEventPipeline();
+			if (survivalReflexRuntime.snapshot().state() == SurvivalReflexState.AWAITING_PLANNER) {
+				maybeFireIdleIdeaTrigger(activeGoal());
+			}
 			lastKnownPlayerHealth = currentPlayerHealth(client);
 			return;
 		}
@@ -3797,15 +3800,16 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void maybeFireIdleIdeaTrigger(Optional<GoalSnapshot> activeGoal) {
+		boolean awaitingSafetyDecision = survivalReflexRuntime.snapshot().state() == SurvivalReflexState.AWAITING_PLANNER;
 		if (evaluationPlannerSuppressed
-			|| actionGraphCoordinator.hasNonterminal()
+			|| (actionGraphCoordinator.hasNonterminal() && !awaitingSafetyDecision)
 			|| !sessionSnapshot.companionActuationAllowed()
 			|| !config.llm().isConfigured()) {
 			idleIdeaScheduler.reset();
 			return;
 		}
 		boolean jobIdle = isIdleForIdleIdeaScheduling(activeJobRuntime.current());
-		if (dialogueRuntime.continuePlannerGoal(tickCount, jobIdle && activeGoal.isEmpty(), sessionSnapshot,
+		if (dialogueRuntime.continuePlannerGoal(tickCount, jobIdle && activeGoal.isEmpty() && !actionGraphCoordinator.hasNonterminal(), sessionSnapshot,
 			primaryInteractionResolver.current().map(PrimaryInteractionPlayer::name).orElse(null),
 			activeGoal, taskSnapshot, missionExecutionSnapshot, plannerEventBuffer)) {
 			idleIdeaScheduler.reset();

@@ -127,6 +127,36 @@ class DialogueRuntimeTest {
 	}
 
 	@Test
+	void safetyHoldContinuesAfterPlainReplyWithoutCallingPausedWorkIdle(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		goal.set("Gather logs and finish shelter");
+		var backend = new BlockingLlmBackend();
+		var runtime = newDialogueRuntime(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, goal);
+		try {
+			var events = new SemanticEventBuffer(32);
+			var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST,
+				true, true, "minecraft:overworld", true, 25565, 10);
+			runtime.updateSafetyContext(3, "hold-patrol", false);
+			backend.injectMockResponse(new PlannerResponse("I will deal with the closer pillager.", new PlannerIntent("none", null, null)));
+			runtime.onPlayerChat("Alice", "Combat approach stalled; choose a tactic", 10, session, "Alice", Optional.empty(), events);
+			awaitResponse(runtime, events, Duration.ofSeconds(1));
+			backend.injectMockResponse(new PlannerResponse("I will inspect the ledge.", new PlannerIntent("none", null, null)));
+			runtime.continuePlannerGoal(100, false, session, "Alice", Optional.empty(), null, null, events);
+			assertTrue(runtime.plannerDebugSnapshot().inFlight(), "A paused job must not strand the active goal after plaintext");
+			awaitResponse(runtime, events, Duration.ofSeconds(1));
+			assertEquals(2, backend.conversationCount());
+			assertTrue(backend.conversation(1).messages().stream().anyMatch(m -> m.content() != null
+				&& m.content().contains("GOAL CONTINUATION") && m.content().contains("hold-patrol")));
+			assertFalse(runtime.delegationWorkIdle(), "Paused work is still unfinished for delegation completion");
+			runtime.updateSafetyContext(4, "hold-new-danger", true);
+			runtime.continuePlannerGoal(200, false, session, "Alice", Optional.empty(), null, null, events);
+			assertFalse(runtime.plannerDebugSnapshot().inFlight());
+			assertEquals(2, backend.conversationCount());
+		}
+		finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void plannerGoalDoesNotRunWhenDisabledOrExternallyDriven(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
 		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
 		goal.set("Scout a cave");
