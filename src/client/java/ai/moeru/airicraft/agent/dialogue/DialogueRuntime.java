@@ -40,6 +40,7 @@ public final class DialogueRuntime {
 	private long delegationEventCursor;
 	private final ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore plannerGoal;
 	private long nextGoalContinuationTick;
+	private ai.moeru.airicraft.agent.work.WorkSnapshot waitingForWork;
 	private final Clock clock;
 	private final int maxRecentTurns;
 	private final List<DialogueTurn> recentTurns = new ArrayList<>();
@@ -96,6 +97,22 @@ public final class DialogueRuntime {
 
 	public void updateGameplayWorkIdle(boolean idle) { delegationWorkIdle = idle; }
 
+	public void waitForWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
+		waitingForWork = work.state().terminal() ? null : work;
+	}
+
+	public void observeWork(List<ai.moeru.airicraft.agent.work.WorkSnapshot> work) {
+		if (waitingForWork == null) return;
+		for (var current : work) {
+			if (current.handle().equals(waitingForWork.handle())
+				&& (current.state() != waitingForWork.state() || !current.phase().equals(waitingForWork.phase()))) {
+				waitingForWork = null;
+				nextGoalContinuationTick = 0;
+				return;
+			}
+		}
+	}
+
 	public boolean delegationWorkIdle() { return delegationWorkIdle && !reflexActive; }
 
 	public Map<String, Object> system2Snapshot() {
@@ -107,6 +124,7 @@ public final class DialogueRuntime {
 	}
 
 	private void resetPlanners(String reason) {
+		waitingForWork = null;
 		if (delegation != null) delegation.reset(reason);
 		planners().forEach(PlannerOrchestrator::reset);
 		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
@@ -124,6 +142,7 @@ public final class DialogueRuntime {
 		boolean delegated = delegation != null && delegation.active();
 		if (delegated && (delegation.starting() || delegation.returning())) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
+		if (waitingForWork != null) return true;
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
 		if ((!workIdle && !awaitingSafetyDecision) || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
 			|| reflexActive || session == null || !session.companionActuationAllowed()
@@ -670,6 +689,7 @@ public final class DialogueRuntime {
 	}
 
 	private void supersedePendingInternalTaskUpdates(String reason, long tick, SemanticEventBuffer eventBuffer) {
+		waitingForWork = null;
 		userGuidanceRevision++;
 		while (!pendingTaskWakeups.isEmpty()) {
 			recordSupersededInternalTaskUpdate(pendingTaskWakeups.removeFirst(), reason, null, tick, eventBuffer);

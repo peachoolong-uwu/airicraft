@@ -1,0 +1,60 @@
+package ai.moeru.airicraft.agent.work;
+
+import ai.moeru.airicraft.agent.actions.*;
+import ai.moeru.airicraft.agent.job.*;
+import ai.moeru.airicraft.agent.tasks.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+public final class WorkProjection {
+	private WorkProjection() { }
+	public static List<WorkSnapshot> project(ActiveJob job, TaskExecutionSnapshot primitive,
+		List<ActionGraphExecutionView> graphs, List<SmeltingProcessSnapshot> processes, boolean held, String holdId, long tick) {
+		var result = new ArrayList<WorkSnapshot>();
+		String parent = "";
+		for (var view : graphs) {
+			var graph = view.execution();
+			var handle = WorkHandle.of(WorkHandle.Kind.GRAPH, graph.executionId());
+			boolean foreground = view.residency() == ActionGraphResidency.FOREGROUND;
+			WorkSnapshot.State state = switch (graph.state()) {
+				case SUCCEEDED -> WorkSnapshot.State.SUCCEEDED;
+				case FAILED -> WorkSnapshot.State.FAILED;
+				case CANCELLED -> WorkSnapshot.State.CANCELLED;
+				case READY, RESOLVING, REPLANNING, IDLE -> WorkSnapshot.State.QUEUED;
+				case BLOCKED, WATCHING -> WorkSnapshot.State.WAITING;
+				default -> WorkSnapshot.State.RUNNING;
+			};
+			if (held && (foreground || view.residency() == ActionGraphResidency.SUSPENDED) && !state.terminal()) state = WorkSnapshot.State.PAUSED;
+			result.add(new WorkSnapshot(handle, "", state, "resource goal", graph.state().name(), foreground, view.updatedTick(),
+				Map.of("goal", Objects.toString(graph.goal(), ""), "failureCode", graph.failureCode(), "message", graph.message(),
+					"activeTaskId", graph.activeTaskId(), "holdId", Objects.toString(holdId, ""))));
+			if (job != null && !graph.activeTaskId().isBlank()
+				&& (graph.activeTaskId().startsWith(job.jobId()) || primitive != null && graph.activeTaskId().equals(primitive.taskId()))) parent = handle.id();
+		}
+		if (job != null && job.status() != ActiveJobStatus.IDLE) {
+			WorkSnapshot.State state = switch (job.status()) {
+				case QUEUED, IDLE -> WorkSnapshot.State.QUEUED;
+				case RUNNING -> WorkSnapshot.State.RUNNING;
+				case BLOCKED -> WorkSnapshot.State.WAITING;
+				case COMPLETED -> WorkSnapshot.State.SUCCEEDED;
+				case FAILED -> WorkSnapshot.State.FAILED;
+				case CANCELLED -> WorkSnapshot.State.CANCELLED;
+			};
+			if (held && !state.terminal()) state = WorkSnapshot.State.PAUSED;
+			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.JOB, job.jobId()), parent, state, job.type().name(),
+				primitive == null ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(),
+				Map.of("collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""),
+					"failure", Objects.toString(job.lastError(), ""), "holdId", Objects.toString(holdId, ""),
+					"message", primitive == null ? "" : Objects.toString(primitive.lastPathEvent(), ""))));
+		}
+		for (var process : processes) {
+			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.SMELTING, process.processId()), "",
+				WorkSnapshot.State.WAITING, "furnace: " + process.outputItemId(), process.outputReady() ? "CHECK_OUTPUT" : "COOKING", false, tick,
+				Map.of("station", process.stationKey(), "outputItemId", process.outputItemId(), "expectedCount", process.expectedOutputCount(),
+					"needsCollection", true, "readiness", "May be estimated; inspect slots and verify collection.")));
+		}
+		return List.copyOf(result);
+	}
+}

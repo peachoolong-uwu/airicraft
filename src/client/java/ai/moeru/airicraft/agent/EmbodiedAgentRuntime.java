@@ -269,6 +269,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	private boolean initialized;
 	private volatile long tickCount;
+	private final ai.moeru.airicraft.agent.work.WorkHistory workHistory = new ai.moeru.airicraft.agent.work.WorkHistory();
+	private Object workWorld;
 	private long worldLoadTick = -1L;
 	private Boolean proactiveSocialModeOverride;
 	private boolean evaluationPlannerSuppressed;
@@ -330,7 +332,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				this.observability,
 				clock,
 				debugRecorder,
-				this,
+				this::executePlannerAction,
 				this::emitPlannerToolNarration,
 				this::beforePlannerToolExecution,
 				worldReadLedger::recordObserved,
@@ -439,6 +441,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public void onClientTick(MinecraftClient client) {
+		try { tickClient(client); }
+		finally { refreshWorkHistory(); }
+	}
+
+	private void tickClient(MinecraftClient client) {
 		dialogueRuntime.refreshPlannerGoalWorld();
 		tickCount++;
 		localDamageTracker.pruneStale(tickCount);
@@ -640,16 +647,18 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	ai.moeru.airicraft.agent.llm.PlannerDecisionContext currentPlannerDecisionContext() {
+		refreshWorkHistory();
 		var client = MinecraftClient.getInstance();
 		var facts = new java.util.LinkedHashMap<String, Object>();
 		facts.put("objective", dialogueRuntime.currentPlannerObjective());
 		facts.put("session", sessionSnapshot.mode());
 		facts.put("physical", currentPhysicalState());
-		ActiveJob job = activeJobRuntime.current();
-		if (job != null) facts.put("job", Map.of("id", job.jobId(), "type", job.type(), "state", job.status(),
-			"collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""), "error", Objects.toString(job.lastError(), "")));
-		facts.put("graphs", actionGraphExecutions().stream().map(view -> view.toPayload(false)).toList());
 		facts.put("reflex", survivalReflexRuntime.snapshot());
+		var work = workHistory.list();
+		var recent = work.stream().filter(value -> value.state().terminal()).toList();
+		var currentWork = new java.util.ArrayList<>(work.stream().filter(value -> !value.state().terminal()).toList());
+		currentWork.addAll(recent.subList(Math.max(0, recent.size() - 8), recent.size()));
+		facts.put("work", currentWork.stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::payload).toList());
 		String worldSession = "out_of_world";
 		if (client != null && client.world != null && client.player != null) {
 			worldSession = client.world.getRegistryKey().getValue() + ":" + System.identityHashCode(client.world);
@@ -2251,6 +2260,136 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return plannerActionToolExecutor.execute(toolCall);
 	}
 
+	private void refreshWorkHistory() {
+		var client = MinecraftClient.getInstance();
+		Object world = client == null ? null : client.world;
+		if (world != workWorld) { workHistory.clear(); workWorld = world; }
+		var reflex = survivalReflexRuntime.snapshot();
+		var projected = ai.moeru.airicraft.agent.work.WorkProjection.project(activeJobRuntime.current(), taskExecutionSnapshot,
+			actionGraphExecutions(), smeltingProcessManager.processSnapshots(), reflex.holdsNormalTasks(), reflex.holdId(), tickCount);
+		for (var work : projected) recordWork(work);
+		for (String id : smeltingProcessManager.drainCollectedProcesses()) {
+			workHistory.find(ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.SMELTING, id))
+				.ifPresent(work -> recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(work.handle(), "",
+					ai.moeru.airicraft.agent.work.WorkSnapshot.State.SUCCEEDED, work.label(), "COLLECTED", false, tickCount,
+					Map.of("physicalEffect", "Output slot emptied by collection interaction."))));
+		}
+		var present = projected.stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::handle).collect(java.util.stream.Collectors.toSet());
+		for (var work : workHistory.list()) {
+			if (work.state().terminal()) continue;
+			if (!present.contains(work.handle()) && work.handle().kind() != ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION) {
+				recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(work.handle(), work.parentWorkId(),
+					ai.moeru.airicraft.agent.work.WorkSnapshot.State.CANCELLED, work.label(), "NO_LONGER_TRACKED", false, tickCount,
+					Map.of("physicalEffect", "Executor tracking ended or was replaced; this does not prove completion or reverse observed effects.")));
+			} else if (work.phase().equals("EATING")) {
+				long since = ((Number) work.details().get("afterEventSequence")).longValue();
+				eventBuffer.query(since).events().stream().filter(event -> event.type().equals("food.eaten") || event.type().equals("food.eat_failed"))
+					.findFirst().ifPresent(event -> recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(work.handle(), "",
+						event.type().equals("food.eaten") ? ai.moeru.airicraft.agent.work.WorkSnapshot.State.SUCCEEDED : ai.moeru.airicraft.agent.work.WorkSnapshot.State.FAILED,
+						work.label(), "FINISHED", false, event.tick(), event.payload())));
+			}
+		}
+
+		dialogueRuntime.observeWork(workHistory.list());
+	}
+
+	private void recordWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
+		if (workHistory.observe(work)) {
+			var event = eventBuffer.append(tickCount, "work.changed", work.payload());
+			if (work.state().terminal() || work.state() == ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED || work.phase().equals("CHECK_OUTPUT"))
+				dialogueRuntime.queueTaskWakeup(null, tickCount, event.seqNo());
+		}
+	}
+
+	/** Embedded planner receipts; the external wrapper retains its existing text adapter. */
+	CompletableFuture<String> executePlannerAction(PlannerToolCall call) {
+		refreshWorkHistory();
+		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
+		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
+		var before = workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::handle).collect(java.util.stream.Collectors.toSet());
+		CompletableFuture<String> result = execute(call);
+		refreshWorkHistory();
+		var admitted = workHistory.list().stream().filter(work -> !before.contains(work.handle()) && work.parentWorkId().isBlank()
+			&& work.handle().kind() != ai.moeru.airicraft.agent.work.WorkHandle.Kind.SMELTING).findFirst();
+		return result.thenApply(text -> {
+			refreshWorkHistory();
+			var receipt = new LinkedHashMap<String, Object>();
+			receipt.put("tool", call.name());
+			boolean rejected = text.startsWith("TOOL_ERROR:") || text.startsWith("TOOL_UNAVAILABLE:");
+			boolean immediate = List.of("equip_item", "configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy", "close_container", "transfer_container").contains(call.name());
+			boolean eating = call.name().equals("eat_food") && playerItemUseController.eating();
+			boolean accepted = admitted.isPresent() || !rejected && (immediate || eating);
+			receipt.put("accepted", accepted);
+			if (admitted.isPresent()) {
+				var work = workHistory.find(admitted.get().handle()).orElseThrow();
+				receipt.put("work", work.payload());
+			} else if (accepted) {
+				var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION,
+					java.util.UUID.randomUUID().toString());
+				var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "", eating
+					? ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING : ai.moeru.airicraft.agent.work.WorkSnapshot.State.SUCCEEDED,
+					call.name(), eating ? "EATING" : "RETURNED", eating, tickCount,
+					Map.of("result", text, "afterEventSequence", eventBuffer.latestSeqNo()));
+				recordWork(work);
+				receipt.put("work", work.payload());
+			}
+			receipt.put("result", text);
+			return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(receipt);
+		});
+	}
+
+	private String executeWorkTool(PlannerToolCall call) {
+		var provider = new ai.moeru.airicraft.agent.work.WorkToolProvider(this);
+		provider.validateArguments(call.name(), call.arguments());
+		refreshWorkHistory();
+		if (call.name().equals("list_work")) return "Tool result for list_work: "
+			+ new com.google.gson.Gson().toJson(workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::payload).toList());
+		var requested = call.arguments().has("workId")
+			? workHistory.find(new ai.moeru.airicraft.agent.work.WorkHandle(call.arguments().get("workId").getAsString())) : workHistory.current();
+		if (requested.isEmpty()) return call.arguments().has("workId") ? "TOOL_ERROR: work_not_found"
+			: "Tool result for inspect_work: no foreground work; use list_work for background work and retained outcomes.";
+		var work = requested.get();
+		var handle = work.handle();
+		switch (call.name()) {
+			case "inspect_work" -> { }
+			case "wait_for_work" -> dialogueRuntime.waitForWork(work);
+			case "cancel_work" -> {
+				if (!work.parentWorkId().isBlank()) return "TOOL_ERROR: control_parent_work workId=" + work.parentWorkId();
+				if (!work.state().terminal()) {
+					String reason = call.arguments().get("reason").getAsString();
+					switch (handle.kind()) {
+						case GRAPH -> cancelActionGoal(handle.nativeId(), reason);
+						case JOB -> {
+							if (!handle.nativeId().equals(activeJobRuntime.current().jobId())) return "TOOL_ERROR: work_no_longer_active";
+							cancelActiveJobOnly(reason);
+						}
+						case SMELTING -> {
+							if (!smeltingProcessManager.cancel(handle.nativeId())) return "TOOL_ERROR: process_no_longer_tracked";
+							recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "", ai.moeru.airicraft.agent.work.WorkSnapshot.State.CANCELLED,
+								work.label(), "TRACKING_CANCELLED", false, tickCount, Map.of("reason", reason, "physicalEffect", "Furnace cooking and items were not changed.")));
+						}
+						case OPERATION -> {
+							if (!work.phase().equals("EATING")) return "TOOL_ERROR: operation_not_cancellable";
+							playerItemUseController.reset(MinecraftClient.getInstance());
+							recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "", ai.moeru.airicraft.agent.work.WorkSnapshot.State.CANCELLED,
+								work.label(), "CANCELLED", false, tickCount, Map.of("reason", reason)));
+						}
+					}
+				}
+			}
+			case "resume_work" -> {
+				var reflex = survivalReflexRuntime.snapshot();
+				boolean matches = handle.kind() == ai.moeru.airicraft.agent.work.WorkHandle.Kind.JOB && handle.nativeId().equals(reflex.interruptedJobId())
+					|| handle.kind() == ai.moeru.airicraft.agent.work.WorkHandle.Kind.GRAPH && handle.nativeId().equals(reflex.interruptedActionExecutionId());
+				if (!matches || work.state() != ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED) return "TOOL_ERROR: work_not_in_current_hold";
+				resumeSafetyHold(call.arguments().get("holdId").getAsString(), "planner_work_tool");
+			}
+			default -> throw new IllegalArgumentException("unknown_work_tool");
+		}
+		refreshWorkHistory();
+		return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(workHistory.find(handle).orElseThrow().payload());
+	}
+
 	private EmbodiedPlannerActionToolExecutor.ExecutionState plannerActionToolExecutionState() {
 		ActiveJob activeJob = activeJobRuntime.current();
 		return new EmbodiedPlannerActionToolExecutor.ExecutionState(
@@ -2299,6 +2438,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		JsonObject args = toolCall.arguments();
 		String normalizedToolName = PlannerToolCatalog.normalizeName(toolCall.name());
 		return switch (normalizedToolName) {
+			case "inspect_work", "list_work", "cancel_work", "resume_work", "wait_for_work" -> executeWorkTool(toolCall);
 			case PlannerToolCatalog.RESUME_TASK -> {
 				String holdId = stringArg(args, "holdId").orElseThrow(() -> new IllegalArgumentException("holdId is required"));
 				SurvivalReflexSnapshot reflex = resumeSafetyHold(holdId, "planner_tool");
@@ -4475,6 +4615,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			eventBuffer.append(tickCount, eventType, payload);
 		}
 
+		refreshWorkHistory();
 		semanticTaskTerminalEvent(current).ifPresent(this::captureActionGraphTerminalEvent);
 		if (
 			current.state() == TaskState.PAUSED_BY_SESSION_GATE

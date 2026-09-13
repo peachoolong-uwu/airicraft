@@ -19,6 +19,19 @@ public final class SmeltingProcessManager {
 	private final Map<String, SmeltingOption> processOptionsById = new HashMap<>();
 	private final Map<String, SmeltingStationKey> confirmedCollectionStations = new HashMap<>();
 
+	private final java.util.ArrayDeque<String> collectedProcesses = new java.util.ArrayDeque<>();
+	public void markCollected(String processId) {
+		if (cancel(processId)) {
+			if (collectedProcesses.size() == 128) collectedProcesses.removeFirst();
+			collectedProcesses.addLast(processId);
+		}
+	}
+	public List<String> drainCollectedProcesses() {
+		var result = List.copyOf(collectedProcesses);
+		collectedProcesses.clear();
+		return result;
+	}
+
 	public void registerOptions(List<SmeltingOption> options) {
 		optionsById.clear();
 		if (options == null) {

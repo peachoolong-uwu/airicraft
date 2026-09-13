@@ -183,6 +183,7 @@ public final class PlannerShellFactory {
 		});
 		plannerGoal.refreshWorld();
 		var sharedProviders = List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
+			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
 			new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, command -> MinecraftClient.getInstance().execute(command)),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),

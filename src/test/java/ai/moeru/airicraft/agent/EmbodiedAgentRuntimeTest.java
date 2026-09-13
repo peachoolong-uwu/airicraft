@@ -1,5 +1,6 @@
 package ai.moeru.airicraft.agent;
 
+import com.google.gson.JsonObject;
 import ai.moeru.airicraft.AiricraftConfig;
 import ai.moeru.airicraft.BridgeUnavailableException;
 import ai.moeru.airicraft.FirstPersonScreenshotService;
@@ -111,6 +112,44 @@ class EmbodiedAgentRuntimeTest {
 		String context = runtime.currentPlannerDecisionContext().message(0).content();
 		assertTrue(context.contains(type), context);
 		for (String value : expected.values()) assertTrue(context.contains(value), context);
+	}
+
+	@Test
+	void plannerReceiptAndWorkInspectionShareDirectNavigationIdentityThroughFailure() {
+		var executor = new FakeWorldTaskExecutor();
+		var runtime = EmbodiedAgentRuntime.createForTests(executor);
+		try {
+			runtime.overrideSessionSnapshotForTests(loadedRemoteSession());
+			String receipt = runtime.executePlannerAction(new PlannerToolCall("nav", "navigate_to",
+				JsonParser.parseString("{\"x\":12,\"y\":64,\"z\":8,\"exactY\":true}").getAsJsonObject(), null, null)).join();
+			var json = JsonParser.parseString(receipt.substring(receipt.indexOf('{'))).getAsJsonObject();
+			assertTrue(json.get("accepted").getAsBoolean(), receipt);
+			String workId = json.getAsJsonObject("work").get("workId").getAsString();
+			assertTrue(workId.startsWith("JOB:"), receipt);
+			runtime.onClientTick(null);
+			var request = executor.lastActiveTask.orElseThrow();
+			executor.nextTerminalEvent = Optional.of(new TaskTerminalEvent(request.taskId(), request.goal(), TaskExecutionState.FAILED,
+				"CALC_FAILED", TaskTerminationCause.CALCULATION_FAILED));
+			runtime.onClientTick(null);
+			JsonObject args = new JsonObject(); args.addProperty("workId", workId);
+			String inspected = runtime.execute(new PlannerToolCall("inspect", "inspect_work", args, null, null)).join();
+			assertTrue(inspected.contains(workId), inspected);
+			assertTrue(inspected.contains("FAILED"), inspected);
+			assertTrue(inspected.contains("CALC_FAILED"), inspected);
+			String listed = runtime.execute(new PlannerToolCall("list", "list_work", new JsonObject(), null, null)).join();
+			assertTrue(listed.contains(workId), listed);
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
+	void rejectedPlannerActionDoesNotInventSuccessfulWork() {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			String result = runtime.executePlannerAction(new PlannerToolCall("bad", "not_a_tool", new JsonObject(), null, null)).join();
+			var receipt = JsonParser.parseString(result.substring(result.indexOf('{'))).getAsJsonObject();
+			assertFalse(receipt.get("accepted").getAsBoolean(), result);
+			assertFalse(receipt.has("work"), result);
+		} finally { runtime.shutdown(); }
 	}
 
 	@Test

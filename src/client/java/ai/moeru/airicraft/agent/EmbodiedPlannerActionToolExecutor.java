@@ -76,6 +76,8 @@ record EmbodiedPlannerActionToolExecutor(
 			return ToolPolicy.READ;
 		}
 		return switch (toolName) {
+			case "inspect_work", "list_work", "cancel_work", "wait_for_work" -> ToolPolicy.READ;
+			case "resume_work" -> ToolPolicy.ACTION;
 			case PlannerToolCatalog.CANCEL_ACTION_GOAL, PlannerToolCatalog.CANCEL_SMELTING,
 				PlannerToolCatalog.CONFIGURE_REFLEX -> ToolPolicy.READ;
 			case PlannerToolCatalog.CANCEL_TASK, PlannerToolCatalog.CLEAR_GOAL -> ToolPolicy.GRAPH_CONTROL;

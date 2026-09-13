@@ -187,7 +187,7 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		if (!handler.getSlot(2).getStack().isEmpty())
 			return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "inventory_full remainingOutput=" + handler.getSlot(2).getStack().getCount()));
 		if (processId != null) {
-			processManager.cancel(processId);
+			processManager.markCollected(processId);
 		}
 		return complete(request, "smelting_collected");
 	}

@@ -68,6 +68,7 @@ public final class LlmFlightRecorder {
 				}
 				var current = context.getAsJsonObject("current");
 				if (current.has("job")) metadata.put("work", current.get("job").deepCopy());
+				if (current.has("work")) metadata.put("work", current.get("work").deepCopy());
 				record.decisionContext = Map.copyOf(metadata);
 				break;
 			}

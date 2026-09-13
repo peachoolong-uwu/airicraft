@@ -196,7 +196,10 @@ public final class PlannerToolSurface {
 		}
 	}
 
-	public record DiscoveryResult(String query, List<ToolDescriptor> matches, List<String> activeToolNames) {
+	public record DiscoveryResult(String query, List<ToolDescriptor> matches, List<String> activeToolNames, boolean catalogOnly) {
+		public DiscoveryResult(String query, List<ToolDescriptor> matches, List<String> activeToolNames) {
+			this(query, matches, activeToolNames, false);
+		}
 		public DiscoveryResult {
 			query = Objects.requireNonNullElse(query, "");
 			matches = matches == null ? List.of() : List.copyOf(matches);
@@ -213,7 +216,8 @@ public final class PlannerToolSurface {
 				cards.add(match.name() + " (" + match.category() + "): " + match.description());
 			}
 			return "Tool result for discover_tools: query=" + query
-				+ " activatedTools=" + matches.stream().map(ToolDescriptor::name).toList()
+					+ (catalogOnly ? " matchingTools=" : " activatedTools=") + matches.stream().map(ToolDescriptor::name).toList()
+					+ (catalogOnly ? ". These schemas are already advertised; discovery does not change the tool prefix." : "")
 				+ " cards=" + cards;
 		}
 	}

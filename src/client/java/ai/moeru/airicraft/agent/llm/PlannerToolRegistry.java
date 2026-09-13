@@ -82,7 +82,8 @@ public final class PlannerToolRegistry {
 	}
 
 	public PlannerToolSurface.DiscoveryResult discoverTools(String query, int maxResults) {
-		return toolSurface.discover(availableToolDescriptors(), query, maxResults);
+		var result = toolSurface.discover(availableToolDescriptors(), query, maxResults);
+		return fixedTools == null ? result : new PlannerToolSurface.DiscoveryResult(result.query(), result.matches(), activeToolNames(), true);
 	}
 
 	public void resetToolSurface() {
@@ -106,6 +107,10 @@ public final class PlannerToolRegistry {
 			if (provider.available()) {
 				tools.addAll(provider.openAiTools());
 			}
+		}
+		if (providers.stream().anyMatch(provider -> provider.id().equals("work"))) {
+			tools.removeIf(tool -> List.of("list_action_goals", "inspect_action_goal", "cancel_action_goal",
+				"cancel_task", "clear_goal", "resume_task", "cancel_smelting").contains(toolName(tool)));
 		}
 		return List.copyOf(tools);
 	}
