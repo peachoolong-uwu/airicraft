@@ -126,6 +126,11 @@ public final class FlightRecordingObservability implements AgentObservability {
 	}
 
 	@Override
+	public java.util.function.Consumer<String> streamLlmResponse(Context context) {
+		return recorder.streamListener().andThen(delegate.streamLlmResponse(context));
+	}
+
+	@Override
 	public void recordRawLlmResponse(Context context, Integer statusCode, String responseModel, LlmUsageSnapshot usage, String rawResponseBody) {
 		delegate.recordRawLlmResponse(context, statusCode, responseModel, usage, rawResponseBody);
 		recorder.recordRawResponse(statusCode, responseModel, usage, rawResponseBody);

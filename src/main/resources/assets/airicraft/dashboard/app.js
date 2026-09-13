@@ -253,7 +253,8 @@ function callSummary(item) {
 function renderCall(item) {
   const p = item.payload || {};
   let request = null;
-  try { request = JSON.parse(p.requestBody || 'null'); } catch {}
+  const requestBody = p.requestBody ?? state.bySequence.get(p.request?.observationSequence)?.payload?.requestBody;
+  try { request = JSON.parse(requestBody || 'null'); } catch {}
   const messages = request?.messages || [];
   return `<article class="call">
     <div class="call-header selectable" data-sequence="${item.sequence}">
@@ -262,12 +263,13 @@ function renderCall(item) {
       <small>#${p.sequenceId} · ${duration((p.completedAtMs || Date.now()) - p.requestedAtMs)} · ${escapeHtml(safe(p.usage?.totalTokens, '?'))} tok</small>
     </div>
     <div class="call-body">
+      ${p.status === 'STREAMING' ? `<div class="message assistant"><label>Streaming · incomplete</label><pre>${escapeHtml(p.rawResponseBody || '')}</pre></div>` : ''}
       ${messages.map(messageHtml).join('') || '<p class="muted">Request body is not a chat envelope; use raw details below.</p>'}
       ${p.parsedResponse ? `<div class="message assistant"><label>parsed response</label><pre>${escapeHtml(typeof p.parsedResponse === 'string' ? p.parsedResponse : pretty(p.parsedResponse))}</pre></div>` : ''}
       ${p.failureMessage ? `<div class="message"><label class="error">${escapeHtml(p.failureType)}</label><pre>${escapeHtml(p.failureMessage)}</pre></div>` : ''}
     </div>
-    <details><summary>Exact request envelope</summary><div class="card-body"><pre class="json">${escapeHtml(pretty(request ?? p.requestBody))}</pre></div></details>
-    <details><summary>Exact raw response</summary><div class="card-body"><pre class="json">${escapeHtml(p.rawResponseBody || 'No raw response yet')}</pre></div></details>
+    <details><summary>Exact request envelope</summary><div class="card-body"><pre class="json">${escapeHtml(pretty(request ?? requestBody ?? "Request envelope no longer in the loaded window"))}</pre></div></details>
+    <details><summary>${p.status === 'STREAMING' ? 'Stream preview' : request?.stream ? 'Assembled stream response' : 'Exact raw response'}</summary><div class="card-body"><pre class="json">${escapeHtml(p.rawResponseBody || 'No raw response yet')}</pre></div></details>
   </article>`;
 }
 function messageHtml(message) {

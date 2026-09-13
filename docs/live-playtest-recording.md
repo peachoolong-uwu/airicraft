@@ -79,3 +79,7 @@ Live validation on 2026-09-10 used a copied peaceful survival save through the p
 - Browser checks loaded live history and a saved incident, sought to server tick 6200 within an exported 5200–7200 interval, rendered the 640-pixel frame and advanced history playback without JavaScript errors. The saved file was indexed for on-demand reading.
 
 This verifies recording behavior, not the earlier survival gameplay hypotheses. A restart on the final runtime build separately verified pause at server tick 1171, an export with 228 expanded runtime snapshots, and zero frame-capture failures. A browser reload check confirmed that the session changed and the previous observation inspector cleared without JavaScript errors. The post-disconnect export behavior also has a lifecycle regression test.
+
+## Streaming planner observations
+
+Planner calls now expose a bounded live preview in `llm_call` records with status `STREAMING`. Final records preserve the assembled response and usage. Large request envelopes are stored once as `llm_request`; resolve `request.observationSequence` to its `requestBody` when reading JSONL. The dashboard supports these references and older inline envelopes. Export all observation types when preserving a call, so its shared request is included. Streaming capture follows the same five-server-tick poll and pause boundary as other LLM history. See [planner streaming](planner-streaming.md).

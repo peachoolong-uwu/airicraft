@@ -7,6 +7,10 @@ public interface LlmBackend {
 		return generate(request.conversation());
 	}
 
+	default LlmCallResult<PlannerResponse> generate(PlannerBackendRequest request, java.util.function.Consumer<String> preview) throws LlmBackendException {
+		return generate(request);
+	}
+
 	void injectMockResponse(PlannerResponse response);
 
 	void injectTimeout();

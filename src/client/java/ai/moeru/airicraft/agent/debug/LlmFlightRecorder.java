@@ -53,6 +53,19 @@ public final class LlmFlightRecorder {
 		trim();
 	}
 
+	public synchronized java.util.function.Consumer<String> streamListener() {
+		MutableRecord record = pendingOrSynthetic();
+		var preview = new ai.moeru.airicraft.agent.llm.PlannerStreamPreview();
+		return delta -> {
+			synchronized (LlmFlightRecorder.this) {
+				if (!record.status.equals("REQUESTED") && !record.status.equals("STREAMING")) return;
+				preview.append(delta);
+				record.status = "STREAMING";
+				record.rawResponseBody = preview.text();
+			}
+		};
+	}
+
 	public synchronized void recordRawResponse(Integer statusCode, String responseModel, LlmUsageSnapshot usage, String rawResponseBody) {
 		MutableRecord record = pendingOrSynthetic();
 		record.status = "RAW_RESPONSE";

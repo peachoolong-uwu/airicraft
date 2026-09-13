@@ -59,6 +59,10 @@ public final class OpenAiCompatibleChatClient {
 	}
 
 	LlmCallResult<String> complete(LlmConversation conversation, LlmRequestOptions options) throws LlmBackendException {
+		return complete(conversation, options, ignored -> {});
+	}
+
+	LlmCallResult<String> complete(LlmConversation conversation, LlmRequestOptions options, java.util.function.Consumer<String> preview) throws LlmBackendException {
 		Objects.requireNonNull(conversation, "conversation");
 		Objects.requireNonNull(options, "options");
 		if (!config.isConfigured()) {
@@ -75,7 +79,7 @@ public final class OpenAiCompatibleChatClient {
 		}
 
 		String requestBody = GSON.toJson(buildRequestPayload(conversation, options));
-		HttpResponse<String> response = sendHttpRequest(uri, conversation, requestBody);
+		HttpResponse<String> response = sendHttpRequest(uri, conversation, requestBody, options.plannerTools(), preview);
 		if (response.statusCode() >= 400) {
 			String message = providerErrorMessage(response.statusCode(), response.body());
 			observability.recordFailure(
@@ -107,7 +111,7 @@ public final class OpenAiCompatibleChatClient {
 		}
 	}
 
-	private HttpResponse<String> sendHttpRequest(URI uri, LlmConversation conversation, String requestBody) throws LlmBackendException {
+	private HttpResponse<String> sendHttpRequest(URI uri, LlmConversation conversation, String requestBody, boolean streaming, java.util.function.Consumer<String> preview) throws LlmBackendException {
 		observability.recordLlmRequest(
 			Context.current(),
 			TraceSanitizer.inferProviderName(config.providerBaseUrl()),
@@ -136,7 +140,33 @@ public final class OpenAiCompatibleChatClient {
 			.build();
 
 		try {
-			HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+			HttpResponse<String> response;
+			if (streaming) {
+				var streamPreview = preview.andThen(observability.streamLlmResponse(Context.current()));
+				var future = httpClient.sendAsync(httpRequest, info -> {
+					if (info.statusCode() >= 400 || !info.headers().firstValue("Content-Type").orElse("").contains("text/event-stream"))
+						return HttpResponse.BodySubscribers.ofString(StandardCharsets.UTF_8);
+					var stream = new OpenAiChatStream(streamPreview);
+					return HttpResponse.BodySubscribers.fromLineSubscriber(stream, OpenAiChatStream::response, StandardCharsets.UTF_8, null);
+				});
+				try {
+					response = future.get(config.requestTimeoutMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+				} catch (java.util.concurrent.TimeoutException exception) {
+					future.cancel(true);
+					throw new java.net.http.HttpTimeoutException("Planner stream timed out");
+				} catch (InterruptedException exception) {
+					future.cancel(true);
+					throw exception;
+				} catch (java.util.concurrent.ExecutionException exception) {
+					Throwable cause = exception.getCause();
+					if (cause instanceof IOException io) throw io;
+					String message = requestFailureMessage("Invalid planner stream", cause);
+					observability.recordFailure(Context.current(), LlmFailureType.PARSE_ERROR.name(), message, cause);
+					throw new LlmBackendException(LlmFailureType.PARSE_ERROR, message, cause);
+				}
+			} else {
+				response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+			}
 			observability.recordRawLlmResponse(
 				Context.current(),
 				response.statusCode(),
@@ -192,6 +222,8 @@ public final class OpenAiCompatibleChatClient {
 			payload.put("response_format", Map.of("type", JSON_OBJECT_RESPONSE_FORMAT));
 		}
 		if (options.plannerTools()) {
+			payload.put("stream", true);
+			payload.put("stream_options", Map.of("include_usage", true));
 			payload.put("tools", toolRegistry.openAiTools());
 			payload.put("tool_choice", "auto");
 		}

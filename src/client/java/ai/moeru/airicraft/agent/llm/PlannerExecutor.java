@@ -83,15 +83,16 @@ public final class PlannerExecutor {
 		Context executionContext = parentContext == null ? Context.current() : parentContext;
 		Context plannerContext = observability.startChildSpan(spanName, executionContext);
 		long submissionId = nextSubmissionId++;
+		PlannerStreamPreview preview = new PlannerStreamPreview();
 		CompletableFuture<LlmCallResult<PlannerResponse>> future = CompletableFuture.supplyAsync(() -> {
 			try (Scope scope = plannerContext.makeCurrent()) {
-				return llmBackend.generate(new PlannerBackendRequest(generation, attempt, phase, request, conversation));
+				return llmBackend.generate(new PlannerBackendRequest(generation, attempt, phase, request, conversation), preview::append);
 			}
 			catch (LlmBackendException exception) {
 				throw new CompletionException(exception);
 			}
 		}, executorService);
-		inFlightAttempts.put(submissionId, new InFlightAttempt(submissionId, generation, attempt, phase, request, future, plannerContext));
+		inFlightAttempts.put(submissionId, new InFlightAttempt(submissionId, generation, attempt, phase, request, future, plannerContext, preview));
 		return true;
 	}
 
@@ -212,6 +213,15 @@ public final class PlannerExecutor {
 		return null;
 	}
 
+	public java.util.Optional<PlannerConversationDebugMessage> streamPreview(long generation) {
+		return inFlightAttempts.values().stream()
+			.filter(attempt -> attempt.generation() == generation && !detachedGenerations.contains(generation))
+			.reduce((first, last) -> last)
+			.filter(attempt -> !attempt.preview().text().isEmpty())
+			.map(attempt -> new PlannerConversationDebugMessage("assistant", PlannerConversationDebugKind.ASSISTANT_TURN,
+				"[Streaming — incomplete]\n" + attempt.preview().text(), generation, attempt.phase().name(), attempt.attempt(), false));
+	}
+
 	public void injectMockResponse(PlannerResponse response) {
 		llmBackend.injectMockResponse(response);
 	}
@@ -296,7 +306,8 @@ public final class PlannerExecutor {
 		PlannerSessionPhase phase,
 		PlannerRequest request,
 		CompletableFuture<LlmCallResult<PlannerResponse>> future,
-		Context context
+		Context context,
+		PlannerStreamPreview preview
 	) {
 	}
 }

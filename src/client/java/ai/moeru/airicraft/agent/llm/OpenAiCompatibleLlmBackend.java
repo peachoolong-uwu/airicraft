@@ -48,6 +48,15 @@ public final class OpenAiCompatibleLlmBackend implements LlmBackend {
 
 	@Override
 	public synchronized LlmCallResult<PlannerResponse> generate(LlmConversation conversation) throws LlmBackendException {
+		return generate(conversation, ignored -> {});
+	}
+
+	@Override
+	public LlmCallResult<PlannerResponse> generate(PlannerBackendRequest request, java.util.function.Consumer<String> preview) throws LlmBackendException {
+		return generate(request.conversation(), preview);
+	}
+
+	private synchronized LlmCallResult<PlannerResponse> generate(LlmConversation conversation, java.util.function.Consumer<String> preview) throws LlmBackendException {
 		Objects.requireNonNull(conversation, "conversation");
 
 		Object injected = injectedOutcomes.pollFirst();
@@ -60,7 +69,7 @@ public final class OpenAiCompatibleLlmBackend implements LlmBackend {
 			throw new LlmBackendException(LlmFailureType.TIMEOUT, timeoutException.getMessage(), timeoutException);
 		}
 
-		LlmCallResult<String> rawResponse = chatClient.complete(conversation, LlmRequestOptions.planner());
+		LlmCallResult<String> rawResponse = chatClient.complete(conversation, LlmRequestOptions.planner(), preview);
 		PlannerResponse plannerResponse = parsePlannerResponse(conversation, rawResponse);
 		observability.recordLlmResponse(Context.current(), rawResponse.statusCode(), rawResponse.responseModel(), rawResponse.usage(), plannerResponse);
 		return LlmCallResult.of(plannerResponse, rawResponse.usage(), rawResponse.statusCode(), rawResponse.responseModel());

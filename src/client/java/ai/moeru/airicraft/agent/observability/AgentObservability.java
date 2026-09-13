@@ -62,6 +62,11 @@ public interface AgentObservability extends AutoCloseable {
 
 	void recordLlmResponse(Context context, Integer statusCode, String responseModel, LlmUsageSnapshot usage, PlannerResponse plannerResponse);
 
+	/** Called on the request thread; the returned listener may run on an HTTP worker. */
+	default java.util.function.Consumer<String> streamLlmResponse(Context context) {
+		return ignored -> {};
+	}
+
 	default void recordRawLlmResponse(Context context, Integer statusCode, String responseModel, LlmUsageSnapshot usage, String rawResponseBody) {
 	}
 

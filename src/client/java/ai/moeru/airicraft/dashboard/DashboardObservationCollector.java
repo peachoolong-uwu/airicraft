@@ -156,11 +156,12 @@ public final class DashboardObservationCollector {
 		}
 		for (LlmFlightRecord record : result.records()) {
 			highestLlmSequence = Math.max(highestLlmSequence, record.sequenceId());
-			String version = record.status() + ':' + record.completedAtMs() + ':' + record.rawResponseBody().length()
+			String version = record.status() + ':' + record.completedAtMs() + ':' + record.rawResponseBody().hashCode()
 				+ ':' + record.failureMessage().length();
 			if (!version.equals(llmVersions.put(record.sequenceId(), version))) {
-				long capturedAt = record.completedAtMs() > 0L ? record.completedAtMs() : record.requestedAtMs();
-				store.append("llm_call", tick, capturedAt, record);
+				long capturedAt = record.status().equals("STREAMING") ? System.currentTimeMillis()
+					: record.completedAtMs() > 0L ? record.completedAtMs() : record.requestedAtMs();
+				store.append("llm_call", tick, capturedAt, llmPayload(store, record, tick, capturedAt));
 			}
 		}
 		if (llmVersions.size() > 4096) {
@@ -220,6 +221,17 @@ public final class DashboardObservationCollector {
 		payload.put("visionAvailable", runtime.visionAvailable());
 		payload.put("world", worldSnapshot(client));
 		payload.put("placePreservation", ai.moeru.airicraft.agent.memory.WorldPlacePreservation.debugSnapshot());
+		return payload;
+	}
+
+	static com.google.gson.JsonObject llmPayload(DashboardObservationStore store, LlmFlightRecord record, long tick, long capturedAtMs) {
+		var payload = GSON.toJsonTree(record).getAsJsonObject();
+		if (!record.requestBody().isEmpty()) {
+			var request = store.appendContext("llm_request", Long.toString(record.sequenceId()), tick, capturedAtMs,
+				Map.of("requestBody", record.requestBody()));
+			payload.remove("requestBody");
+			payload.add("request", GSON.toJsonTree(Map.of("observationSequence", request.sequence())));
+		}
 		return payload;
 	}
 

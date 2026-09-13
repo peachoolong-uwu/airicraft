@@ -15,6 +15,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DashboardObservationCollectorTest {
 	@Test
+	void streamingUpdatesReferenceOneRequestEnvelope() {
+		var store = new DashboardObservationStore(1024L * 1024L);
+		var recorder = new ai.moeru.airicraft.agent.debug.LlmFlightRecorder(8);
+		recorder.recordRequest("planner", "one", "test", java.net.URI.create("http://localhost"), "qwen", 1000,
+			null, "large prompt ".repeat(1000));
+		var stream = recorder.streamListener();
+		store.advanceClock(10, false, true);
+		stream.accept("first token");
+		var first = DashboardObservationCollector.llmPayload(store, recorder.query(null).records().getFirst(), 10, 100);
+		store.advanceClock(20, false, true);
+		stream.accept(" second token");
+		var second = DashboardObservationCollector.llmPayload(store, recorder.query(null).records().getFirst(), 20, 200);
+		assertEquals(1, store.retainedObservations().size());
+		assertEquals(20, store.retainedObservations().getFirst().throughServerTickId());
+		assertEquals(first.get("request"), second.get("request"));
+		assertTrue(!second.has("requestBody"));
+		assertTrue(second.toString().length() < 1000);
+		assertTrue(second.get("rawResponseBody").getAsString().endsWith("second token"));
+	}
+
+	@Test
 	void missionSnapshotsReferenceOneCatalogAndKeepCurrentEvidence() {
 		DashboardObservationStore store = new DashboardObservationStore(1024L * 1024L);
 		var recipe = new CraftingOpportunity("bread", "minecraft:bread", 1, List.of("minecraft:wheat", "minecraft:wheat", "minecraft:wheat"));

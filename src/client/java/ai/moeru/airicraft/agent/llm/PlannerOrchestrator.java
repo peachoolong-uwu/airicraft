@@ -212,7 +212,8 @@ public final class PlannerOrchestrator {
 	}
 
 	public PlannerConversationDebugSnapshot projectedConversationDebugSnapshot() {
-		return conversationProjector.projectedSnapshot(turnJournal);
+		var snapshot = conversationProjector.projectedSnapshot(turnJournal);
+		return plannerExecutor.streamPreview(sessionCoordinator.activeGeneration()).map(snapshot::withAppended).orElse(snapshot);
 	}
 
 	public PlannerConversationDebugSnapshot canonicalConversationDebugSnapshot() {
@@ -293,6 +294,7 @@ public final class PlannerOrchestrator {
 	}
 
 	public PlannerExecutionResult poll() {
+		if (plannerExecutor.hasInFlight()) recordConversationSources();
 		if (compactionService.hasInFlight()) {
 			return pollCompaction();
 		}
