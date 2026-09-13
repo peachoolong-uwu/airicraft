@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class LiveBaritoneFacade implements BaritoneFacade {
 	private final IBaritone baritone;
 	private final Runnable settingsApplier;
+	private final java.util.function.BooleanSupplier arrivalSupported;
 	private final ConcurrentLinkedQueue<PathEvent> pathEvents = new ConcurrentLinkedQueue<>();
 	private final ConcurrentLinkedQueue<Long> expectedCancellations = new ConcurrentLinkedQueue<>();
 	private final ConcurrentLinkedQueue<Long> deferredCancellations = new ConcurrentLinkedQueue<>();
@@ -34,6 +35,11 @@ public final class LiveBaritoneFacade implements BaritoneFacade {
 	}
 
 	LiveBaritoneFacade(IBaritone baritone, Runnable settingsApplier) {
+		this(baritone, settingsApplier, null);
+	}
+
+	LiveBaritoneFacade(IBaritone baritone, Runnable settingsApplier, java.util.function.BooleanSupplier arrivalSupported) {
+		this.arrivalSupported = arrivalSupported;
 		this.baritone = baritone;
 		this.settingsApplier = Objects.requireNonNull(settingsApplier, "settingsApplier");
 		if (baritone != null) {
@@ -218,6 +224,10 @@ public final class LiveBaritoneFacade implements BaritoneFacade {
 			return false;
 		}
 
+		var player = baritone.getPlayerContext().player();
+		boolean supported = arrivalSupported != null ? arrivalSupported.getAsBoolean()
+			: player != null && (player.isOnGround() || player.isTouchingWater() || player.isClimbing());
+		if (!supported) return false;
 		BlockPos playerBlockPos = baritone.getPlayerContext().playerFeet();
 		if (playerBlockPos == null) return false;
 		if (position.exactY()) {

@@ -1247,6 +1247,33 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void physicalEpisodesDeliverObservedPositionAndTaskContextToPlanner() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		var payload = Map.<String,Object>of("kind","fall","phase","ended","position",Map.of("x",318,"y",-12,"z",279),
+			"startContext",Map.of("taskId","nav-1"),"currentContext",Map.of("taskStatus","COMPLETED"));
+		Field field = EmbodiedAgentRuntime.class.getDeclaredField("eventPipeline");
+		field.setAccessible(true);
+		var pipeline = (ai.moeru.airicraft.agent.events.AgentEventPipeline) field.get(runtime);
+		pipeline.appendRaw(20, "player.physical", payload);
+		var triggers = pipeline.drain(runtime::createPlannerTriggerForTests);
+		assertEquals(1, triggers.size());
+		assertEquals(payload, pipeline.plannerEventBuffer().query(null).events().getFirst().payload());
+		var trigger = triggers.getFirst();
+		assertEquals(PlannerTriggerType.SYSTEM,trigger.type());
+		assertEquals("physical:fall",trigger.coalescingKey());
+		assertTrue(trigger.text().contains("nav-1"));
+		assertTrue(trigger.text().contains("-12"));
+		assertTrue(trigger.text().contains("not proof of an involuntary cause"));
+		setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.ACTIVE, "hold-1", "nav-1", null));
+		pipeline.appendRaw(21, "player.physical", Map.of("kind", "burning", "phase", "started"));
+		assertTrue(pipeline.drain(runtime::createPlannerTriggerForTests).isEmpty());
+		assertEquals(2, pipeline.plannerEventBuffer().query(null).events().size());
+		setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.AWAITING_PLANNER, "hold-1", "nav-1", null));
+		pipeline.appendRaw(22, "player.physical", Map.of("kind", "burning", "phase", "ended"));
+		assertEquals(1, pipeline.drain(runtime::createPlannerTriggerForTests).size());
+	}
+
+	@Test
 	void smeltingOutputReadyEventCreatesSystemPlannerTrigger() {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 

@@ -609,7 +609,8 @@ class BaritoneTaskExecutorTest {
 		executor.tick(multiplayer(), Optional.of(request("nav-task", goal)));
 		facade.pathEvents.add("cancelled");
 
-		Optional<TaskTerminalEvent> event = executor.tick(multiplayer(), Optional.of(request("nav-task", goal)));
+		assertTrue(executor.tick(multiplayerAt(20), Optional.of(request("nav-task", goal))).isEmpty());
+		Optional<TaskTerminalEvent> event = executor.tick(multiplayerAt(30), Optional.of(request("nav-task", goal)));
 
 		assertTrue(event.isPresent());
 		assertEquals(TaskExecutionState.CANCELLED, event.orElseThrow().terminalState());
@@ -617,6 +618,33 @@ class BaritoneTaskExecutorTest {
 
 		executor.tick(multiplayer(), Optional.of(request("nav-task", goal)));
 		assertEquals(TaskExecutionState.CANCELLED, executor.snapshot().state());
+	}
+
+	@Test
+	void pathGoalEventCannotClaimArrivalWithoutPhysicalConfirmation() {
+		var facade = new FakeBaritoneFacade();
+		var executor = new BaritoneTaskExecutor(facade);
+		var goal = new GoalSnapshot(GoalType.NAVIGATE_TO, null, new GoalPosition(318,-10,280,true),null,20L,"planner_tool");
+		executor.tick(multiplayer(),Optional.of(request("falling",goal)));
+		facade.pathEvents.add("AT_GOAL");
+		assertTrue(executor.tick(multiplayerAt(20),Optional.of(request("falling",goal))).isEmpty());
+		var event=executor.tick(multiplayerAt(30),Optional.of(request("falling",goal))).orElseThrow();
+		assertEquals(TaskExecutionState.FAILED,event.terminalState());
+		assertEquals("navigation_arrival_unconfirmed",event.message());
+	}
+
+	@Test
+	void normalStepCanLandAfterPathEndWithoutReissuingMovement() {
+		var facade = new FakeBaritoneFacade();
+		var executor = new BaritoneTaskExecutor(facade);
+		var goal = new GoalSnapshot(GoalType.NAVIGATE_TO,null,new GoalPosition(319,-9,281,true),null,20L,"planner_tool");
+		var request = request("step-up",goal);
+		executor.tick(multiplayerAt(20),Optional.of(request));
+		facade.pathEvents.add("CANCELED");
+		assertTrue(executor.tick(multiplayerAt(21),Optional.of(request)).isEmpty());
+		facade.navigationGoalReached = true;
+		assertEquals(TaskExecutionState.COMPLETED,executor.tick(multiplayerAt(23),Optional.of(request)).orElseThrow().terminalState());
+		assertEquals(1, facade.navigateCalls.size());
 	}
 
 	@Test
@@ -684,8 +712,9 @@ class BaritoneTaskExecutorTest {
 		facade.pathEvents.add("CANCELED");
 		facade.pathEvents.add("CANCELED");
 
-		Optional<TaskTerminalEvent> first = executor.tick(multiplayer(), Optional.of(request("nav-task", goal)));
-		Optional<TaskTerminalEvent> second = executor.tick(multiplayer(), Optional.of(request("nav-task", goal)));
+		assertTrue(executor.tick(multiplayerAt(20), Optional.of(request("nav-task", goal))).isEmpty());
+		Optional<TaskTerminalEvent> first = executor.tick(multiplayerAt(30), Optional.of(request("nav-task", goal)));
+		Optional<TaskTerminalEvent> second = executor.tick(multiplayerAt(31), Optional.of(request("nav-task", goal)));
 
 		assertTrue(first.isPresent());
 		assertTrue(second.isEmpty());

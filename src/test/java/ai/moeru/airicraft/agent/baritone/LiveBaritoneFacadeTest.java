@@ -62,7 +62,7 @@ class LiveBaritoneFacadeTest {
 	@Test
 	void horizontalNavigationIgnoresHeightInBothPathAndCompletion() {
 		RecordingBaritoneHarness harness = new RecordingBaritoneHarness();
-		LiveBaritoneFacade facade = new LiveBaritoneFacade(harness.baritone(), () -> {});
+		LiveBaritoneFacade facade = new LiveBaritoneFacade(harness.baritone(), () -> {}, () -> true);
 		GoalPosition destination = new GoalPosition(215, 103, 416, false);
 		facade.startNavigate(destination);
 		GoalXZ goal = assertInstanceOf(GoalXZ.class, harness.navigateCalls.getFirst());
@@ -77,9 +77,20 @@ class LiveBaritoneFacadeTest {
 	}
 
 	@Test
+	void fallingThroughExactTargetIsNotArrival() {
+		var harness = new RecordingBaritoneHarness();
+		var supported = new java.util.concurrent.atomic.AtomicBoolean(false);
+		var facade = new LiveBaritoneFacade(harness.baritone(), () -> {}, supported::get);
+		harness.feet.set(new BetterBlockPos(318,-10,280));
+		assertFalse(facade.navigationGoalReached(new GoalPosition(318,-10,280,true)));
+		supported.set(true);
+		assertTrue(facade.navigationGoalReached(new GoalPosition(318,-10,280,true)));
+	}
+
+	@Test
 	void navigationCompletionUsesBaritoneFeetOnPartialHeightGround() {
 		RecordingBaritoneHarness harness = new RecordingBaritoneHarness();
-		LiveBaritoneFacade facade = new LiveBaritoneFacade(harness.baritone(), () -> {});
+		LiveBaritoneFacade facade = new LiveBaritoneFacade(harness.baritone(), () -> {}, () -> true);
 		// Standing at physical Y 62.9375 on farmland: Baritone feet are Y 63.
 		harness.feet.set(new BetterBlockPos(264, 63, 483));
 		assertTrue(facade.navigationGoalReached(new GoalPosition(264, 63, 483, true)));

@@ -432,3 +432,12 @@ D089 follow-up: six more chest carts opened and transferred loot after the fix, 
 ### 2026-09-13: Navigation reports arrival before landing
 
 Confirmed in D090 after resuming the diamond search: a mapped one-block descent from318,-9,281 to318,-10,280 reported COMPLETED while falling, then settled at318,-12,279 outside the intended corridor. Recorder diamond-west-corridor-drop.jsonl shows airborne state, task.completed/Goal reached with BARITONE_CANCELLED, and the later wrong landing; reflex stayed IDLE and health20. LiveBaritoneFacade.navigationGoalReached checks playerFeet block equality without a stable-landing condition, and cancellation is promoted to success through that check. The physical overshoot cause is not fully established; no patch claimed. Game left paused for diagnosis because false arrival undermines safe automated ledge traversal. A geometric return exists but is not live validated; no diamonds found yet.
+
+
+### 2026-09-13: Physical observations and honest arrival reporting
+
+D091 adds `player.physical` episodes to the planner feed and flight recorder: significant falls, movement without directional input, burning and low air, with actual position/motion and start/current task context. Existing damage events gain position/task context. System2 chooses recovery; the observer adds no movement controller. See docs/physical-observations.md for thresholds and limits.
+
+Fixed the false-arrival predicate from D090: airborne block equality cannot establish success. An immediate support check initially cancelled a normal step-up before landing, reproduced live and exported; replaced with up to10 ticks of observation after path end, without reissuing movement. The return ascent subsequently completed twice. Original descent retries correctly cancelled with actual318,-10,279 position, but did not reproduce the original full overshoot; its movement cause remains unresolved.
+
+A two-block live drop produced start/landed events with task target and actual coordinates. After correcting a stale static routing table retained by HotSwap, physical-planner-fall.jsonl explicitly shows semantic delivery and SYSTEM triggers for both events. No client restart was needed. Full build and focused tests passed. Drift, burning and low-air behavior have automated coverage only; embedded LLM recovery was not exercised in Codex driver mode. Game paused at the verified lower landing for review; no diamond found.

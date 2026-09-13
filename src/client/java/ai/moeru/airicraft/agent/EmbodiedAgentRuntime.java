@@ -56,6 +56,7 @@ import ai.moeru.airicraft.agent.dialogue.DialogueSpeakerLabels;
 import ai.moeru.airicraft.agent.dialogue.DialogueSnapshot;
 import ai.moeru.airicraft.agent.dialogue.DialogueRuntime;
 import ai.moeru.airicraft.agent.events.AgentEventPipeline;
+import ai.moeru.airicraft.agent.events.PhysicalEventObserver;
 import ai.moeru.airicraft.agent.events.EventPolicyChanges;
 import ai.moeru.airicraft.agent.events.EventPolicyDecision;
 import ai.moeru.airicraft.agent.events.EventPolicyEffect;
@@ -213,7 +214,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		"minecraft:raw_iron",
 		"minecraft:iron_ingot"
 	);
-	private static final Map<String, EventRoutingProfile> EVENT_ROUTING_PROFILES = createEventRoutingProfiles();
+	private final Map<String, EventRoutingProfile> eventRoutingProfiles = createEventRoutingProfiles();
 
 	private final AiricraftConfig airicraftConfig;
 	private final AgentConfig config;
@@ -232,12 +233,14 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		eventBuffer,
 		plannerEventBuffer,
 		eventPolicyState,
-		EVENT_ROUTING_PROFILES,
+		eventRoutingProfiles,
 		debugRecorder,
 		this::resolveDefaultEventPolicy
 	);
 	private final ChatIngestService chatIngestService = new ChatIngestService();
 	private final LocalDamageTracker localDamageTracker = new LocalDamageTracker();
+	private PhysicalEventObserver physicalEventObserver;
+	private Object physicalObservationWorld;
 	private final NearbyPlayerTracker nearbyPlayerTracker;
 	private final PrimaryInteractionResolver primaryInteractionResolver = new PrimaryInteractionResolver(200L);
 	private final IdleIdeaScheduler idleIdeaScheduler;
@@ -392,6 +395,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		sessionSnapshot = sessionRuntime.snapshot();
 		autoLanOpenState.clear();
 		localDamageTracker.clear();
+		physicalObserver().reset();
+		physicalObservationWorld = null;
 		sessionSnapshotOverrideForTests = null;
 		blockAcquisitionsOverrideForTests = null;
 		nearbyPlayerTracker.clear(tickCount, eventBuffer);
@@ -445,8 +450,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (!wasWorldLoaded && sessionSnapshot.worldLoaded()) {
 			worldLoadTick = tickCount;
 			localDamageTracker.onLifecycleReset(tickCount);
+			physicalObserver().reset();
 		}
 		if (sessionSnapshot.requiresRespawn()) {
+			physicalObserver().reset();
 			behaviorTreeRuntime.tick(
 				client,
 				sessionSnapshot,
@@ -462,6 +469,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			lastKnownPlayerHealth = currentPlayerHealth(client);
 			return;
 		}
+		observePhysicalEvents(client);
 		openLanIfSingleplayerLocal(client);
 		surfaceMemory.tick(client, tickCount);
 		playerItemUseController.tick(client, tickCount).ifPresent(result -> eventBuffer.append(
@@ -585,6 +593,64 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		drainEventPipeline();
 
 		lastKnownPlayerHealth = currentPlayerHealth(client);
+	}
+
+	private PhysicalEventObserver physicalObserver() {
+		if (physicalEventObserver == null) physicalEventObserver = new PhysicalEventObserver();
+		return physicalEventObserver;
+	}
+
+	private Map<String, Object> physicalTaskContext() {
+		var job = activeJobRuntime.current();
+		Map<String, Object> context = new LinkedHashMap<>();
+		context.put("reflexState", survivalReflexRuntime.snapshot().state().name());
+		if (job.jobId() != null && (!job.status().terminal() || tickCount - job.updatedTick() <= 100)) {
+			context.put("taskId", job.jobId());
+			context.put("taskType", job.type().name());
+			context.put("taskStatus", job.status().name());
+			GoalSnapshot goal = job.directGoal() != null ? job.directGoal()
+				: Objects.equals(job.jobId(), taskExecutionSnapshot.taskId()) ? taskExecutionSnapshot.activeGoal() : null;
+			if (goal != null && goal.position() != null) {
+				var target = goal.position();
+				context.put("target", Map.of("x", target.x(), "y", target.y(), "z", target.z(), "exactY", target.exactY()));
+			}
+		}
+		return Map.copyOf(context);
+	}
+
+	private Map<String, Object> currentPhysicalState() {
+		var client = MinecraftClient.getInstance();
+		if (client == null || client.player == null) return Map.of();
+		var player = client.player;
+		var velocity = player.getVelocity();
+		return Map.of("position", Map.of("x",player.getX(),"y",player.getY(),"z",player.getZ()),
+			"velocity", Map.of("x",velocity.x,"y",velocity.y,"z",velocity.z),
+			"grounded",player.isOnGround(),"touchingWater",player.isTouchingWater(),"climbing",player.isClimbing());
+	}
+
+	private void observePhysicalEvents(MinecraftClient client) {
+		if (client == null || client.player == null || client.world == null || !client.player.isAlive()) {
+			physicalObserver().reset();
+			physicalObservationWorld = null;
+			return;
+		}
+		if (physicalObservationWorld != client.world) {
+			physicalObserver().reset();
+			physicalObservationWorld = client.world;
+		}
+		var player = client.player;
+		var position = player.getPos();
+		var velocity = player.getVelocity();
+		var input = player.input == null ? net.minecraft.util.PlayerInput.DEFAULT : player.input.playerInput;
+		boolean directional = input.forward() || input.backward() || input.left() || input.right() || input.jump() || input.sneak();
+		var sample = new PhysicalEventObserver.Sample(
+			tickCount, client.world.getRegistryKey().getValue().toString(),
+			new PhysicalEventObserver.Position(position.x, position.y, position.z),
+			new PhysicalEventObserver.Position(velocity.x, velocity.y, velocity.z),
+			player.isOnGround(), player.isTouchingWater(), player.isSubmergedInWater(), player.isClimbing(),
+			player.getAbilities().flying || player.isGliding() || player.hasVehicle(), directional, player.isOnFire(),
+			player.isSubmergedInWater() && player.getAir() <= config.reflex().lowAirTicks(), player.getAir(), player.getHealth(), physicalTaskContext());
+		for (var event : physicalObserver().observe(sample)) eventBuffer.append(tickCount, "player.physical", event.payload());
 	}
 
 	private void tickSurvivalReflex(MinecraftClient client) {
@@ -776,6 +842,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		blockAcquisitionsOverrideForTests = null;
 		autoLanOpenState.clear();
 		localDamageTracker.clear();
+		physicalObserver().reset();
+		physicalObservationWorld = null;
 		nearbyPlayerTracker.clear(tickCount, eventBuffer);
 		eventPipeline.clearForShutdown();
 		primaryInteractionResolver.clear();
@@ -1460,7 +1528,14 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		Map<String, Object> payload = localDamageTracker.consumeDamage(healthInitialized, tickCount, effectiveHealthBefore, healthAfter);
 		lastKnownPlayerHealth = healthAfter;
 		if (payload != null) {
-			eventBuffer.append(tickCount, "combat.damage_taken", payload);
+			var damagePayload = new LinkedHashMap<String, Object>(payload);
+			damagePayload.put("context", physicalTaskContext());
+			var client = MinecraftClient.getInstance();
+			var player = client == null ? null : client.player;
+			if (player != null) {
+				damagePayload.put("position", Map.of("x", player.getX(), "y", player.getY(), "z", player.getZ()));
+			}
+			eventBuffer.append(tickCount, "combat.damage_taken", damagePayload);
 			survivalReflexRuntime.observeDamage(new SurvivalReflexRuntime.DamageObservation(
 				tickCount,
 				stringPayloadValue(payload, "damageTypeId"),
@@ -1495,6 +1570,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	public void onPlayerRespawned() {
 		localDamageTracker.onLifecycleReset(tickCount);
+		physicalObserver().reset();
 		lastKnownPlayerHealth = null;
 		if (sessionSnapshotOverrideForTests != null && sessionSnapshot.requiresRespawn()) {
 			sessionSnapshotOverrideForTests = sessionSnapshotOverrideForTests.withPlayerLifecycleState(PlayerLifecycleState.ALIVE);
@@ -3748,6 +3824,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			case "pickup.item_picked_up" -> createPickupTrigger(event);
 			case "crafting.item_crafted" -> createCraftTrigger(event);
 			case "combat.damage_taken" -> createDamageTrigger(event);
+			case "player.physical" -> createPhysicalTrigger(event);
 			case "reflex.resolved" -> createReflexResolvedTrigger(event);
 			case "smelting.output_ready" -> createSmeltingOutputReadyTrigger(event);
 			case "task.blocked" -> createTaskBlockedTrigger(event);
@@ -3764,6 +3841,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				"pickup.item_picked_up",
 				"crafting.item_crafted",
 				"combat.damage_taken",
+				"player.physical",
 				"smelting.output_ready",
 				"task.blocked",
 				"action_graph.goal_suspended",
@@ -3976,6 +4054,15 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		);
 	}
 
+	private PlannerTrigger createPhysicalTrigger(SemanticEvent event) {
+		// Reflex observations still reach the semantic feed; its existing resolution event wakes the planner.
+		if (survivalReflexRuntime.snapshot().ownsActuation()) return null;
+		return PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
+			"Physical observation: " + new com.google.gson.Gson().toJson(event.payload())
+				+ ". These are observed changes, not proof of an involuntary cause. Use the actual position and task context to decide whether recovery is needed.",
+			event.tick(), event.timestampMs(), "physical:" + event.payload().get("kind"));
+	}
+
 	private PlannerTrigger createReflexResolvedTrigger(SemanticEvent event) {
 		String holdId = stringPayloadValue(event.payload(), "holdId");
 		String cause = stringPayloadValue(event.payload(), "cause");
@@ -4117,7 +4204,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			recordPolicyRuleRejected(ruleId, eventType, upsert.effect(), "eventType is required");
 			return;
 		}
-		EventRoutingProfile profile = EVENT_ROUTING_PROFILES.get(eventType);
+		EventRoutingProfile profile = eventRoutingProfiles.get(eventType);
 		if (profile != null && profile.policyBypass()) {
 			recordPolicyRuleRejected(ruleId, eventType, upsert.effect(), "event type bypasses planner-authored policy");
 			return;
@@ -4171,6 +4258,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		profiles.put("crafting.item_crafted", new EventRoutingProfile("crafting.item_crafted", true, PlannerTriggerType.CRAFT, false));
 		profiles.put("smelting.output_ready", new EventRoutingProfile("smelting.output_ready", true, PlannerTriggerType.SYSTEM, true));
 		profiles.put("combat.damage_taken", new EventRoutingProfile("combat.damage_taken", true, PlannerTriggerType.DAMAGE, false));
+		profiles.put("player.physical", new EventRoutingProfile("player.physical", true, PlannerTriggerType.SYSTEM, true));
 		profiles.put("reflex.threat_detected", new EventRoutingProfile("reflex.threat_detected", true, null, true));
 		profiles.put("reflex.started", new EventRoutingProfile("reflex.started", true, null, true));
 		profiles.put("reflex.action_changed", new EventRoutingProfile("reflex.action_changed", true, null, true));
@@ -4464,6 +4552,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			payload.put("taskId", event.taskId());
 			payload.put("goalType", event.goal().type().name());
 			payload.put("message", event.message() == null ? "" : event.message());
+			if (event.goal().position() != null) {
+				var target = event.goal().position();
+				payload.put("target", Map.of("x",target.x(),"y",target.y(),"z",target.z(),"exactY",target.exactY()));
+			}
+			payload.putAll(currentPhysicalState());
 			if (event.terminationCause() != null) {
 				payload.put("terminationCause", event.terminationCause().name());
 			}
@@ -4474,13 +4567,14 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		}
 
 		String inventorySnapshot = inventorySnapshotForTaskUpdate(event, activeTaskRequest);
+		String physicalState = event.goal().type() == GoalType.NAVIGATE_TO ? " physicalState=" + new com.google.gson.Gson().toJson(currentPhysicalState()) : "";
 		dialogueRuntime.onInternalTaskUpdate(
 			"TASK UPDATE: state=" + event.terminalState().name()
 				+ " taskId=" + event.taskId()
 				+ " goalType=" + event.goal().type().name()
 				+ " message=" + (event.message() == null ? "" : event.message())
 				+ " terminationCause=" + (event.terminationCause() == null ? "" : event.terminationCause().name())
-				+ inventorySnapshot,
+				+ inventorySnapshot + physicalState,
 			tickCount,
 			sessionSnapshot,
 			activeGoal(),

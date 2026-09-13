@@ -46,6 +46,8 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 	private final WaterStallRecovery waterStallRecovery = new WaterStallRecovery();
 
 	private WorldTaskRequest appliedTask;
+	private NavigationEnd pendingNavigationEnd;
+	private record NavigationEnd(String taskId, String event, long tick) {}
 	private String terminalEventTaskId;
 	private TaskExecutionState terminalEventState;
 	private TaskTerminationCause terminalEventCause;
@@ -207,6 +209,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 				pathEvent = Optional.empty();
 			}
 		}
+		pathEvent = observeNavigationEnd(pathEvent, appliedTask, sessionSnapshot.tickCount());
 		boolean mineProcessOwnsPathEvent = mineProcessOwnsPathEvent(pathEvent, appliedTask);
 		MineDropPickupResult mineDropPickupResult = mineProcessOwnsPathEvent
 			? MineDropPickupResult.notHandled()
@@ -221,11 +224,11 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 		Optional<TerminalOutcome> terminalOutcome = terminalOutcomeFor(pathEvent, appliedTask);
-		Optional<String> effectivePathEvent = pathEvent;
+		Optional<String> effectivePathEvent = pendingNavigationEnd == null ? pathEvent : Optional.of("observing_navigation_end");
 		if (terminalOutcome.isPresent()) {
 			clearWaterRecovery();
 		}
-		else if (pathEvent.isEmpty()) {
+		else if (pathEvent.isEmpty() && pendingNavigationEnd == null) {
 			try {
 				effectivePathEvent = waterRecoveryEvent(sessionSnapshot.tickCount(), appliedTask);
 			}
@@ -263,10 +266,25 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 			appliedTask.taskId(),
 			appliedTask.goal(),
 			terminalOutcome.get().state(),
-			messageFor(terminalOutcome.get().state()),
+			terminalOutcome.get().failureCode() == TaskFailureCode.ENVIRONMENT_CHANGED
+				? "navigation_arrival_unconfirmed" : messageFor(terminalOutcome.get().state()),
 			terminalOutcome.get().cause(),
 			terminalOutcome.get().failureCode()
 		));
+	}
+
+	/** Observe a just-ended path briefly; this never issues movement or retries. */
+	private Optional<String> observeNavigationEnd(Optional<String> event, WorldTaskRequest request, long tick) {
+		if (request.goal().type() != GoalType.NAVIGATE_TO
+			|| pendingNavigationEnd != null && !pendingNavigationEnd.taskId().equals(request.taskId())) pendingNavigationEnd = null;
+		if (request.goal().type() != GoalType.NAVIGATE_TO) return event;
+		if (pendingNavigationEnd == null && event.filter(e -> Set.of("AT_GOAL", "CANCELED", "CANCELLED").contains(e.trim().toUpperCase(Locale.ROOT))).isPresent()
+			&& !navigateGoalReached(request)) pendingNavigationEnd = new NavigationEnd(request.taskId(), event.get(), tick);
+		if (pendingNavigationEnd == null) return event;
+		if (!navigateGoalReached(request) && tick - pendingNavigationEnd.tick() < 10) return Optional.empty();
+		String ended = pendingNavigationEnd.event();
+		pendingNavigationEnd = null;
+		return Optional.of(ended);
 	}
 
 	private Optional<String> waterRecoveryEvent(long tick, WorldTaskRequest request) {
@@ -634,7 +652,9 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 		return switch (normalized) {
 			case "AT_GOAL" -> mineProcessOwnsPathEvent(pathEvent, activeTask)
 				? Optional.empty()
-				: Optional.of(new TerminalOutcome(TaskExecutionState.COMPLETED, TaskTerminationCause.GOAL_REACHED, TaskFailureCode.NONE));
+				: Optional.of(activeTask != null && activeTask.goal().type() == GoalType.NAVIGATE_TO && !navigateGoalReached(activeTask)
+					? new TerminalOutcome(TaskExecutionState.FAILED, null, TaskFailureCode.ENVIRONMENT_CHANGED)
+					: new TerminalOutcome(TaskExecutionState.COMPLETED, TaskTerminationCause.GOAL_REACHED, TaskFailureCode.NONE));
 			case "CALC_FAILED" -> mineProcessOwnsPathEvent(pathEvent, activeTask)
 				? Optional.empty()
 				: Optional.of(navigateGoalReached(activeTask)
@@ -1046,6 +1066,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private void reset() {
+		pendingNavigationEnd = null;
 		clearWaterRecovery();
 		appliedTask = null;
 		terminalEventTaskId = null;
