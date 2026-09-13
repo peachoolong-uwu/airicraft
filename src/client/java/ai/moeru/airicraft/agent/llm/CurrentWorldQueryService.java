@@ -69,12 +69,13 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 		ensureWithinDistance(bounds, client.player.getBlockPos());
 		ensureWithinBlockCap(bounds);
 		WorldQueryResult result = switch (mode) {
+			case "check_position", "check_interaction" -> LocalSpatialQuery.inspect(client,mode,bounds.center(),arguments);
 			case "inspect_area" -> inspectArea(client.world, client.player, bounds, arguments);
 			case "find_blocks" -> findBlocks(client.world, client.player, bounds, arguments);
 			case "find_placement_sites" -> findPlacementSites(client.world, client.player, bounds, arguments);
 			default -> throw new WorldQueryException("unsupported_mode " + mode);
 		};
-		if ("find_placement_sites".equals(mode)) return result;
+		if (List.of("find_placement_sites", "check_position", "check_interaction").contains(mode)) return result;
 		World world = client.world;
 		Map<BlockPos, BlockPos> doors = new LinkedHashMap<>();
 		for (BlockPos pos : result.observedPositions()) {

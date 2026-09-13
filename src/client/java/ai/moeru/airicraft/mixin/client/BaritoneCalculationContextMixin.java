@@ -17,6 +17,6 @@ public abstract class BaritoneCalculationContextMixin {
 
 	@Inject(method = "isPossiblyProtected", at = @At("HEAD"), cancellable = true)
 	private void airicraft$preservePlaces(int x, int y, int z, CallbackInfoReturnable<Boolean> cir) {
-		if (WorldPlacePreservation.contains(world, x, y, z)) cir.setReturnValue(true);
+		if (WorldPlacePreservation.contains(world, x, y, z) || !ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.allows(world,x,y,z)) cir.setReturnValue(true);
 	}
 }

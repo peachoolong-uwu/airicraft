@@ -18,7 +18,7 @@ class TargetAcquisitionTaskExecutorTest {
 		assertEquals(2, f.env.breaks, "Both observed blocks remain usable, but the unseen third does not");
 		assertEquals(2, f.env.count);
 		assertEquals(TaskExecutionState.FAILED, f.events.getFirst().terminalState());
-		assertTrue(f.events.getFirst().message().contains("no_reachable_resource_in_scope"));
+		assertTrue(f.events.getFirst().message().contains("no_eligible_resource_in_search_region"));
 	}
 
 	@Test void seenVeinSurvivesTemporaryWithdrawalOfTheSameRequest() {
@@ -124,15 +124,18 @@ class TargetAcquisitionTaskExecutorTest {
 		assertEquals(TaskExecutionState.RUNNING, f.executor.snapshot().state());
 	}
 
-	@Test void surfaceScopeExitCancelsMovementAndReportsPartialCount() {
+	@Test void searchBoundaryDoesNotRejectAUsefulSurfaceGatheringDetour() {
 		Fixture f = new Fixture();
 		f.tick(2);
-		assertTrue(f.nav.active);
 		f.env.inScope = false;
+		f.env.position = pos(20,63,0);
 		f.tick(1);
-		assertFalse(f.nav.active);
-		assertEquals(TaskExecutionState.FAILED, f.executor.snapshot().state());
-		assertTrue(f.events.getFirst().message().contains("acquisition_scope_left"));
+		assertTrue(f.nav.active);
+		assertEquals(TaskExecutionState.RUNNING, f.executor.snapshot().state());
+		assertTrue(f.events.isEmpty());
+		f.env.position = pos(4,64,0); f.env.interactable = true; f.env.countOnBreak = true;
+		f.tick(4);
+		assertEquals(TaskExecutionState.COMPLETED, f.executor.snapshot().state());
 	}
 
 	@Test void failedApproachDoesNotBlacklistOtherSidesOfTheSameBuriedSource() {

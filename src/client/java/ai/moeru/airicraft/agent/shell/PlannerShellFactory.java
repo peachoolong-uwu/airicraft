@@ -184,6 +184,7 @@ public final class PlannerShellFactory {
 		plannerGoal.refreshWorld();
 		var sharedProviders = List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
 			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
+			new ai.moeru.airicraft.agent.spatial.TravelPolicyToolProvider(),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),

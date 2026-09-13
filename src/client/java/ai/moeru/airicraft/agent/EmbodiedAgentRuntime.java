@@ -446,6 +446,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void tickClient(MinecraftClient client) {
+		ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.tick(client, activeTaskInProgress());
+		stopWorkOutsideTravelBounds(client);
 		dialogueRuntime.refreshPlannerGoalWorld();
 		tickCount++;
 		localDamageTracker.pruneStale(tickCount);
@@ -652,6 +654,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		var facts = new java.util.LinkedHashMap<String, Object>();
 		facts.put("objective", dialogueRuntime.currentPlannerObjective());
 		facts.put("session", sessionSnapshot.mode());
+		facts.put("travelRestrictions", ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.snapshot());
 		facts.put("physical", currentPhysicalState());
 		facts.put("reflex", survivalReflexRuntime.snapshot());
 		var work = workHistory.list();
@@ -2260,6 +2263,22 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	@Override
 	public CompletableFuture<String> execute(PlannerToolCall toolCall) {
 		return plannerActionToolExecutor.execute(toolCall);
+	}
+
+	private void stopWorkOutsideTravelBounds(MinecraftClient client) {
+		if (client == null || client.player == null || client.world == null || !activeTaskInProgress()) return;
+		var pos = client.player.getBlockPos();
+		if (ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.permitsMovement(client.world,pos.getX(),pos.getY(),pos.getZ(),pos.getX(),pos.getY(),pos.getZ(),false)) return;
+		var job = activeJobRuntime.current();
+		cancelTask("travel_restriction_violated");
+		var evidence = new LinkedHashMap<String,Object>();
+		evidence.put("failedPredicate", "actor_occupied_cells_inside_travel_bounds");
+		evidence.put("scope", "current_work"); evidence.put("workId", "JOB:" + job.jobId());
+		evidence.put("actorPosition", Map.of("x",pos.getX(),"y",pos.getY(),"z",pos.getZ()));
+		evidence.put("bounds", ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.snapshot());
+		evidence.put("cause", "Observed outside restriction; displacement cause is not inferred. No recovery movement started.");
+		var event = eventBuffer.append(tickCount,"work.travel_restriction_violated",evidence);
+		dialogueRuntime.queueTaskWakeup(null,tickCount,event.seqNo());
 	}
 
 	private void refreshWorkHistory() {

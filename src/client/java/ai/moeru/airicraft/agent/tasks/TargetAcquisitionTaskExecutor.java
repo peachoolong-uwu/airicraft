@@ -80,8 +80,6 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		if (!environment.requiredToolAvailable(spec))
 			return finish(false, "missing_required_harvest_tool itemIds=" + spec.requiredToolItemIds(), TaskFailureCode.MISSING_ITEM);
 		if (activeTicks > 2400) return finish(false, "acquisition_budget_exhausted itemCount=" + count);
-		if (!environment.inScope(environment.position(), constraints, true))
-			return finish(false, "acquisition_scope_left itemCount=" + count);
 		if (!BaritoneReleaseBarrier.released(navigation) && !navigationOwned) {
 			if (phaseTicks > 100) return finish(false, "acquisition_release_timeout");
 			setSnapshot(TaskExecutionState.RUNNING, "waiting_for_navigation_release");
@@ -97,8 +95,8 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			List<Candidate> candidates = environment.candidates(spec, constraints, rejected, observedSources);
 			if (candidates.isEmpty()) {
 				boolean brokenEnough = ((WorldTaskRequest.Mine) request.task()).mineGoalSatisfied();
-				return finish(brokenEnough, (brokenEnough ? "requested_blocks_broken" : "no_reachable_resource_in_scope")
-					+ " itemCount=" + count + " rejectedTargets=" + rejected.size() + " lastRejection=" + lastRejection);
+				return finish(brokenEnough, (brokenEnough ? "requested_blocks_broken" : "no_eligible_resource_in_search_region")
+					+ " evidence=" + new com.google.gson.Gson().toJson(java.util.Map.of("failedPredicate", "eligible_loaded_resource", "scope", "searched_region", "actorPosition", environment.position(), "bounds", constraints)) + " itemCount=" + count + " rejectedTargets=" + rejected.size() + " lastRejection=" + lastRejection);
 			}
 			target = candidates.getFirst();
 			if (((WorldTaskRequest.Mine) request.task()).mineGoalSatisfied() && target.kind() == Kind.BLOCK)

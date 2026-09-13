@@ -32,7 +32,7 @@ public class ClientPlayerInteractionManagerMixin {
 
 	@Inject(method = "attackBlock", at = @At("HEAD"), cancellable = true)
 	private void airicraft$captureAttackStart(BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
-		if (WorldPlacePreservation.blocksPathBreaking(pos)) {
+		if (WorldPlacePreservation.blocksPathBreaking(pos) || ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.blocksEdit(pos)) {
 			cir.setReturnValue(false);
 			return;
 		}
@@ -41,7 +41,7 @@ public class ClientPlayerInteractionManagerMixin {
 
 	@Inject(method = "updateBlockBreakingProgress", at = @At("HEAD"), cancellable = true)
 	private void airicraft$captureBlockBreakStart(BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
-		if (WorldPlacePreservation.blocksPathBreaking(pos)) {
+		if (WorldPlacePreservation.blocksPathBreaking(pos) || ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.blocksEdit(pos)) {
 			cir.setReturnValue(false);
 			return;
 		}
@@ -70,13 +70,21 @@ public class ClientPlayerInteractionManagerMixin {
 		ClientTickPlayerActionEvents.recordStart("attack");
 	}
 
-	@Inject(method = "interactBlock", at = @At("HEAD"))
+	@Inject(method = "interactBlock", at = @At("HEAD"), cancellable = true)
 	private void airicraft$captureBlockUseStart(
 		ClientPlayerEntity player,
 		Hand hand,
 		BlockHitResult hitResult,
 		CallbackInfoReturnable<ActionResult> cir
 	) {
+		BlockPos target = hitResult.getBlockPos();
+		if (ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.blocksEdit(target)
+			|| player.getStackInHand(hand).getItem() instanceof net.minecraft.item.BlockItem
+				&& ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.blocksEdit(target.offset(hitResult.getSide()))) {
+			cir.setReturnValue(ActionResult.FAIL);
+			return;
+		}
+
 		ClientTickPlayerActionEvents.recordStart("use");
 	}
 

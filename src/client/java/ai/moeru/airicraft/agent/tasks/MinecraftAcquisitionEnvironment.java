@@ -62,6 +62,11 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		return SurfaceTerrain.isSurfacePosition(pos.getY(), groundY, standing, waterSurface);
 	}
 
+	private boolean travelEligible(GoalPosition pos) {
+		return client().world.isChunkLoaded(block(pos)) && ai.moeru.airicraft.agent.spatial.WorldTravelPolicy.permitsMovement(
+			client().world, pos.x(),pos.y(),pos.z(),pos.x(),pos.y(),pos.z(),false);
+	}
+
 	private int surfaceGroundY(BlockPos column) {
 		return SurfaceTerrain.groundY(client().world, column);
 	}
@@ -97,7 +102,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 			if (!pickupSites.contains(block(pos))) pickupSites.add(block(pos));
 			for (BlockPos site : pickupSites) {
 				GoalPosition work = position(site);
-				if (!inScope(work, constraints, true)) continue;
+				if (!travelEligible(work)) continue;
 				Candidate drop = new Candidate(Kind.DROP, item.getUuidAsString(), pos, work);
 				if (!rejected.contains(drop.key())) result.add(drop);
 			}
@@ -133,7 +138,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		// Navigation can carve its destination's feet/head space. Requiring air here
 		// would discard fully enclosed ore before A* ever has a chance to approach it.
 		for (BlockPos pos : AcquisitionExcavationSites.find(source,
-			candidate -> inScope(position(candidate), constraints, true) && clearable(candidate),
+			candidate -> travelEligible(position(candidate)) && clearable(candidate),
 			this::safeSupport)) {
 			GoalPosition site = position(pos);
 			if (!sites.contains(site)) sites.add(site);
@@ -163,10 +168,10 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 	}
 
 	private GoalPosition workPosition(BlockPos target, AcquisitionConstraints constraints) {
-		if (inScope(position(), constraints, true) && interactionPath(client().player.getEyePos(), target) != null) return position();
+		if (travelEligible(position()) && interactionPath(client().player.getEyePos(), target) != null) return position();
 		List<BlockPos> sites = new ArrayList<>();
 		for (BlockPos cursor : workPositions(target)) {
-			if (inScope(position(cursor), constraints, true) && standable(cursor)
+			if (travelEligible(position(cursor)) && standable(cursor)
 				&& interactionPath(Vec3d.ofBottomCenter(cursor).add(0, 1.62, 0), target) != null) sites.add(cursor.toImmutable());
 		}
 		return sites.stream().min(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())))
