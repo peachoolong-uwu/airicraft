@@ -1322,7 +1322,7 @@ class EmbodiedAgentRuntimeTest {
 		assertEquals(PlannerTriggerType.SYSTEM, trigger.type());
 		assertEquals("runtime", trigger.speaker());
 		assertEquals(
-			"Smelting output ready: processId=smelt-process-1 output=minecraft:iron_ingotx1 station=minecraft:overworld@1,64,1.",
+			"Smelting output ready: processId=smelt-process-1 output=minecraft:iron_ingotx1 station=minecraft:overworld@1,64,1. Output still needs collection: call collect_smelted_items with this processId, then verify inventory.",
 			trigger.text()
 		);
 	}

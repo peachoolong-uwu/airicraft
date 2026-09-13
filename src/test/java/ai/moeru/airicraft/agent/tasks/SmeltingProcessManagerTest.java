@@ -160,7 +160,8 @@ class SmeltingProcessManagerTest {
 		assertEquals(empty.key(), manager.processStationKey(second.processId()));
 		assertEquals("Tool result for inspect_smelting: processes=1\nprocessId="
 			+ second.processId()
-			+ " optionId=smelt:iron:nearby-1 station=minecraft:overworld@1,64,1 inputQuantity=1",
+			+ " optionId=smelt:iron:nearby-1 station=minecraft:overworld@1,64,1 inputQuantity=1"
+			+ "\nOutput is not auto-collected. After cooking, call collect_smelted_items with the processId; inspect_smelting only reports state.",
 			manager.inspectSummary());
 	}
 

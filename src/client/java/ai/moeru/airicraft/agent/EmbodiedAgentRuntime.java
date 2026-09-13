@@ -2436,7 +2436,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				yield queuedActionToolResult(
 					"smelt_items",
 					"processId=" + smeltingResult.processId() + " optionId=" + smeltItems.optionId() + " inputQuantity=" + smeltItems.inputQuantity()
-				);
+				) + " This job loads the furnace; cooking continues in the background. Output is not auto-collected. "
+					+ "When smelting is ready, call collect_smelted_items with processId=" + smeltingResult.processId() + ".";
 			}
 			case PlannerToolCatalog.COLLECT_SMELTED_ITEMS -> {
 				CollectSmeltedItemsStepArgs collect = new CollectSmeltedItemsStepArgs(
@@ -4126,7 +4127,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (station != null) {
 			message.append(" station=").append(station);
 		}
-		message.append('.');
+		message.append(". Output still needs collection: call collect_smelted_items with this processId, then verify inventory.");
 		return PlannerTrigger.autonomous(
 			PlannerTriggerType.SYSTEM,
 			"runtime",

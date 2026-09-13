@@ -361,6 +361,7 @@ public final class SmeltingProcessManager {
 				.append(" inputQuantity=")
 				.append(process.inputQuantity());
 		}
+		builder.append("\nOutput is not auto-collected. After cooking, call collect_smelted_items with the processId; inspect_smelting only reports state.");
 		return builder.toString();
 	}
 
