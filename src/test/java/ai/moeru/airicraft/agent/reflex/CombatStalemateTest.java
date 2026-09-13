@@ -25,18 +25,38 @@ class CombatStalemateTest {
 	@Test void meaningfulProgressRestartsObservationButTinyJitterDoesNot() {
 		var start = CombatStalemate.observe(null, 0, PLAYER, PILLAGER, false);
 		assertEquals(0, CombatStalemate.observe(start, 300, PLAYER.add(0.05, 0, 0), PILLAGER, false).sinceTick());
-		var advanced = CombatStalemate.observe(start, 300, PLAYER.add(1, 0, 0), PILLAGER, false);
+		var closer = PLAYER.add(PILLAGER.get("pillager").subtract(PLAYER).normalize().multiply(1.5));
+		var advanced = CombatStalemate.observe(start, 300, closer, PILLAGER, false);
 		assertEquals(300, advanced.sinceTick());
-		assertFalse(CombatStalemate.observe(advanced, 400, PLAYER.add(1, 0, 0), PILLAGER, false).deferred());
+		assertFalse(CombatStalemate.observe(advanced, 400, closer, PILLAGER, false).deferred());
 	}
 
-	@Test void dangerOrChangedThreatEndsDeferral() {
+	@Test void dangerOrNewThreatEndsDeferral() {
 		var deferred = new CombatStalemate(CombatStalemate.Phase.DEFERRED, 0, PLAYER, PILLAGER);
 		assertNull(CombatStalemate.observe(deferred, 500, PLAYER, PILLAGER, true));
 		assertNull(CombatStalemate.observe(deferred, 500, PLAYER, Map.of(), false));
-		assertFalse(CombatStalemate.observe(deferred, 500, PLAYER,
-			Map.of("pillager", PILLAGER.get("pillager").add(1, 0, 0)), false).deferred());
+		assertSame(deferred, CombatStalemate.observe(deferred, 500, PLAYER,
+			Map.of("pillager", PILLAGER.get("pillager").add(0, 1.14, 0)), false),
+			"A distant pillager jumping behind terrain is not new danger");
 		assertFalse(CombatStalemate.observe(deferred, 500, PLAYER,
 			Map.of("another_pillager", PILLAGER.get("pillager")), false).deferred());
+	}
+
+	@Test void repeatedClimbAndFallDoesNotCountAsCombatProgress() {
+		// Reduced from the live ledge cycle: a distant pillager stays below the player.
+		var threats = Map.of("pillager", new Vec3d(-13.26, 117, -36.30));
+		var low = new Vec3d(-4.50, 131, -7.57);
+		var climb = new Vec3d(-4.50, 131, -4.81);
+		var high = new Vec3d(-5.47, 134.42, -6.36);
+		CombatStalemate state = null;
+		for (int tick = 0; tick <= 800; tick++) {
+			Vec3d position = switch (tick / 100 % 3) {
+				case 0 -> low;
+				case 1 -> climb;
+				default -> high;
+			};
+			state = CombatStalemate.observe(state, tick, position, threats, false);
+			if (tick >= 400) assertTrue(state.deferred(), "A repeated ledge cycle must hand control back");
+		}
 	}
 }
