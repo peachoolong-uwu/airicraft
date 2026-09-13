@@ -844,7 +844,7 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
-	void boundedToolPlanRejectsExcessiveToolRequests() {
+	void boundedToolPlanYieldsWithoutFormatRepair() {
 		int toolRequestCountLimit = 20;
 
 		OpenAiCompatibleLlmBackend backend = new OpenAiCompatibleLlmBackend(AgentConfig.LlmConfig.defaults());
@@ -873,10 +873,11 @@ class PlannerOrchestratorTest {
 		PlannerExecutionResult result = awaitResult(orchestrator);
 
 		assertNotNull(result);
-		assertEquals(LlmFailureType.PARSE_ERROR, result.failureType());
-		assertTrue(result.failureMessage().contains("too many tools"));
-		assertEquals(3, result.attempt());
-		assertNull(result.response());
+		assertTrue(result.succeeded());
+		assertEquals(1, result.attempt());
+		assertTrue(result.response().toolCalls().isEmpty());
+		assertTrue(result.response().replyText().isEmpty());
+		assertFalse(orchestrator.hasInFlight());
 	}
 
 	@Test

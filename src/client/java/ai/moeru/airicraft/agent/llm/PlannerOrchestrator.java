@@ -43,7 +43,7 @@ public final class PlannerOrchestrator {
 	private static final String NATIVE_TOOL_RESULT_TEXT = "Tool result for take_a_look: current first-person view attached.";
 	private static final String TOOL_CALL_REPAIR_PREFIX = "TOOL CALL FORMAT REMINDER:";
 	private static final String CHAT_REPAIR_PREFIX = "CHAT MESSAGE FORMAT REMINDER:";
-	private static final int MAX_TOOL_CALLS_PER_TOOL_PLAN = 20;
+	private static final int MAX_TOOL_CALLS_PER_TURN = 20;
 	private static final int SESSION_MAX_CONSECUTIVE_REPAIRABLE_FAILURES = 2;
 	private static final long SESSION_RETRY_BACKOFF_MS = 250L;
 	private static final int CONVERSATION_HISTORY_CARD_LIMIT = 48;
@@ -382,6 +382,10 @@ public final class PlannerOrchestrator {
 	}
 
 	private PlannerExecutionResult finishSuccessfulPlannerResult(PlannerExecutionResult plannerResult) {
+		if (plannerResult.phase() == PlannerSessionPhase.TOOL_FOLLOW_UP
+			&& completedToolCallCount(plannerResult.generation()) + effectiveToolCalls(plannerResult.response()).size() > MAX_TOOL_CALLS_PER_TURN) {
+			return yieldToolTurn(plannerResult);
+		}
 		PlannerExecutionResult visibleChatResult = validateOrRepairVisibleChat(plannerResult);
 		if (visibleChatResult == null) {
 			return null;
@@ -412,6 +416,35 @@ public final class PlannerOrchestrator {
 			return toolRequestFailure;
 		}
 		return startToolExecution(plannerResult, toolCalls);
+	}
+
+	private PlannerExecutionResult yieldToolTurn(PlannerExecutionResult result) {
+		long generation = result.generation();
+		int completedTools = completedToolCallCount(generation);
+		commitSnapshotIfNeeded(generation);
+		commitRecordedToolExchanges(generation);
+		contextAggregator.recordUsage(result.usage());
+		contextAggregator.retainConversation(sessionCoordinator.conversationFor(generation).withAppended(
+			LlmChatMessage.user("TOOL TURN CHECKPOINT: The " + MAX_TOOL_CALLS_PER_TURN
+				+ "-tool turn budget was reached. Completed tool results above are retained. The last proposed tool call was not executed."
+				+ " Review fresh state before continuing the active goal; this is a turn boundary, not a tool-format error or task completion.", LlmMessageKind.NOTICE)));
+		// Discard only the extra proposal; completed side effects and the accepted input history remain.
+		sessionCoordinator.finishGeneration(generation, true);
+		committedSnapshotGenerations.remove(generation);
+		awaitingAcceptedReplyRecord = false;
+		pendingAcceptedAssistantRawContent = null;
+		if (!contextAggregator.hasQueuedTriggers()) {
+			pendingSubmitRequest = null;
+			clearCoalesceState();
+		}
+		endTurnSpan();
+		PlannerExecutionResult checkpoint = withResponse(result, new PlannerResponse("", new PlannerIntent("none", null, null)));
+		debugRecorder.recordPlannerCompletion(checkpoint);
+		lifecycleListener.onPlannerExecutionSucceeded(checkpoint);
+		lifecycleListener.onPlannerExecutionApplied(checkpoint);
+		Airicraft.LOGGER.info("Planner tool turn yielded generation={} completedTools={}", generation, completedTools);
+		if (contextAggregator.hasQueuedTriggers()) startQueuedWorkIfPossible();
+		return checkpoint;
 	}
 
 	private PlannerExecutionResult promoteBackendCandidate(PlannerExecutionResult plannerResult) {
@@ -448,12 +481,6 @@ public final class PlannerOrchestrator {
 	}
 
 	private PlannerExecutionResult validateToolRequest(PlannerExecutionResult plannerResult, List<PlannerToolCall> toolCalls) {
-		if (
-			plannerResult.phase() == PlannerSessionPhase.TOOL_FOLLOW_UP
-				&& completedToolCallCount(plannerResult.generation()) + toolCalls.size() > MAX_TOOL_CALLS_PER_TOOL_PLAN
-		) {
-			return rejectToolRequest(plannerResult, "Planner requested too many tools for one goal");
-		}
 		PlannerToolCall firstToolCall = toolCalls.getFirst();
 		if (plannerResult.response().toolCall() == null && !hasToolCompatibleIntent(plannerResult.response())) {
 			String toolIntentType = toolIntentType(plannerResult.response());

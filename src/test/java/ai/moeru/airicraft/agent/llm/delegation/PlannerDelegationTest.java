@@ -117,6 +117,70 @@ class PlannerDelegationTest {
 		} finally { dialogue.shutdown(); }
 	}
 
+	@Test void toolBudgetYieldsWithoutLosingDelegationOrExecutingTheExtraCall() throws Exception {
+		var handoff = new PlannerDelegation();
+		var dialogueRef = new AtomicReference<DialogueRuntime>();
+		var controllerRef = new AtomicReference<PlannerOrchestrator>();
+		var writes = new ArrayList<Integer>();
+		var work = new PlannerToolProvider() {
+			public String id() { return "work"; }
+			public boolean handles(String name) { return name.equals("do_work"); }
+			public boolean isReadTool(String name) { return false; }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("do_work", "Perform work",
+				Map.of("type", "object", "properties", Map.of("ordinal", Map.of("type", "integer"))), List.of("ordinal"))); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				assertTrue(handoff.active());
+				int ordinal = call.arguments().get("ordinal").getAsInt();
+				writes.add(ordinal);
+				return CompletableFuture.completedFuture("observed work=" + ordinal);
+			}
+		};
+		var controllerTools = PlannerToolRegistry.of(new PlannerDelegationToolProvider(PlannerDelegationToolProvider.Role.CONTROLLER,
+			handoff, Runnable::run, () -> controllerRef.get().delegationContext(), () -> dialogueRef.get().delegationWorkIdle()));
+		var thinkingTools = PlannerToolRegistry.of(new PlannerDelegationToolProvider(PlannerDelegationToolProvider.Role.THINKING,
+			handoff, Runnable::run, () -> "", () -> dialogueRef.get().delegationWorkIdle()), work);
+		controllerTools.freezeToolPrefix();
+		thinkingTools.freezeToolPrefix();
+		var controllerBackend = new Backend(n -> n == 0
+			? response(call("delegate_task", "{\"task\":\"Build in stages\",\"successCriteria\":\"Work completed\"}"))
+			: new PlannerResponse("Done.", List.of(), null));
+		var thinkingBackend = new Backend(n -> n <= 21 ? response(call("do_work", "{\"ordinal\":" + n + "}"))
+			: response(call("return_control", "{\"delegationId\":\"" + handoff.id() + "\",\"status\":\"success\",\"outcome\":\"Work done\"}")));
+		var controller = orchestrator(controllerBackend, controllerTools, PlannerLifecycleListener.NO_OP);
+		var thinker = orchestrator(thinkingBackend, thinkingTools, new PlannerLifecycleListener() {
+			@Override public void onToolExchange(PlannerToolCall call, String result, boolean image) { handoff.recordToolExchange(call, result, image); }
+		});
+		controllerRef.set(controller);
+		var dialogue = new DialogueRuntime(controller, 8, Clock.systemUTC());
+		dialogueRef.set(dialogue);
+		dialogue.configureDelegation(thinker, handoff);
+		var session = new SessionSnapshot(SessionMode.SINGLEPLAYER_LAN_HOST, true, true, "minecraft:overworld", true, 25565, 1);
+		var events = new SemanticEventBuffer(128);
+		try {
+			dialogue.onPlayerChat("Alice", "Build in stages", 1, session, "Alice", Optional.empty(), TaskSnapshot.idle(), null, events);
+			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+			for (long tick = 2; System.nanoTime() < deadline && controllerBackend.calls.size() < 2; tick++) {
+				dialogue.poll(tick, events, session, Optional.empty(), TaskSnapshot.idle(), null);
+				dialogue.continuePlannerGoal(tick, true, session, "Alice", Optional.empty(), TaskSnapshot.idle(), null, events);
+				Thread.sleep(1);
+			}
+			assertEquals(21, writes.size());
+			assertFalse(writes.contains(20), "over-budget proposal must never execute");
+			assertEquals(21, writes.getLast());
+			assertEquals(23, thinkingBackend.calls.size(), "no format repair generations");
+			assertFalse(handoff.active());
+			assertFalse(dialogue.isDegraded());
+			assertPrefix(thinkingBackend.calls.get(20), thinkingBackend.calls.get(21));
+			String continuation = thinkingBackend.calls.get(21).toString();
+			assertTrue(continuation.contains("TOOL TURN CHECKPOINT"));
+			assertTrue(continuation.contains("observed work=19"));
+			assertFalse(continuation.contains("FORMAT REMINDER"));
+			String report = controllerBackend.calls.get(1).toString();
+			assertTrue(report.contains("observed work=21"));
+			assertFalse(report.contains("observed work=20"));
+		} finally { dialogue.shutdown(); }
+	}
+
 	private static void assertPrefix(LlmConversation a, LlmConversation b) {
 		assertTrue(b.messages().size() >= a.messages().size());
 		assertEquals(OpenAiCompatibleChatClient.canonicalRequestMessages(a),
