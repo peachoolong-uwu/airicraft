@@ -74,6 +74,8 @@ import ai.moeru.airicraft.agent.tasks.TaskTerminalEvent;
 import ai.moeru.airicraft.agent.tasks.WorldTaskExecutor;
 import ai.moeru.airicraft.agent.tasks.WorldTaskType;
 import ai.moeru.airicraft.agent.tasks.WorldEvidence;
+import ai.moeru.airicraft.agent.tasks.StepExecutionResult;
+import ai.moeru.airicraft.agent.tasks.StepExecutionStatus;
 import ai.moeru.airicraft.agent.llm.PlannerToolCall;
 import ai.moeru.airicraft.agent.llm.PlannerToolCatalog;
 import ai.moeru.airicraft.agent.llm.PlannerTrigger;
@@ -101,6 +103,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EmbodiedAgentRuntimeTest {
+	@Test
+	void idlePlannerEvidenceRefreshesWithoutAProjectedSemanticTask() throws Exception {
+		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			runtime.overrideSessionSnapshotForTests(new SessionSnapshot(SessionMode.SINGLEPLAYER_LAN_HOST,
+				true, true, "minecraft:overworld", true, 25565, 0));
+			var staleEvidence = new WorldEvidence(Map.of(), Map.of("minecraft:spruce_planks", 54), Map.of(),
+				"minecraft:overworld", -5, 135, -1, "minecraft:spruce_planks", 0);
+			var terminalResult = new StepExecutionResult("navigate_to", StepExecutionStatus.CANCELLED,
+				"CANCELED", Map.of(), Map.of("jobType", "NAVIGATE_TO"), 0);
+			Field missionField = EmbodiedAgentRuntime.class.getDeclaredField("missionExecutionSnapshot");
+			missionField.setAccessible(true);
+			missionField.set(runtime, new ai.moeru.airicraft.agent.tasks.MissionExecutionSnapshot(
+				null, null, null, staleEvidence, terminalResult, TaskExecutionSnapshot.idle()));
+
+			runtime.onClientTick(null);
+
+			var plannerEvidence = runtime.missionExecutionSnapshot().evidence();
+			assertEquals(1, plannerEvidence.tick(), "Idle continuation must receive this tick's evidence");
+			assertTrue(plannerEvidence.itemCounts().isEmpty(), "Old supplies must not be re-injected as current inventory");
+			assertEquals(0, plannerEvidence.x(), "Old position must not overwrite later observations");
+			assertEquals(terminalResult, runtime.missionExecutionSnapshot().lastStepResult(), "Retain task outcome history");
+		}
+		finally { runtime.shutdown(); }
+	}
+
 	@Test
 	void eatingHoldsGraphAdvancementUntilConsumptionEnds() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());

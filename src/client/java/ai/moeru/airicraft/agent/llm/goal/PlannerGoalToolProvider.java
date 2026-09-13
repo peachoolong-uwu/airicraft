@@ -28,7 +28,7 @@ public final class PlannerGoalToolProvider implements PlannerToolProvider {
 
 	@Override public List<Map<String, Object>> openAiTools() {
 		var narration = propForProvider("narration", optionalStringForProvider("Optional short visible narration."));
-		var objective = propForProvider("objective", stringForProvider("Concrete longer-term objective and observable completion conditions, up to 2048 characters."));
+		var objective = propForProvider("objective", stringForProvider("Concrete longer-term objective, durable constraints and observable completion conditions, up to 2048 characters. Do not store current inventory, health, or temporary progress as facts in the objective."));
 		var id = propForProvider("goalId", stringForProvider("Exact current planner goal id."));
 		return List.of(
 			toolForProvider("set_planner_goal", "Start a persistent planner goal. Requires no active planner goal. Jobs are individual steps toward this objective.", propertiesForProvider(narration, objective), List.of("objective")),
@@ -45,11 +45,11 @@ public final class PlannerGoalToolProvider implements PlannerToolProvider {
 			For multi-stage work or autonomous self-play, set_planner_goal before acting. The planner goal carries purpose across replies, task completion, compaction, and world reloads. Do not create a goal for ordinary conversation.
 			An ACTIVE planner goal continues automatically when the planner and action executor are idle. A plaintext reply is a yield, not completion. While a job runs, yield and wait for its terminal update instead of polling inspect_action_goal repeatedly. When free, choose the next useful step without asking the human to say continue.
 			Use change_planner_goal when the objective changes; preserve user constraints. Use finish_planner_goal success only with observed completion evidence, or give_up with a concrete reason when stuck or human input is essential. On a user stop, cancel active action work and finish the planner goal with give_up. clear_goal only clears the action/navigation goal, not this planner objective.
-			Do not restart a finished goal unless newly requested or in an explicit initiative window. After reload, inspect fresh world and inventory state before resuming; stored goals are intent, not fresh evidence. Completed jobs do not by themselves complete the planner goal.
+			Do not restart a finished goal unless newly requested or in an explicit initiative window. After reload or respawn, inspect fresh world and inventory state before resuming. Store desired outcomes and durable constraints in objectives; do not embed current supplies, health or temporary progress. If an old goal contains such facts, newer observations take precedence; use change_planner_goal to remove stale checkpoint facts while preserving its purpose. Completed jobs do not by themselves complete the planner goal.
 			""";
 	}
 
-	@Override public String contextSnapshot() { return "Current planner goal (stored data): " + store.context(); }
+	@Override public String contextSnapshot() { return "Current planner goal (stored intent; any inventory, health or progress claims are historical, not current observations): " + store.context(); }
 
 	@Override public void validateArguments(String name, JsonObject args) {
 		List<String> fields = switch (name) {

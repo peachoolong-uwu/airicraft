@@ -490,6 +490,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		drainEventPipeline();
 
 		WorldEvidence worldEvidence = currentWorldEvidence(client);
+		// Idle/primitive jobs may not project a semantic task, but every planner trigger needs fresh evidence.
+		missionExecutionSnapshot = new MissionExecutionSnapshot(missionExecutionSnapshot.mission(), missionExecutionSnapshot.ledger(),
+			missionExecutionSnapshot.activeStep(), worldEvidence, missionExecutionSnapshot.lastStepResult(),
+			missionExecutionSnapshot.primitiveExecution());
 		dialogueRuntime.updateGameplayWorkIdle(!actionGraphCoordinator.hasNonterminal()
 			&& isIdleForIdleIdeaScheduling(activeJobRuntime.current()) && activeGoal().isEmpty()
 			&& !playerItemUseController.eating());
@@ -499,9 +503,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			sessionSnapshot,
 			activeGoal(),
 			taskSnapshot,
-			new MissionExecutionSnapshot(missionExecutionSnapshot.mission(), missionExecutionSnapshot.ledger(),
-				missionExecutionSnapshot.activeStep(), worldEvidence, missionExecutionSnapshot.lastStepResult(),
-				missionExecutionSnapshot.primitiveExecution())
+			missionExecutionSnapshot
 		);
 		recordStalePlannerRejections();
 		if (completedDialogueResponse != null) {
