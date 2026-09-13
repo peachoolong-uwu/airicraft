@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Drive map_cave waypoints with a local corridor guard through the public CLI."""
+import argparse
+import json
+import math
+from pathlib import Path
+import re
+import subprocess
+import time
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('map_file', type=Path, help='Saved map_cave tool output or its JSON object')
+parser.add_argument('--pause-on-complete', action='store_true')
+parser.add_argument('--incident-output', type=Path, required=True)
+args = parser.parse_args()
+root = Path(__file__).resolve().parent.parent
+cli = root / 'wrapper/build/install/airicraft/bin/airicraft'
+
+
+def command(arguments):
+    result = subprocess.run([str(cli), *arguments], cwd=root, text=True, capture_output=True, timeout=15)
+    if result.returncode or 'TOOL_ERROR:' in result.stdout:
+        raise RuntimeError(result.stdout + result.stderr)
+    return result.stdout
+
+
+def section(text, name):
+    match = re.search(r'\[' + re.escape(name) + r'\]\n([^\[]*)', text)
+    return dict(line.split(': ', 1) for line in match.group(1).splitlines() if ': ' in line) if match else {}
+
+
+def position():
+    text = command(['agent', 'tools', 'call', '--name', 'inspect_inventory', '--arguments', '{}'])
+    match = re.search(r'position=(-?\d+),(-?\d+),(-?\d+)', text)
+    if not match:
+        raise RuntimeError('Player position unavailable')
+    return tuple(map(int, match.groups()))
+
+
+def pause(reason):
+    state = command(['agent', 'debug', 'ticks', 'pause'])
+    args.incident_output.parent.mkdir(parents=True, exist_ok=True)
+    args.incident_output.write_text(reason + '\n' + state)
+    print(reason + '\n' + state[:600], flush=True)
+
+
+def segment_distance(point, start, end):
+    vector = [b - a for a, b in zip(start, end)]
+    norm = sum(v * v for v in vector)
+    t = max(0, min(1, sum((p - a) * v for p, a, v in zip(point, start, vector)) / norm)) if norm else 0
+    return math.dist(point, [a + t * v for a, v in zip(start, vector)])
+
+
+def coordinates(value):
+    result = tuple(value[k] for k in ('x', 'y', 'z'))
+    if any(type(n) is not int for n in result):
+        raise ValueError('Map coordinates must be integers')
+    return result
+
+
+def follow():
+    text = args.map_file.read_text()
+    data = json.JSONDecoder().raw_decode(text[text.index('{'):])[0]
+    if data.get('status') != 'mapped' or not data.get('route'):
+        raise ValueError('Map has no complete route')
+    route = [coordinates(p) for p in data['route']]
+    waypoints = [coordinates(p) for p in data['waypoints']]
+    if not 1 <= len(route) <= 256 or not waypoints:
+        raise ValueError('Route must contain 1..256 cells and at least one waypoint')
+    if 'paused: true' in command(['agent', 'debug', 'ticks', 'state']):
+        raise ValueError('Game is paused; resume the inspected session before following')
+    if math.dist(position(), route[0]) > 2:
+        raise ValueError('Player moved from map origin; remap')
+    print(command(['agent', 'tools', 'call', '--name', 'configure_pathfind', '--arguments',
+        json.dumps({'settings': {'allowBreak': False, 'allowPlace': False, 'allowInventory': False, 'allowWaterBucketFall': False}})]), flush=True)
+    index = 0
+    for number, target in enumerate(waypoints, 1):
+        end_index = route.index(target, index + 1)
+        corridor = route[max(0, index - 1):min(len(route), end_index + 2)]
+        state = command(['agent', 'status', '--verbose'])
+        before = section(state, 'activeJob').get('jobId')
+        reply = command(['agent', 'tools', 'call', '--name', 'navigate_to', '--arguments',
+            json.dumps(dict(zip(('x', 'y', 'z'), target)) | {'exactY': True})])
+        if 'accepted queued' not in reply:
+            raise RuntimeError(reply)
+        expected = None
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            time.sleep(.2)
+            state = command(['agent', 'status', '--verbose'])
+            job = section(state, 'activeJob')
+            reflex = section(state, 'reflex')
+            if reflex.get('state') != 'IDLE':
+                pause('REFLEX_INTERRUPTED segment=' + str(number) + ' ' + str(reflex))
+                return 3
+            if job.get('jobId') == before and expected is None:
+                continue
+            if expected is None:
+                expected = job.get('jobId')
+            if job.get('jobId') != expected:
+                pause('JOB_REPLACED segment=' + str(number))
+                return 3
+            actual = position()
+            distance = min(segment_distance(actual, a, b) for a, b in zip(corridor, corridor[1:]))
+            if distance > 2:
+                pause('CORRIDOR_LEFT segment=' + str(number) + ' position=' + str(actual) + ' distance=' + str(distance))
+                return 3
+            if job.get('status') == 'COMPLETED':
+                if math.dist(actual, target) > 2:
+                    pause('GOAL_POSITION_MISMATCH segment=' + str(number))
+                    return 3
+                print('COMPLETED segment=' + str(number) + '/' + str(len(waypoints)) + ' target=' + str(target)
+                    + ' job=' + str(expected) + ' tick=' + str(job.get('updatedTick')), flush=True)
+                break
+            if job.get('status') != 'RUNNING':
+                pause('SEGMENT_FAILED segment=' + str(number) + ' ' + str(job))
+                return 3
+        else:
+            pause('SEGMENT_OBSERVATION_TIMEOUT segment=' + str(number) + ' job=' + str(expected))
+            return 3
+        index = end_index
+    print('ROUTE_COMPLETED position=' + str(position()), flush=True)
+    if args.pause_on_complete:
+        pause('ROUTE_COMPLETE')
+    return 0
+
+
+try:
+    raise SystemExit(follow())
+except (RuntimeError, ValueError, KeyError, TypeError, IndexError, subprocess.TimeoutExpired) as error:
+    # A failed observation is not evidence that the underlying game job stopped.
+    try:
+        pause('FOLLOWER_ERROR ' + str(error))
+    except Exception as pause_error:
+        print('Could not confirm pause: ' + str(pause_error), flush=True)
+    raise SystemExit(str(error))
