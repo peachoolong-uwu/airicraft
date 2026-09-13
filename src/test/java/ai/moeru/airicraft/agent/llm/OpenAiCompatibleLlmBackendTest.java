@@ -26,6 +26,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
+	@Test void independentProfilesKeepTheirCacheIdentityAndEffortOnRepeatedRequests() throws Exception {
+		var bodyRef = new AtomicReference<String>();
+		try (TestServer server = TestServer.start(bodyRef, plaintextResponse("Ready."))) {
+			var tools = PlannerToolRegistry.of();
+			var controller = new OpenAiCompatibleLlmBackend(config(server.port(), false).forRole("controller", "none"),
+				ai.moeru.airicraft.agent.observability.NoopObservability.INSTANCE, tools, "test:controller");
+			var thinker = new OpenAiCompatibleLlmBackend(config(server.port(), false).forRole("thinker", "medium"),
+				ai.moeru.airicraft.agent.observability.NoopObservability.INSTANCE, tools, "test:thinking");
+			for (int pass = 0; pass < 2; pass++) for (var backend : List.of(controller, thinker)) {
+				backend.generate(LlmConversation.of(List.of(LlmChatMessage.user("Ready?", LlmMessageKind.USER_TURN))));
+				var body = JsonParser.parseString(bodyRef.get()).getAsJsonObject();
+				assertEquals(backend == controller ? "none" : "medium", body.get("reasoning_effort").getAsString());
+				assertEquals(backend == controller ? "test:controller" : "test:thinking", body.get("prompt_cache_key").getAsString());
+			}
+		}
+	}
+
 	@Test
 	void sendsConfiguredReasoningEffortAndOmitsProviderDefault() throws Exception {
 		for (String effort : List.of("", "low", "none")) {
@@ -132,7 +149,7 @@ class OpenAiCompatibleLlmBackendTest {
 	@Test
 	void chatClientUsesTheCurrentSurfaceOnEachPlannerRequest() throws Exception {
 		AtomicReference<String> bodyRef = new AtomicReference<>();
-		PlannerToolRegistry registry = PlannerToolRegistry.empty();
+		PlannerToolRegistry registry = PlannerToolRegistry.of();
 		try (TestServer server = TestServer.start(bodyRef, plaintextResponse("Done."))) {
 			OpenAiCompatibleChatClient client = new OpenAiCompatibleChatClient(config(server.port(), false), registry);
 			LlmConversation conversation = LlmConversation.of(List.of(LlmChatMessage.system("system")));

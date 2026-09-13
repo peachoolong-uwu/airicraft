@@ -32,6 +32,7 @@ public final class OpenAiCompatibleChatClient {
 	private final AgentConfig.LlmConfig config;
 	private final AgentObservability observability;
 	private final PlannerToolRegistry toolRegistry;
+	private final String cacheKey;
 	private final HttpClient httpClient = HttpClient.newBuilder()
 		.version(HttpClient.Version.HTTP_1_1)
 		.build();
@@ -49,6 +50,11 @@ public final class OpenAiCompatibleChatClient {
 	}
 
 	public OpenAiCompatibleChatClient(AgentConfig.LlmConfig config, AgentObservability observability, PlannerToolRegistry toolRegistry) {
+		this(config, observability, toolRegistry, null);
+	}
+
+	public OpenAiCompatibleChatClient(AgentConfig.LlmConfig config, AgentObservability observability, PlannerToolRegistry toolRegistry, String cacheKey) {
+		this.cacheKey = cacheKey;
 		this.config = Objects.requireNonNull(config, "config");
 		this.observability = Objects.requireNonNull(observability, "observability");
 		this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
@@ -218,6 +224,7 @@ public final class OpenAiCompatibleChatClient {
 	private Map<String, Object> buildRequestPayload(LlmConversation conversation, LlmRequestOptions options) {
 		LinkedHashMap<String, Object> payload = new LinkedHashMap<>();
 		payload.put("model", config.model());
+		if (cacheKey != null) payload.put("prompt_cache_key", cacheKey);
 		if (config.reasoningEffort() != null && !config.reasoningEffort().isBlank()) {
 			payload.put("reasoning_effort", config.reasoningEffort());
 		}

@@ -23,6 +23,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerCallJournalTest {
+	@Test void roleCallsHaveDistinctIdentitiesAndGlobalOrdering() {
+		var journal = journal(new MutableClock(1_000L), new AtomicLong(10L));
+		var thinking = journal.forkRole("thinking", "test", "thinker", List::of);
+		var conversation = LlmConversation.of(List.of(LlmChatMessage.system("system")));
+		for (var owner : List.of(journal, thinking, journal)) {
+			owner.onConversationSubmitted(1L, 1, PlannerSessionPhase.PLANNER_REQUEST, null, conversation);
+			owner.onPlannerModelCallCompleted(success(1L, 1, PlannerSessionPhase.PLANNER_REQUEST));
+		}
+		var calls = journal.snapshot();
+		assertEquals(List.of("1", "2", "3"), calls.stream().map(PlannerCallRecordV1::sequence).toList());
+		assertEquals("planner-generation-thinking:1", calls.get(1).turnId());
+		journal.clear();
+		assertTrue(journal.snapshot().isEmpty());
+	}
+
 	@Test
 	void capturesCanonicalRequestAndAcceptedCompletionOnServerTicks() {
 		MutableClock clock = new MutableClock(1_000L);

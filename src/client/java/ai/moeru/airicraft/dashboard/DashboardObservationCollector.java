@@ -181,6 +181,7 @@ public final class DashboardObservationCollector {
 	private Map<String, Object> runtimeSnapshot(MinecraftClient client, EmbodiedAgentRuntime runtime) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("schemaVersion", 4);
+		payload.put("system2", runtime.debugSystem2());
 		var agent = runtime.snapshot();
 		payload.put("agent", Map.of("initialized", agent.initialized(), "tickCount", agent.tickCount(), "session", agent.session()));
 		payload.put("planner", plannerPayload(store, runtime.plannerDebugSnapshot(), runtime.tickCount(), System.currentTimeMillis()));

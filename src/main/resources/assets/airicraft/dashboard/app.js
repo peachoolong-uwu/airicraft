@@ -292,7 +292,7 @@ function timelineRow(item) {
 
 function renderRuntime(snapshot) {
   const p = snapshot.payload || {};
-  const sections = ['agent','planner','activeGoal','activeJob','task','taskExecution','missionExecution','reflex','actionGraph','behaviorTree','eventPipeline','dialogueState','conversationSources','world','observability'];
+  const sections = ['agent','system2','planner','activeGoal','activeJob','task','taskExecution','missionExecution','reflex','actionGraph','behaviorTree','eventPipeline','dialogueState','conversationSources','world','observability'];
   el('content').innerHTML = `<div class="grid two-col">${sections.map(key => `<section class="card"><div class="card-head"><h2>${escapeHtml(key.replace(/([A-Z])/g,' $1'))}</h2><small>snapshot #${snapshot.sequence}</small></div><div class="card-body"><pre class="json">${escapeHtml(pretty(p[key]))}</pre></div></section>`).join('')}</div>`;
 }
 

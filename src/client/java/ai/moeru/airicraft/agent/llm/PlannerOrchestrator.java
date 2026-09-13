@@ -140,6 +140,8 @@ public final class PlannerOrchestrator {
 		this.conversationProjector = new PlannerConversationProjector(CONVERSATION_HISTORY_CARD_LIMIT);
 	}
 
+	public void shareGenerationSequence(java.util.concurrent.atomic.AtomicLong sequence) { sessionCoordinator.shareGenerationSequence(sequence); }
+
 	public boolean isConfigured() {
 		return plannerExecutor.isConfigured();
 	}
@@ -222,6 +224,29 @@ public final class PlannerOrchestrator {
 
 	public List<String> contextExcerpt() {
 		return conversationProjector.contextExcerpt(turnJournal);
+	}
+
+	/** Copy visible context only; keep private reasoning and image bytes in their owning session. */
+	public String delegationContext() {
+		var conversation = sessionCoordinator.conversationFor(sessionCoordinator.activeGeneration());
+		if (conversation == null) {
+			var snapshot = sessionCoordinator.contextSnapshotFor(sessionCoordinator.activeGeneration());
+			if (snapshot == null) return String.join("\n", contextExcerpt());
+			conversation = withRecordedToolExchanges(snapshot, recordedToolExchanges(sessionCoordinator.activeGeneration())).plannerConversation();
+		}
+		var entries = new java.util.ArrayDeque<String>();
+		int size = 0;
+		boolean truncated = false;
+		for (var message : conversation.messages()) {
+			if (message.role().equals("system")) continue;
+			String entry = message.role() + ": " + message.content();
+			for (var tool : message.toolCalls()) entry += "\nTool call " + tool.name() + ": " + tool.arguments();
+			if (message.hasImageAttachment()) entry += "\n[image retained in controller history]";
+			if (entry.length() > 6000) { entry = entry.substring(0, 6000) + " [truncated]"; truncated = true; }
+			while (size + entry.length() > 23_000) { size -= entries.removeFirst().length(); truncated = true; }
+			entries.addLast(entry); size += entry.length();
+		}
+		return (truncated ? "[older context or long entries truncated]\n" : "") + String.join("\n", entries);
 	}
 
 	public long lastObservedEventSeqNo() {
@@ -989,6 +1014,8 @@ public final class PlannerOrchestrator {
 	private void acceptGeneration(PlannerExecutionResult acceptedResult) {
 		commitSnapshotIfNeeded(acceptedResult.generation());
 		commitRecordedToolExchanges(acceptedResult.generation());
+		contextAggregator.retainConversation(sessionCoordinator.conversationFor(acceptedResult.generation()).withAppended(
+			LlmChatMessage.assistant(acceptedResult.response().replyText(), acceptedResult.response().rawAssistantContent())));
 		turnJournal.recordAcceptedReply(acceptedResult);
 		sessionCoordinator.finishGeneration(acceptedResult.generation(), false);
 		committedSnapshotGenerations.remove(acceptedResult.generation());
@@ -1055,22 +1082,6 @@ public final class PlannerOrchestrator {
 		if (snapshot == null) {
 			return null;
 		}
-		boolean safetyContextChanged = isStaleSafetyRequest(snapshot.request());
-		boolean toolMayReleaseHold = toolExecution.toolCalls().stream().anyMatch(PlannerOrchestrator::isSideEffectTool);
-		boolean sameEpochHoldRelease = safetyContextChanged
-			&& snapshot.request().safetyEpoch() == minimumSafetyEpoch
-			&& toolMayReleaseHold;
-		if (safetyContextChanged && !sameEpochHoldRelease) {
-			recordStalePlannerRejection(toolExecution.generation(), snapshot.request(), "TOOL_WAIT");
-			sessionCoordinator.finishGeneration(toolExecution.generation(), true);
-			committedSnapshotGenerations.remove(toolExecution.generation());
-			turnJournal.markSuperseded(toolExecution.generation());
-			endTurnSpan();
-			if (!safetyLaunchBlocked) {
-				startQueuedWorkIfPossible();
-			}
-			return null;
-		}
 
 		PlannerRequest followUpRequest = snapshot.request()
 			.withToolResult(toolOutcome.toolResultText())
@@ -1090,10 +1101,41 @@ public final class PlannerOrchestrator {
 				toolResult.imageAttached()
 			);
 		}
+		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
+		contextAggregator.retainConversation(completedToolConversation);
+		// Completed effects remain evidence even when safety invalidates the next decision.
+		boolean safetyContextChanged = isStaleSafetyRequest(snapshot.request());
+		boolean toolMayReleaseHold = toolExecution.toolCalls().stream().anyMatch(PlannerOrchestrator::isSideEffectTool);
+		boolean sameEpochHoldRelease = safetyContextChanged
+			&& snapshot.request().safetyEpoch() == minimumSafetyEpoch
+			&& toolMayReleaseHold;
+		if (safetyContextChanged && !sameEpochHoldRelease) {
+			commitRecordedToolExchanges(toolExecution.generation());
+			recordStalePlannerRejection(toolExecution.generation(), snapshot.request(), "TOOL_WAIT");
+			sessionCoordinator.finishGeneration(toolExecution.generation(), true);
+			committedSnapshotGenerations.remove(toolExecution.generation());
+			turnJournal.markSuperseded(toolExecution.generation());
+			endTurnSpan();
+			if (!safetyLaunchBlocked) {
+				startQueuedWorkIfPossible();
+			}
+			return null;
+		}
+
+		if (toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
+			&& !toolOutcome.toolResultText().startsWith("TOOL_ERROR:")) {
+			commitRecordedToolExchanges(toolExecution.generation());
+			for (ToolExecutionResult toolResult : toolResults)
+				lifecycleListener.onToolCompleted(toolExecution.generation(), toolResult.toolResultText(), toolResult.imageAttached());
+			sessionCoordinator.finishGeneration(toolExecution.generation(), true);
+			committedSnapshotGenerations.remove(toolExecution.generation());
+			endTurnSpan();
+			return null;
+		}
 		sessionCoordinator.submitToolFollowUp(
 			toolExecution.generation(),
 			followUpRequest,
-			toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls())
+			completedToolConversation
 		);
 		for (ToolExecutionResult toolResult : toolResults) {
 			lifecycleListener.onToolCompleted(toolExecution.generation(), toolResult.toolResultText(), toolResult.imageAttached());
@@ -1331,6 +1373,7 @@ public final class PlannerOrchestrator {
 		boolean imageAttached
 	) {
 		turnJournal.recordToolExchange(generation, snapshot, assistantRawContent, toolCall, toolResultText, imageAttached);
+		lifecycleListener.onToolExchange(toolCall, toolResultText, imageAttached);
 	}
 
 	private void commitRecordedToolExchanges(long generation) {

@@ -28,6 +28,10 @@ public final class PlannerSessionCoordinator {
 
 	private PlannerSession activeSession;
 	private long nextGeneration = 1L;
+	private java.util.concurrent.atomic.AtomicLong sharedGenerations;
+
+	public void shareGenerationSequence(java.util.concurrent.atomic.AtomicLong sequence) { sharedGenerations = sequence; }
+	private long allocateGeneration() { return sharedGenerations == null ? nextGeneration++ : sharedGenerations.getAndIncrement(); }
 	private long supersededCount;
 
 	public PlannerSessionCoordinator(PlannerExecutor plannerExecutor, Clock clock, int maxConcurrentAttempts, int maxConsecutiveRepairableFailures, long retryBackoffMs) {
@@ -74,6 +78,10 @@ public final class PlannerSessionCoordinator {
 		return activeSession == null ? null : activeSession.snapshot();
 	}
 
+	public LlmConversation conversationFor(long generation) {
+		return activeSession != null && activeSession.generation() == generation ? activeSession.conversation() : null;
+	}
+
 	public PlannerContextSnapshot contextSnapshotFor(long generation) {
 		if (activeSession == null || activeSession.generation() != generation) {
 			return null;
@@ -109,7 +117,7 @@ public final class PlannerSessionCoordinator {
 
 	public void submit(PlannerContextSnapshot contextSnapshot, Context parentContext) {
 		Objects.requireNonNull(contextSnapshot, "contextSnapshot");
-		activeSession = new PlannerSession(nextGeneration++, contextSnapshot, parentContext);
+		activeSession = new PlannerSession(allocateGeneration(), contextSnapshot, parentContext);
 		launchIfPossible(activeSession);
 	}
 
@@ -120,7 +128,7 @@ public final class PlannerSessionCoordinator {
 	) {
 		Objects.requireNonNull(contextSnapshot, "contextSnapshot");
 		Objects.requireNonNull(tools, "tools");
-		long generation = nextGeneration++;
+		long generation = allocateGeneration();
 		int attempt = 1;
 		PlannerSessionPhase phase = PlannerSessionPhase.PLANNER_REQUEST;
 		submissionObserver.onSubmitted(

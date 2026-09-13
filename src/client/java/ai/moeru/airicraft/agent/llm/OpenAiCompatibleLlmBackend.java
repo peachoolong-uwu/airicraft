@@ -40,10 +40,14 @@ public final class OpenAiCompatibleLlmBackend implements LlmBackend {
 	}
 
 	public OpenAiCompatibleLlmBackend(AgentConfig.LlmConfig config, AgentObservability observability, PlannerToolRegistry toolRegistry) {
+		this(config, observability, toolRegistry, null);
+	}
+
+	public OpenAiCompatibleLlmBackend(AgentConfig.LlmConfig config, AgentObservability observability, PlannerToolRegistry toolRegistry, String cacheKey) {
 		this.config = Objects.requireNonNull(config, "config");
 		this.observability = Objects.requireNonNull(observability, "observability");
 		this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
-		this.chatClient = new OpenAiCompatibleChatClient(config, observability, toolRegistry);
+		this.chatClient = new OpenAiCompatibleChatClient(config, observability, toolRegistry, cacheKey);
 	}
 
 	@Override

@@ -33,6 +33,11 @@ import java.util.concurrent.CompletableFuture;
 
 public final class DialogueRuntime {
 	private final PlannerOrchestrator plannerOrchestrator;
+	private PlannerOrchestrator thinkingOrchestrator;
+	private ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation delegation;
+	private boolean delegationWorkIdle;
+	private PlannerOrchestrator visibleReplyOwner;
+	private long delegationEventCursor;
 	private final ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore plannerGoal;
 	private long nextGoalContinuationTick;
 	private final Clock clock;
@@ -67,6 +72,35 @@ public final class DialogueRuntime {
 		this.maxRecentTurns = Math.max(1, maxRecentTurns);
 	}
 
+	public void configureDelegation(PlannerOrchestrator thinker, ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation handoff) {
+		thinkingOrchestrator = Objects.requireNonNull(thinker);
+		delegation = Objects.requireNonNull(handoff);
+	}
+
+	private PlannerOrchestrator activePlanner() {
+		return delegation != null && delegation.active() ? thinkingOrchestrator : plannerOrchestrator;
+	}
+
+	private List<PlannerOrchestrator> planners() {
+		return thinkingOrchestrator == null ? List.of(plannerOrchestrator) : List.of(plannerOrchestrator, thinkingOrchestrator);
+	}
+
+	public boolean delegationWorkIdle() { return delegationWorkIdle && !reflexActive; }
+
+	public Map<String, Object> system2Snapshot() {
+		if (delegation == null) return Map.of("role", "planner", "delegationEnabled", false);
+		return Map.of("ownership", delegation.snapshot(),
+			"controllerInFlight", plannerOrchestrator.hasInFlight(), "thinkingInFlight", thinkingOrchestrator.hasInFlight(),
+			"controllerHistoryMessages", plannerOrchestrator.canonicalConversationDebugSnapshot().messages().size(),
+			"thinkingHistoryMessages", thinkingOrchestrator.canonicalConversationDebugSnapshot().messages().size());
+	}
+
+	private void resetPlanners(String reason) {
+		if (delegation != null) delegation.reset(reason);
+		planners().forEach(PlannerOrchestrator::reset);
+		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
+	}
+
 	public void refreshPlannerGoalWorld() {
 		if (plannerGoal != null) plannerGoal.refreshWorld();
 	}
@@ -75,19 +109,22 @@ public final class DialogueRuntime {
 	public boolean continuePlannerGoal(long tick, boolean workIdle, SessionSnapshot session,
 		String primaryPlayer, Optional<GoalSnapshot> actionGoal, TaskSnapshot task,
 		MissionExecutionSnapshot mission, SemanticEventBuffer events) {
-		if (plannerGoal == null || !plannerGoal.active()) return false;
+		delegationWorkIdle = workIdle;
+		boolean delegated = delegation != null && delegation.active();
+		if (delegated && (delegation.starting() || delegation.returning())) return true;
+		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
 		if (!workIdle || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
 			|| reflexActive || session == null || !session.companionActuationAllowed()
-			|| plannerOrchestrator.hasInFlight() || !pendingInternalTaskUpdates.isEmpty()) {
+			|| activePlanner().hasInFlight() || !pendingInternalTaskUpdates.isEmpty()) {
 			nextGoalContinuationTick = tick + 20;
 			return true;
 		}
 		if (tick < nextGoalContinuationTick) return true;
 		nextGoalContinuationTick = tick + 20;
 		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
-			"GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
+			(delegated ? delegation.continuation() : "GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
 				+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
-				+ plannerGoal.context(), tick, clock.millis(), "planner_goal"),
+				+ plannerGoal.context()), tick, clock.millis(), "planner_goal"),
 			session, primaryPlayer, actionGoal, task, mission, events);
 		return true;
 	}
@@ -139,15 +176,16 @@ public final class DialogueRuntime {
 	}
 
 	public boolean llmAvailable() {
-		return plannerOrchestrator.isConfigured();
+		return activePlanner().isConfigured();
 	}
 
 	public boolean plannerEnabled() {
-		return plannerOrchestrator.isEnabled();
+		return activePlanner().isEnabled();
 	}
 
 	public void setPlannerEnabled(boolean enabled) {
-		plannerOrchestrator.setEnabled(enabled);
+		planners().forEach(p -> p.setEnabled(enabled));
+		if (!enabled && delegation != null) delegation.reset("planner disabled");
 		if (enabled) {
 			return;
 		}
@@ -163,7 +201,7 @@ public final class DialogueRuntime {
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
 		pendingInternalTaskUpdates.clear();
-		plannerOrchestrator.reset();
+		resetPlanners("runtime reset");
 	}
 
 	public boolean externalDriverActive() {
@@ -171,54 +209,54 @@ public final class DialogueRuntime {
 	}
 
 	public List<Map<String, Object>> allAvailableTools() {
-		return plannerOrchestrator.allAvailableTools();
+		return activePlanner().allAvailableTools();
 	}
 
 	public CompletableFuture<ExternalPlannerToolResult> executeExternalTool(String name, JsonObject arguments) {
-		return plannerOrchestrator.executeExternalTool(name, arguments);
+		return activePlanner().executeExternalTool(name, arguments);
 	}
 
 	public PlannerOrchestratorDebugSnapshot plannerDebugSnapshot() {
-		return plannerOrchestrator.debugSnapshot();
+		return activePlanner().debugSnapshot();
 	}
 
 	public PlannerConversationDebugSnapshot plannerConversationDebugSnapshot() {
-		return plannerOrchestrator.conversationDebugSnapshot();
+		return activePlanner().conversationDebugSnapshot();
 	}
 
 	public PlannerConversationDebugSnapshot plannerProjectedConversationDebugSnapshot() {
-		return plannerOrchestrator.projectedConversationDebugSnapshot();
+		return activePlanner().projectedConversationDebugSnapshot();
 	}
 
 	public PlannerConversationDebugSnapshot plannerCanonicalConversationDebugSnapshot() {
-		return plannerOrchestrator.canonicalConversationDebugSnapshot();
+		return activePlanner().canonicalConversationDebugSnapshot();
 	}
 
 	public List<String> plannerContextExcerpt() {
-		return plannerOrchestrator.contextExcerpt();
+		return activePlanner().contextExcerpt();
 	}
 
 	public void invalidateIdleThinkTriggers() {
-		plannerOrchestrator.invalidateIdleThinkTriggers();
+		activePlanner().invalidateIdleThinkTriggers();
 	}
 
 	public void updateSafetyContext(long replacementSafetyEpoch, String replacementSafetyHoldId, boolean activeReflex) {
 		safetyEpoch = Math.max(safetyEpoch, Math.max(0L, replacementSafetyEpoch));
 		safetyHoldId = replacementSafetyHoldId;
 		reflexActive = activeReflex;
-		plannerOrchestrator.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive);
+		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
 	}
 
 	public List<StalePlannerRejection> drainStalePlannerRejections() {
-		return plannerOrchestrator.drainStalePlannerRejections();
+		return activePlanner().drainStalePlannerRejections();
 	}
 
 	public boolean startDebugCompaction() {
-		return plannerOrchestrator.startDebugCompaction();
+		return activePlanner().startDebugCompaction();
 	}
 
 	public CompactionExecutionResult pollDebugCompaction() {
-		return plannerOrchestrator.pollDebugCompaction();
+		return activePlanner().pollDebugCompaction();
 	}
 
 	public long lastFailureTick() {
@@ -247,11 +285,11 @@ public final class DialogueRuntime {
 	}
 
 	public void injectMockResponse(PlannerResponse response) {
-		plannerOrchestrator.injectMockResponse(response);
+		activePlanner().injectMockResponse(response);
 	}
 
 	public void injectTimeout() {
-		if (plannerOrchestrator.isEnabled()) {
+		if (activePlanner().isEnabled()) {
 			queuedTimeoutInjections++;
 		}
 	}
@@ -263,7 +301,7 @@ public final class DialogueRuntime {
 
 		appendTurn(new DialogueTurn(senderName, plainTextMessage, tick, clock.millis()));
 		supersedePendingInternalTaskUpdates("planner_reset", tick, eventBuffer);
-		plannerOrchestrator.reset();
+		resetPlanners("runtime reset");
 		queuedTimeoutInjections = 0;
 		applyTransition(DialogueCore.onReset(state, senderName, tick), tick, eventBuffer);
 		return true;
@@ -383,7 +421,7 @@ public final class DialogueRuntime {
 	) {
 		long timestampMs = clock.millis();
 		appendTurn(new DialogueTurn("system", updateMessage, tick, timestampMs));
-		if (externalDriverActive || (state.degraded() && plannerOrchestrator.isEnabled()) || !plannerOrchestrator.isConfigured()) {
+		if (externalDriverActive || (state.degraded() && activePlanner().isEnabled()) || !activePlanner().isConfigured()) {
 			return;
 		}
 		PendingInternalTaskUpdate pendingUpdate = new PendingInternalTaskUpdate(
@@ -427,17 +465,36 @@ public final class DialogueRuntime {
 		if (externalDriverActive) {
 			return null;
 		}
-		if (queuedTimeoutInjections > 0 && !plannerOrchestrator.hasInFlight()) {
+		if (queuedTimeoutInjections > 0 && !activePlanner().hasInFlight()) {
 			queuedTimeoutInjections--;
 			applyTransition(DialogueCore.onPlannerFailure(state, LlmFailureType.TIMEOUT, "Injected LLM timeout", pendingTimeoutVisibleReply, tick), tick, eventBuffer);
 			pendingTimeoutVisibleReply = false;
 			return null;
 		}
-		if (submitNextPendingInternalTaskUpdate(eventBuffer, sessionSnapshot, activeGoal, activeTask, missionExecution)) {
+		if ((delegation == null || !delegation.starting()) && submitNextPendingInternalTaskUpdate(eventBuffer, sessionSnapshot, activeGoal, activeTask, missionExecution)) {
 			return null;
 		}
 
-		PlannerExecutionResult result = plannerOrchestrator.poll();
+		if (delegation != null && delegation.starting()) {
+			delegationEventCursor = eventBuffer.latestSeqNo();
+			String message = delegation.start(delegationFacts(tick, activeTask, missionExecution), delegationEventCursor);
+			onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "controller", message,
+				tick, clock.millis(), "delegation"), sessionSnapshot, null, activeGoal, activeTask, missionExecution, eventBuffer);
+		}
+		if (delegation != null && delegation.active()) {
+			var events = eventBuffer.query(delegationEventCursor);
+			if (events.truncated()) delegation.recordEventGap();
+			for (var event : events.events()) delegation.recordEvent(event.seqNo(), event.type(), event.payload());
+			delegationEventCursor = events.latestSeqNo();
+		}
+		PlannerOrchestrator owner = activePlanner();
+		PlannerExecutionResult result = owner.poll();
+		if (delegation != null && delegation.active() && result != null && !result.succeeded())
+			delegation.failed(result.failureMessage());
+		if (delegation != null && delegation.returning() && !owner.hasInFlight()) {
+			delegation.finish(delegationFacts(tick, activeTask, missionExecution));
+			return null;
+		}
 		if (result == null) {
 			return null;
 		}
@@ -463,14 +520,33 @@ public final class DialogueRuntime {
 		DialogueTransition transition = DialogueCore.onPlannerSuccess(state, result.response(), tick);
 		applyTransition(transition, tick, eventBuffer);
 		pendingTimeoutVisibleReply = false;
-		plannerOrchestrator.onAcceptedReplyRecorded();
+		activePlanner().onAcceptedReplyRecorded();
 		submitNextPendingInternalTaskUpdate(eventBuffer, sessionSnapshot, activeGoal, activeTask, missionExecution);
 		return transition.lastVisibleResponse();
 	}
 
+	private Map<String, Object> delegationFacts(long tick, TaskSnapshot task, MissionExecutionSnapshot mission) {
+		Map<String, Object> facts = new java.util.LinkedHashMap<>();
+		facts.put("tick", tick);
+		facts.put("workIdle", delegationWorkIdle());
+		if (plannerGoal != null) facts.put("plannerGoal", plannerGoal.context());
+		if (task != null) {
+			facts.put("taskState", task.state());
+			facts.put("taskId", task.taskId());
+			facts.put("lastStepResult", task.lastStepResult());
+		}
+		if (mission != null && mission.evidence() != null) {
+			var evidence = mission.evidence();
+			facts.put("dimension", evidence.dimension());
+			facts.put("position", Map.of("x", evidence.x(), "y", evidence.y(), "z", evidence.z()));
+			facts.put("inventory", evidence.itemCounts());
+		}
+		return facts;
+	}
+
 	public void resetLlmState(long tick, SemanticEventBuffer eventBuffer) {
-		plannerOrchestrator.reset();
-		plannerOrchestrator.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive);
+		resetPlanners("runtime reset");
+		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
 		pendingInternalTaskUpdates.clear();
@@ -490,8 +566,8 @@ public final class DialogueRuntime {
 		pendingVisibleReplies.clear();
 		recentTurns.clear();
 		userGuidanceRevision = 0L;
-		plannerOrchestrator.reset();
-		plannerOrchestrator.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive);
+		resetPlanners("runtime reset");
+		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
 	}
 
 	public void shutdown() {
@@ -502,7 +578,8 @@ public final class DialogueRuntime {
 		pendingVisibleReplies.clear();
 		recentTurns.clear();
 		userGuidanceRevision = 0L;
-		plannerOrchestrator.shutdown();
+		if (delegation != null) delegation.reset("shutdown");
+		planners().forEach(PlannerOrchestrator::shutdown);
 	}
 
 	public static boolean isResetCommand(String plainTextMessage) {
@@ -520,9 +597,13 @@ public final class DialogueRuntime {
 		}
 		request = request.withSafetyContext(safetyEpoch, safetyHoldId);
 		if (directUserGuidance) {
+			if (delegation != null && delegation.active()) {
+				delegation.recordGuidance(request.senderName(), request.message());
+				if (delegation.starting() || delegation.returning()) return;
+			}
 			supersedePendingInternalTaskUpdates("new_user_guidance", request.tick(), eventBuffer);
 		}
-		if (state.degraded() && plannerOrchestrator.isEnabled()) {
+		if (state.degraded() && activePlanner().isEnabled()) {
 			applyTransition(
 				DialogueCore.onPlannerDegradedBlocked(state, request.senderName(), directUserGuidance, request.tick()),
 				request.tick(),
@@ -530,8 +611,8 @@ public final class DialogueRuntime {
 			);
 			return;
 		}
-		Long sinceSeqNo = plannerOrchestrator.lastObservedEventSeqNo();
-		plannerOrchestrator.recordEvents(
+		Long sinceSeqNo = activePlanner().lastObservedEventSeqNo();
+		activePlanner().recordEvents(
 			eventBuffer.query(sinceSeqNo <= 0L ? null : sinceSeqNo),
 			new PlannerRequestSeed(
 				request.tick(),
@@ -541,7 +622,7 @@ public final class DialogueRuntime {
 				request.activeGoal()
 			)
 		);
-		boolean submitted = plannerOrchestrator.submit(request);
+		boolean submitted = activePlanner().submit(request);
 		pendingTimeoutVisibleReply = directUserGuidance && submitted;
 	}
 
@@ -555,11 +636,11 @@ public final class DialogueRuntime {
 		if (externalDriverActive || pendingInternalTaskUpdates.isEmpty()) {
 			return false;
 		}
-		if ((state.degraded() && plannerOrchestrator.isEnabled()) || !plannerOrchestrator.isConfigured()) {
+		if ((state.degraded() && activePlanner().isEnabled()) || !activePlanner().isConfigured()) {
 			pendingInternalTaskUpdates.clear();
 			return false;
 		}
-		if (plannerOrchestrator.hasInFlight()) {
+		if (activePlanner().hasInFlight()) {
 			return false;
 		}
 		while (!pendingInternalTaskUpdates.isEmpty()) {
@@ -651,14 +732,14 @@ public final class DialogueRuntime {
 		if (
 			externalDriverActive
 				|| pendingUpdate == null
-				|| (state.degraded() && plannerOrchestrator.isEnabled())
-				|| plannerOrchestrator.hasInFlight()
-				|| !plannerOrchestrator.isConfigured()
+				|| (state.degraded() && activePlanner().isEnabled())
+				|| activePlanner().hasInFlight()
+				|| !activePlanner().isConfigured()
 		) {
 			return false;
 		}
-		Long sinceSeqNo = plannerOrchestrator.lastObservedEventSeqNo();
-		plannerOrchestrator.recordEvents(
+		Long sinceSeqNo = activePlanner().lastObservedEventSeqNo();
+		activePlanner().recordEvents(
 			eventBuffer.query(sinceSeqNo <= 0L ? null : sinceSeqNo),
 			new PlannerRequestSeed(
 				pendingUpdate.tick(),
@@ -668,7 +749,7 @@ public final class DialogueRuntime {
 				pendingUpdate.activeGoal()
 			)
 		);
-		plannerOrchestrator.submit(new PlannerRequest(
+		activePlanner().submit(new PlannerRequest(
 			pendingUpdate.tick(),
 			pendingUpdate.timestampMs(),
 			pendingUpdate.sessionSnapshot().mode(),
@@ -688,7 +769,7 @@ public final class DialogueRuntime {
 	private void recordAgentTurn(String text, long tick) {
 		DialogueTurn turn = new DialogueTurn(DialogueSpeakerLabels.AGENT, text, tick, clock.millis());
 		appendTurn(turn);
-		plannerOrchestrator.recordAssistantTurn(turn);
+		(visibleReplyOwner == null ? activePlanner() : visibleReplyOwner).recordAssistantTurn(turn);
 	}
 
 	private void appendTurn(DialogueTurn turn) {
@@ -699,6 +780,7 @@ public final class DialogueRuntime {
 	}
 
 	private void applyTransition(DialogueTransition transition, long tick, SemanticEventBuffer eventBuffer) {
+		visibleReplyOwner = activePlanner();
 		state = transition.state();
 		applyEffects(transition.effects(), tick, eventBuffer);
 		pendingVisibleReplies.clear();

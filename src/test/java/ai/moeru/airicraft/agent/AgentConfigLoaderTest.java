@@ -10,6 +10,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentConfigLoaderTest {
+	@Test void readsIndependentThinkingProfile() {
+		var config = AgentConfigLoader.fromMapStrict(Map.of("model", "controller-model", "thinkingPlanner",
+			Map.of("enabled", true, "model", "thinking-model", "reasoningEffort", "medium")), AgentConfig.defaults()).llm();
+		assertTrue(config.thinkingPlanner().enabled());
+		var controller = config.forRole(config.model(), "none");
+		var thinking = config.forRole(config.thinkingPlanner().model(), config.thinkingPlanner().reasoningEffort());
+		assertEquals("controller-model", controller.model());
+		assertEquals("none", controller.reasoningEffort());
+		assertEquals("thinking-model", thinking.model());
+		assertEquals("medium", thinking.reasoningEffort());
+		assertFalse(thinking.thinkingPlanner().enabled());
+	}
+
 	@Test
 	void readsOptionalOpenAiReasoningEffortIndependentlyOfCodex() {
 		assertEquals("", AgentConfig.defaults().llm().reasoningEffort());

@@ -34,6 +34,8 @@ public interface PlannerLifecycleListener {
 	default void onToolRequested(long generation, PlannerToolCall toolCall) {
 	}
 
+	default void onToolExchange(PlannerToolCall call, String result, boolean imageAttached) { }
+
 	default void onToolCompleted(long generation, String toolResult, boolean imageAttached) {
 	}
 

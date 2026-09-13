@@ -91,6 +91,11 @@ public final class AgentConfigLoader {
 			readInt(codexRoot, "startupTimeoutMillis", defaults.llm().codexAppServer().startupTimeoutMillis()),
 			readInt(codexRoot, "turnTimeoutMillis", defaults.llm().codexAppServer().turnTimeoutMillis())
 		);
+		Map<String, Object> thinkingRoot = readObjectMap(root, "thinkingPlanner", strict);
+		var thinkingPlanner = new AgentConfig.ThinkingPlannerConfig(
+			readBoolean(thinkingRoot, "enabled", defaults.llm().thinkingPlanner().enabled(), strict),
+			readString(thinkingRoot, "model", defaults.llm().thinkingPlanner().model(), strict),
+			readString(thinkingRoot, "reasoningEffort", defaults.llm().thinkingPlanner().reasoningEffort(), strict));
 		AgentConfig.LlmConfig llm = new AgentConfig.LlmConfig(
 			readString(root, "providerBaseUrl", defaults.llm().providerBaseUrl(), strict),
 			readString(root, "apiKey", defaults.llm().apiKey(), strict),
@@ -112,7 +117,8 @@ public final class AgentConfigLoader {
 			readBoolean(root, "plannerUseJsonObjectResponseFormat", defaults.llm().plannerUseJsonObjectResponseFormat(), strict),
 			readPlannerBackend(root, defaults.llm().plannerBackend(), strict),
 			codexAppServer,
-			readString(root, "plannerReasoningEffort", defaults.llm().reasoningEffort(), strict)
+			readString(root, "plannerReasoningEffort", defaults.llm().reasoningEffort(), strict),
+			thinkingPlanner
 		);
 		AgentConfig.IdleConfig idle = new AgentConfig.IdleConfig(
 			readInt(root, "idleInitialDelaySeconds", defaults.idle().initialDelaySeconds()),

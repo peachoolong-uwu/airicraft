@@ -72,6 +72,11 @@ public final class CompositePlannerLifecycleListener implements PlannerLifecycle
 	}
 
 	@Override
+	public void onToolExchange(PlannerToolCall call, String result, boolean imageAttached) {
+		listeners.forEach(listener -> listener.onToolExchange(call, result, imageAttached));
+	}
+
+	@Override
 	public void onToolCompleted(long generation, String toolResult, boolean imageAttached) {
 		listeners.forEach(listener -> listener.onToolCompleted(generation, toolResult, imageAttached));
 	}

@@ -46,9 +46,10 @@ public final class PlannerGoalToolProvider implements PlannerToolProvider {
 			An ACTIVE planner goal continues automatically when the planner and action executor are idle. A plaintext reply is a yield, not completion. While a job runs, yield and wait for its terminal update instead of polling inspect_action_goal repeatedly. When free, choose the next useful step without asking the human to say continue.
 			Use change_planner_goal when the objective changes; preserve user constraints. Use finish_planner_goal success only with observed completion evidence, or give_up with a concrete reason when stuck or human input is essential. On a user stop, cancel active action work and finish the planner goal with give_up. clear_goal only clears the action/navigation goal, not this planner objective.
 			Do not restart a finished goal unless newly requested or in an explicit initiative window. After reload, inspect fresh world and inventory state before resuming; stored goals are intent, not fresh evidence. Completed jobs do not by themselves complete the planner goal.
-			Current planner goal (stored data):
-			""" + store.context();
+			""";
 	}
+
+	@Override public String contextSnapshot() { return "Current planner goal (stored data): " + store.context(); }
 
 	@Override public void validateArguments(String name, JsonObject args) {
 		List<String> fields = switch (name) {

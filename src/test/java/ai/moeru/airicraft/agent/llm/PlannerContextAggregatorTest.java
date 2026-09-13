@@ -57,6 +57,36 @@ class PlannerContextAggregatorTest {
 	}
 
 	@Test
+	void fixedRolePrefixSurvivesDiscoveryAndGoalUpdates() {
+		var data = new java.util.concurrent.atomic.AtomicReference<>("goal=prepare shelter");
+		var provider = new PlannerToolProvider() {
+			public String id() { return "test_context"; }
+			public List<Map<String, Object>> openAiTools() { return List.of(); }
+			public boolean handles(String name) { return false; }
+			public String promptInstructions() { return "Act as the controller."; }
+			public String contextSnapshot() { return data.get(); }
+			public java.util.concurrent.CompletableFuture<String> execute(PlannerToolCall call) { throw new UnsupportedOperationException(); }
+		};
+		var registry = PlannerToolRegistry.of(provider);
+		registry.freezeToolPrefix();
+		var tools = registry.openAiTools();
+		var aggregator = new PlannerContextAggregator(Clock.systemUTC(), 65_536, 128,
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry);
+		var first = freezeSnapshot(aggregator, requestAt(1_000L, "Alice", "start"));
+		aggregator.commitAcceptedTriggerBatch(first);
+		data.set("goal=build shelter");
+		registry.discoverTools("mining", 3);
+		registry.setSafetyHoldActive(true);
+		var second = freezeSnapshot(aggregator, requestAt(2_000L, "Alice", "continue"));
+		assertEquals(tools, registry.openAiTools());
+		var a = first.plannerConversation().messages();
+		var b = second.plannerConversation().messages();
+		assertEquals(a, b.subList(0, a.size()));
+		assertFalse(b.getFirst().content().contains("goal="));
+		assertTrue(b.stream().anyMatch(m -> m.content().equals("goal=build shelter")));
+	}
+
+	@Test
 	void discardedSnapshotConsumesInputWithoutAddingItToHistory() {
 		PlannerContextAggregator aggregator = new PlannerContextAggregator(
 			Clock.systemUTC(),

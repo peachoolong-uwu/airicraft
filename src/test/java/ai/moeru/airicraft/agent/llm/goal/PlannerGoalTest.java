@@ -57,7 +57,7 @@ class PlannerGoalTest {
 		assertEquals("{broken", Files.readString(file));
 	}
 
-	@Test void goalToolsAreAvailableInitiallyAndFreshStateAppearsInPrompt() throws Exception {
+	@Test void goalToolsAreAvailableInitiallyAndFreshStateStaysOutsideSystemPrompt() throws Exception {
 		var store = new PlannerGoalStore(() -> world);
 		var provider = new PlannerGoalToolProvider(store, Runnable::run);
 		var registry = PlannerToolRegistry.of(provider);
@@ -65,10 +65,11 @@ class PlannerGoalTest {
 		assertTrue(registry.isActiveTool("finish_planner_goal"));
 		String result = provider.execute(new PlannerToolCall(null, "set_planner_goal", JsonParser.parseString("{\"objective\":\"Scout a cave\"}").getAsJsonObject(), null, null)).get();
 		assertTrue(result.contains("ACTIVE"));
-		assertTrue(registry.promptInstructions().contains("Scout a cave"));
+		assertTrue(registry.contextSnapshot().contains("Scout a cave"));
+		assertFalse(registry.promptInstructions().contains("Scout a cave"));
 		assertFalse(registry.isReadTool("change_planner_goal"));
 		var finished = store.finish(store.snapshot().id(), PlannerGoalStore.Status.GIVEN_UP, "No safe entrance found");
-		assertTrue(provider.promptInstructions().contains("GIVEN_UP"));
+		assertTrue(provider.contextSnapshot().contains("GIVEN_UP"));
 		assertEquals(finished.outcome(), "No safe entrance found");
 	}
 }

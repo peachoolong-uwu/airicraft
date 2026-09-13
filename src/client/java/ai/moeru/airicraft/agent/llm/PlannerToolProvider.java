@@ -19,6 +19,12 @@ public interface PlannerToolProvider {
 		return "";
 	}
 
+	/** Current facts are appended to the conversation, never embedded in system instructions. */
+	default String contextSnapshot() { return ""; }
+
+	/** Commit this tool result and yield without another model call. */
+	default boolean endsTurn(String toolName) { return false; }
+
 	boolean handles(String toolName);
 
 	default boolean isReadTool(String toolName) {

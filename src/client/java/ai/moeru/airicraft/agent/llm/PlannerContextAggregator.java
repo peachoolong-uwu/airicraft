@@ -27,6 +27,9 @@ public final class PlannerContextAggregator {
 	private final boolean backendManagedHistory;
 	private final SemanticContextProjector semanticContextProjector = new SemanticContextProjector();
 
+	private String fixedSystemPrompt;
+	private LlmConversation retainedConversation;
+
 	private PlannerContextState state = PlannerContextState.initial();
 	private PlannerContextSnapshot lastFrozenSnapshot;
 	private PlannerRequestSeed latestRequestSeed;
@@ -202,6 +205,7 @@ public final class PlannerContextAggregator {
 			return;
 		}
 		state = PlannerContextReducer.commitAcceptedSnapshot(state, snapshot);
+		retainConversation(snapshot.plannerConversation());
 		if (backendManagedHistory) {
 			state = withoutAcceptedProviderHistory(state);
 		}
@@ -438,6 +442,8 @@ public final class PlannerContextAggregator {
 
 	public void applyCheckpoint(CompactionCheckpoint checkpoint) {
 		state = PlannerContextReducer.clearCompactionPending(state, checkpoint, clock.millis());
+		if (toolRegistry.hasFixedPrefix()) retainedConversation = LlmConversation.of(List.of(
+			LlmChatMessage.system(systemPrompt()), LlmChatMessage.user(checkpoint.renderMessage(), LlmMessageKind.CHECKPOINT)));
 		lastFrozenSnapshot = null;
 	}
 
@@ -447,6 +453,7 @@ public final class PlannerContextAggregator {
 
 	public void clear() {
 		state = PlannerContextState.initial();
+		retainedConversation = null;
 		lastFrozenSnapshot = null;
 		latestRequestSeed = null;
 		overflowFlushPending = false;
@@ -468,6 +475,17 @@ public final class PlannerContextAggregator {
 		return semanticContextProjector.project(pendingSemanticQueryResult(), anchorTimeMs);
 	}
 
+	/** Keep the actual accepted wire conversation, including frozen notices and raw tool envelopes. */
+	public void retainConversation(LlmConversation conversation) {
+		if (toolRegistry.hasFixedPrefix() && !backendManagedHistory) retainedConversation = conversation;
+	}
+
+	private String systemPrompt() {
+		if (!toolRegistry.hasFixedPrefix()) return PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry);
+		if (fixedSystemPrompt == null) fixedSystemPrompt = PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry);
+		return fixedSystemPrompt;
+	}
+
 	private List<LlmChatMessage> renderSnapshotNotices(
 		PlannerRequest request,
 		PlannerAmbientContext ambientContext,
@@ -475,6 +493,8 @@ public final class PlannerContextAggregator {
 	) {
 		long anchorTimeMs = request.timestampMs();
 		ArrayList<LlmChatMessage> messages = new ArrayList<>();
+		String providerContext = toolRegistry.contextSnapshot();
+		if (!providerContext.isBlank()) messages.add(LlmChatMessage.user(providerContext, LlmMessageKind.NOTICE));
 		if (renderedTimeContextAtMs >= 0L) {
 			messages.add(ContextMessageRenderer.renderEntry(new PlannerContextEntry(
 				PlannerContextEntryType.NOTICE,
@@ -504,7 +524,13 @@ public final class PlannerContextAggregator {
 		LlmChatMessage terminalMessage
 	) {
 		ArrayList<LlmChatMessage> messages = new ArrayList<>();
-		messages.add(LlmChatMessage.system(PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry)));
+		if (toolRegistry.hasFixedPrefix() && retainedConversation != null) {
+			messages.addAll(retainedConversation.messages());
+			messages.addAll(snapshotNotices);
+			if (terminalMessage != null) messages.add(terminalMessage);
+			return LlmConversation.of(messages);
+		}
+		messages.add(LlmChatMessage.system(systemPrompt()));
 		if (!backendManagedHistory && state.activeCheckpoint() != null) {
 			messages.add(LlmChatMessage.user(state.activeCheckpoint().renderMessage(), LlmMessageKind.CHECKPOINT));
 		}
@@ -522,7 +548,7 @@ public final class PlannerContextAggregator {
 		if (!backendManagedHistory) {
 			return withCurrentSystemPrompt(snapshot.plannerConversation());
 		}
-		return LlmConversation.of(List.of(LlmChatMessage.system(PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry))));
+		return LlmConversation.of(List.of(LlmChatMessage.system(systemPrompt())));
 	}
 
 	private static PlannerContextState withoutAcceptedProviderHistory(PlannerContextState value) {
@@ -544,14 +570,14 @@ public final class PlannerContextAggregator {
 
 	private LlmConversation withCurrentSystemPrompt(LlmConversation conversation) {
 		if (conversation == null || conversation.messages().isEmpty()) {
-			return LlmConversation.of(List.of(LlmChatMessage.system(PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry))));
+			return LlmConversation.of(List.of(LlmChatMessage.system(systemPrompt())));
 		}
 		ArrayList<LlmChatMessage> messages = new ArrayList<>(conversation.messages());
 		if ("system".equals(messages.getFirst().role())) {
-			messages.set(0, LlmChatMessage.system(PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry)));
+			messages.set(0, LlmChatMessage.system(systemPrompt()));
 		}
 		else {
-			messages.add(0, LlmChatMessage.system(PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry)));
+			messages.add(0, LlmChatMessage.system(systemPrompt()));
 		}
 		return LlmConversation.of(messages);
 	}

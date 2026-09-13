@@ -34,7 +34,9 @@ public final class PlannerCallJournal implements PlannerLifecycleListener {
 	private final Supplier<List<Map<String, Object>>> toolsSupplier;
 	private final ArrayList<PendingCall> calls = new ArrayList<>();
 	private final Map<CallKey, PendingCall> activeCalls = new HashMap<>();
-	private long nextSequence = 1L;
+	private java.util.concurrent.atomic.AtomicLong nextSequence = new java.util.concurrent.atomic.AtomicLong(1);
+	private final List<PlannerCallJournal> roleJournals = new ArrayList<>();
+	private String roleNamespace = "";
 
 	public PlannerCallJournal(
 		Clock clock,
@@ -62,7 +64,7 @@ public final class PlannerCallJournal implements PlannerLifecycleListener {
 			return;
 		}
 		CallKey key = new CallKey(generation, attempt, phase);
-		long sequence = nextSequence++;
+		long sequence = nextSequence.getAndIncrement();
 		PendingCall call = new PendingCall(
 			sequence,
 			generation,
@@ -134,6 +136,7 @@ public final class PlannerCallJournal implements PlannerLifecycleListener {
 	}
 
 	public synchronized void finalizeForEvaluation() {
+		roleJournals.forEach(PlannerCallJournal::finalizeForEvaluation);
 		cancelPending("EVALUATION_TERMINAL", "Evaluation reached a terminal result");
 	}
 
@@ -155,17 +158,26 @@ public final class PlannerCallJournal implements PlannerLifecycleListener {
 		activeCalls.clear();
 	}
 
+	public synchronized PlannerCallJournal forkRole(String role, String provider, String modelName, Supplier<List<Map<String, Object>>> tools) {
+		var child = new PlannerCallJournal(clock, serverTickSupplier, provider, modelName, tools);
+		child.nextSequence = nextSequence;
+		child.roleNamespace = role + ":";
+		roleJournals.add(child);
+		return child;
+	}
+
 	public synchronized List<PlannerCallRecordV1> snapshot() {
-		return calls.stream()
-			.filter(PendingCall::isComplete)
-			.map(this::toRecord)
-			.toList();
+		var records = new ArrayList<>(calls.stream().filter(PendingCall::isComplete).map(this::toRecord).toList());
+		roleJournals.forEach(child -> records.addAll(child.snapshot()));
+		records.sort(java.util.Comparator.comparingLong(record -> Long.parseLong(record.sequence())));
+		return List.copyOf(records);
 	}
 
 	public synchronized void clear() {
 		calls.clear();
 		activeCalls.clear();
-		nextSequence = 1L;
+		roleJournals.forEach(PlannerCallJournal::clear);
+		nextSequence.set(1L);
 	}
 
 	private PendingCall find(PlannerExecutionResult result) {
@@ -186,7 +198,7 @@ public final class PlannerCallJournal implements PlannerLifecycleListener {
 			PlannerCallRecordV1.SCHEMA_VERSION,
 			"planner-call-%04d".formatted(call.sequence),
 			Long.toString(call.sequence),
-			"planner-generation-" + call.generation,
+			"planner-generation-" + roleNamespace + call.generation,
 			new PlannerCallRecordV1.PlannerAttempt(Long.toString(call.generation), call.attempt, call.phase.name()),
 			new PlannerCallRecordV1.Timeline(
 				new PlannerCallRecordV1.Anchor(Long.toString(call.submittedTick)),

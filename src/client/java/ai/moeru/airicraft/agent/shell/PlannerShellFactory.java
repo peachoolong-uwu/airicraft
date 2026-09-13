@@ -182,7 +182,7 @@ public final class PlannerShellFactory {
 				: client.getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT);
 		});
 		plannerGoal.refreshWorld();
-		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(
+		var sharedProviders = List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
 			new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, command -> MinecraftClient.getInstance().execute(command)),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
@@ -194,51 +194,72 @@ public final class PlannerShellFactory {
 			new ReiRecipeSearchToolProvider(),
 			new MapPlannerToolProvider(MapIntegrationBridge::registry)
 		);
-		PlannerCallJournal plannerCallJournal = new PlannerCallJournal(
-			effectiveClock,
-			effectiveServerTickSupplier,
-			config.llm().plannerBackend().wireValue(),
-			plannerModelName(config.llm()),
-			toolRegistry::openAiTools
-		);
-		LlmBackend plannerBackend = switch (config.llm().plannerBackend()) {
-			case OPENAI_COMPATIBLE -> new OpenAiCompatibleLlmBackend(config.llm(), observability, toolRegistry);
-			case CODEX_APP_SERVER -> new CodexAppServerLlmBackend(config.llm(), observability, toolRegistry);
+		boolean dual = config.llm().thinkingPlanner().enabled();
+		if (dual && config.llm().plannerBackend() != AgentConfig.PlannerBackend.OPENAI_COMPATIBLE)
+			throw new IllegalArgumentException("thinkingPlanner requires the openai-compatible backend");
+		var handoff = new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation();
+		var controllerRef = new java.util.concurrent.atomic.AtomicReference<PlannerOrchestrator>();
+		var dialogueRef = new java.util.concurrent.atomic.AtomicReference<DialogueRuntime>();
+		java.util.concurrent.Executor clientExecutor = command -> MinecraftClient.getInstance().execute(command);
+		var controllerProviders = new java.util.ArrayList<>(sharedProviders);
+		if (dual) controllerProviders.add(new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider(
+			ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.CONTROLLER, handoff, clientExecutor,
+			() -> controllerRef.get().delegationContext(), () -> dialogueRef.get().delegationWorkIdle()));
+		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(controllerProviders.toArray(ai.moeru.airicraft.agent.llm.PlannerToolProvider[]::new));
+		if (dual) toolRegistry.freezeToolPrefix();
+		var controllerConfig = dual ? config.llm().forRole(config.llm().model(), "none") : config.llm();
+		String cacheSession = dual ? "airicraft:" + java.util.UUID.randomUUID() : null;
+		PlannerCallJournal plannerCallJournal = new PlannerCallJournal(effectiveClock, effectiveServerTickSupplier,
+			controllerConfig.plannerBackend().wireValue(), plannerModelName(controllerConfig), toolRegistry::openAiTools);
+		PlannerOrchestrator orchestrator = createOrchestrator(controllerConfig, toolRegistry, visionService, inventoryService,
+			effectiveClock, observability, debugRecorder, effectiveActionToolExecutor, effectiveNarrationSink,
+			effectiveToolExecutionObserver, CompositePlannerLifecycleListener.of(journal, plannerCallJournal),
+			dual ? cacheSession + ":controller" : null);
+		controllerRef.set(orchestrator);
+		DialogueRuntime dialogue = new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock, plannerGoal);
+		dialogueRef.set(dialogue);
+		if (dual) {
+			var thinkingProviders = new java.util.ArrayList<>(sharedProviders);
+			thinkingProviders.add(new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider(
+				ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.THINKING, handoff, clientExecutor,
+				() -> "", dialogue::delegationWorkIdle));
+			var thinkingRegistry = PlannerToolRegistry.of(thinkingProviders.toArray(ai.moeru.airicraft.agent.llm.PlannerToolProvider[]::new));
+			thinkingRegistry.freezeToolPrefix();
+			var thinkingProfile = config.llm().thinkingPlanner();
+			var thinkingConfig = config.llm().forRole(thinkingProfile.model().isBlank() ? config.llm().model() : thinkingProfile.model(), thinkingProfile.reasoningEffort());
+			var thinkingCalls = plannerCallJournal.forkRole("thinking", thinkingConfig.plannerBackend().wireValue(), plannerModelName(thinkingConfig), thinkingRegistry::openAiTools);
+			var handoffEvidence = new ai.moeru.airicraft.agent.llm.PlannerLifecycleListener() {
+				@Override public void onToolExchange(ai.moeru.airicraft.agent.llm.PlannerToolCall call, String result, boolean imageAttached) {
+					handoff.recordToolExchange(call, result, imageAttached);
+				}
+			};
+			var thinker = createOrchestrator(thinkingConfig, thinkingRegistry, visionService, inventoryService,
+				effectiveClock, observability, debugRecorder, effectiveActionToolExecutor, effectiveNarrationSink,
+				effectiveToolExecutionObserver, CompositePlannerLifecycleListener.of(journal, thinkingCalls, handoffEvidence), cacheSession + ":thinking");
+			var generations = new java.util.concurrent.atomic.AtomicLong(1L);
+			orchestrator.shareGenerationSequence(generations);
+			thinker.shareGenerationSequence(generations);
+			dialogue.configureDelegation(thinker, handoff);
+		}
+		return new PlannerShellComponents(visionService, dialogue, journal, plannerCallJournal);
+	}
+
+	private static PlannerOrchestrator createOrchestrator(AgentConfig.LlmConfig llm, PlannerToolRegistry tools,
+		CurrentViewVisionService vision, CurrentInventoryService inventory, Clock clock, AgentObservability observability,
+		AgentDebugRecorder debug, PlannerActionToolExecutor actions, PlannerToolNarrationSink narration,
+		PlannerToolExecutionObserver toolObserver, ai.moeru.airicraft.agent.llm.PlannerLifecycleListener listener, String cacheKey) {
+		LlmBackend backend = switch (llm.plannerBackend()) {
+			case OPENAI_COMPATIBLE -> new OpenAiCompatibleLlmBackend(llm, observability, tools, cacheKey);
+			case CODEX_APP_SERVER -> new CodexAppServerLlmBackend(llm, observability, tools);
 		};
-		PlannerOrchestrator orchestrator = new PlannerOrchestrator(
-			new PlannerExecutor(plannerBackend, observability),
-			new PlannerCompactionService(new OpenAiCompatibleChatClient(config.llm(), observability, toolRegistry), observability),
-			new PlannerContextAggregator(
-				effectiveClock,
-				config.llm().plannerCompactionTriggerTokens(),
-				config.llm().plannerPendingSemanticEventCap(),
-				config.llm().plannerVisionMode(),
-				toolRegistry,
-				config.llm().backendManagedHistory()
-			),
-			visionService,
-			inventoryService,
-			config.llm().plannerVisionMode(),
-			config.llm().visionImageDetail(),
-			config.llm().plannerSessionMaxConcurrentAttempts(),
-			config.llm().plannerSessionCoalesceStepMillis(),
-			config.llm().plannerSessionCoalesceMinMillis(),
-				config.llm().plannerSessionCoalesceMaxMillis(),
-				effectiveClock,
-				observability,
-				CompositePlannerLifecycleListener.of(journal, plannerCallJournal),
-				debugRecorder,
-				effectiveActionToolExecutor,
-				effectiveNarrationSink,
-				toolRegistry,
-				effectiveToolExecutionObserver
-			);
-		return new PlannerShellComponents(
-			visionService,
-			new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock, plannerGoal),
-			journal,
-			plannerCallJournal
-		);
+		return new PlannerOrchestrator(new PlannerExecutor(backend, observability),
+			new PlannerCompactionService(new OpenAiCompatibleChatClient(llm, observability, tools,
+				cacheKey == null ? null : cacheKey + ":compaction"), observability),
+			new PlannerContextAggregator(clock, llm.plannerCompactionTriggerTokens(), llm.plannerPendingSemanticEventCap(),
+				llm.plannerVisionMode(), tools, llm.backendManagedHistory()), vision, inventory, llm.plannerVisionMode(),
+			llm.visionImageDetail(), llm.plannerSessionMaxConcurrentAttempts(), llm.plannerSessionCoalesceStepMillis(),
+			llm.plannerSessionCoalesceMinMillis(), llm.plannerSessionCoalesceMaxMillis(), clock, observability,
+			listener, debug, actions, narration, tools, toolObserver);
 	}
 
 	private static String plannerModelName(AgentConfig.LlmConfig config) {

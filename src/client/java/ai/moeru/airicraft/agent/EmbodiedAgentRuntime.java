@@ -1222,6 +1222,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return debugRecorder.eventPipelineSnapshot();
 	}
 
+	public Map<String, Object> debugSystem2() { return dialogueRuntime.system2Snapshot(); }
+
 	public ConversationSourcesDebugSnapshot debugConversationSources() {
 		return debugRecorder.conversationSourcesSnapshot();
 	}

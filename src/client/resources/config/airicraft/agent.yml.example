@@ -27,6 +27,15 @@ model: ""
 # RunInfra qwen3-8-27b supports low and none (thinking off). Reload to apply.
 plannerReasoningEffort: ""
 
+# Two independent System2 sessions. Controller effort is fixed to none in this mode.
+# The thinking planner takes over gameplay tools for delegate_task, then returns control.
+# Empty thinking model uses the controller model; both use the same provider credentials.
+# Supported with the openai-compatible backend. Reload creates fresh role sessions.
+thinkingPlanner:
+  enabled: false
+  model: ""
+  reasoningEffort: "medium"
+
 # OpenAI-compatible base URL for vision requests.
 visionProviderBaseUrl: "https://api.openai.com/v1"
 
