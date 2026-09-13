@@ -127,7 +127,35 @@ class DialogueRuntimeTest {
 	}
 
 	@Test
-	void safetyHoldContinuesAfterPlainReplyWithoutCallingPausedWorkIdle(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+	void blockedGoalOnlyReassessesOnItsNamedEvents(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		var objective = goal.set("Build chest");
+		goal.block(objective.id(),"no wood","JOB:one exhausted search","wood becomes available",java.util.List.of("interaction.container_take"));
+		var backend = new BlockingLlmBackend();
+		var runtime = newDialogueRuntime(backend,CurrentViewVisionTool.disabled(),PlannerVisionMode.EXTERNAL_SUMMARY,goal);
+		var events = new SemanticEventBuffer(32);
+		var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST,true,true,"minecraft:overworld",true,25565,1);
+		try {
+			runtime.poll(1,events,session,Optional.empty(),null,null);
+			events.append(2,"work.changed",java.util.Map.of("workId","unrelated"));
+			for (int tick=2;tick<50;tick++) {
+				runtime.continuePlannerGoal(tick,true,session,null,Optional.empty(),null,null,events);
+				runtime.poll(tick,events,session,Optional.empty(),null,null);
+			}
+			assertEquals(0,backend.conversationCount());
+			backend.injectMockResponse(new PlannerResponse("I will inspect what was retrieved.",new PlannerIntent("none",null,null)));
+			events.append(51,"interaction.container_take",java.util.Map.of("itemId","minecraft:spruce_log"));
+			runtime.poll(51,events,session,Optional.empty(),null,null);
+			awaitResponse(runtime,events,Duration.ofSeconds(1));
+			assertEquals(1,backend.conversationCount());
+			assertTrue(goal.blocked(),"Reassessment does not silently resume the objective");
+			for (int tick=52;tick<80;tick++) runtime.continuePlannerGoal(tick,true,session,null,Optional.empty(),null,null,events);
+			assertEquals(1,backend.conversationCount());
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
+	void unchangedSafetyHoldDoesNotRepeatPlaintextDecisions(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
 		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
 		goal.set("Gather logs and finish shelter");
 		var backend = new BlockingLlmBackend();
@@ -140,18 +168,14 @@ class DialogueRuntimeTest {
 			backend.injectMockResponse(new PlannerResponse("I will deal with the closer pillager.", new PlannerIntent("none", null, null)));
 			runtime.onPlayerChat("Alice", "Combat approach stalled; choose a tactic", 10, session, "Alice", Optional.empty(), events);
 			awaitResponse(runtime, events, Duration.ofSeconds(1));
-			backend.injectMockResponse(new PlannerResponse("I will inspect the ledge.", new PlannerIntent("none", null, null)));
 			runtime.continuePlannerGoal(100, false, session, "Alice", Optional.empty(), null, null, events);
-			assertTrue(runtime.plannerDebugSnapshot().inFlight(), "A paused job must not strand the active goal after plaintext");
-			awaitResponse(runtime, events, Duration.ofSeconds(1));
-			assertEquals(2, backend.conversationCount());
-			assertTrue(backend.conversation(1).messages().stream().anyMatch(m -> m.content() != null
-				&& m.content().contains("GOAL CONTINUATION") && m.content().contains("hold-patrol")));
+			assertFalse(runtime.plannerDebugSnapshot().inFlight(), "An unchanged hold must not generate a plaintext continuation loop");
+			assertEquals(1, backend.conversationCount());
 			assertFalse(runtime.delegationWorkIdle(), "Paused work is still unfinished for delegation completion");
 			runtime.updateSafetyContext(4, "hold-new-danger", true);
 			runtime.continuePlannerGoal(200, false, session, "Alice", Optional.empty(), null, null, events);
 			assertFalse(runtime.plannerDebugSnapshot().inFlight());
-			assertEquals(2, backend.conversationCount());
+			assertEquals(1, backend.conversationCount());
 		}
 		finally { runtime.shutdown(); }
 	}

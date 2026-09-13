@@ -687,10 +687,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			facts.put("inventory", inventory);
 			facts.put("vitals", Map.of("health", client.player.getHealth(), "food", client.player.getHungerManager().getFoodLevel(), "air", client.player.getAir()));
 		}
-		String actuator = survivalReflexRuntime.snapshot().holdsNormalTasks() ? "reflex"
+		String actuator = survivalReflexRuntime.snapshot().state() == SurvivalReflexState.ACTIVE ? "reflex"
+			: survivalReflexRuntime.snapshot().holdsNormalTasks() ? "safety_hold"
 			: activeTaskInProgress() ? "work" : "idle";
 		return new ai.moeru.airicraft.agent.llm.PlannerDecisionContext(worldSession, tickCount, integratedServerTick(),
-			"controller", actuator, facts, eventBuffer.query(null));
+			dialogueRuntime.decisionOwner(), actuator, facts, eventBuffer.query(null));
 	}
 
 	private void observePhysicalEvents(MinecraftClient client) {
@@ -2351,6 +2352,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		refreshWorkHistory();
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
 		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
+		if (survivalReflexRuntime.snapshot().holdId() != null && !List.of("configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy").contains(call.name())) {
+			return CompletableFuture.completedFuture("Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(Map.of(
+				"accepted",false,"reason","work_in_safety_hold","holdId",survivalReflexRuntime.snapshot().holdId(),
+				"requiredAction","Use inspect_work then cancel_work or resume_work with exact workId and current holdId before admitting another gameplay action.")));
+		}
 		var before = workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::handle).collect(java.util.stream.Collectors.toSet());
 		CompletableFuture<String> result = execute(call);
 		refreshWorkHistory();

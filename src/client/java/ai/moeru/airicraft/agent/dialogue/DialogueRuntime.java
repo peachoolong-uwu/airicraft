@@ -54,6 +54,7 @@ public final class DialogueRuntime {
 	private long safetyEpoch;
 	private String safetyHoldId;
 	private boolean reflexActive;
+	private String lastSupervisedHold;
 	private Object observedObjective;
 	private long blockedEventCursor;
 	private boolean externalDriverActive;
@@ -88,6 +89,8 @@ public final class DialogueRuntime {
 		plannerOrchestrator.configureDecisionContext(() -> source.get().forOwner("controller"));
 		if (thinkingOrchestrator != null) thinkingOrchestrator.configureDecisionContext(() -> source.get().forOwner("thinking"));
 	}
+
+	public String decisionOwner() { return delegation != null && delegation.active() ? "thinking" : "controller"; }
 
 	public Object currentPlannerObjective() {
 		return plannerGoal == null || plannerGoal.snapshot() == null ? Map.of() : plannerGoal.snapshot();
@@ -130,6 +133,7 @@ public final class DialogueRuntime {
 	}
 
 	private void resetPlanners(String reason) {
+		lastSupervisedHold = null;
 		waitingForWork = null;
 		if (delegation != null) delegation.reset(reason);
 		planners().forEach(PlannerOrchestrator::reset);
@@ -151,6 +155,7 @@ public final class DialogueRuntime {
 		if (!delegated && plannerGoal != null && plannerGoal.blocked()) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
+		if (awaitingSafetyDecision && Objects.equals(lastSupervisedHold, safetyHoldId + ":" + reflexActive)) return true;
 		if ((!workIdle && !awaitingSafetyDecision) || externalDriverActive || !plannerEnabled() || isDegraded() || !llmAvailable()
 			|| reflexActive || session == null || !session.companionActuationAllowed()
 			|| activePlanner().hasInFlight() || !pendingTaskWakeups.isEmpty()) {
@@ -668,6 +673,7 @@ public final class DialogueRuntime {
 			)
 		);
 		boolean submitted = activePlanner().submit(request);
+		if (submitted && safetyHoldId != null) lastSupervisedHold = safetyHoldId + ":" + reflexActive;
 		pendingTimeoutVisibleReply = directUserGuidance && submitted;
 	}
 

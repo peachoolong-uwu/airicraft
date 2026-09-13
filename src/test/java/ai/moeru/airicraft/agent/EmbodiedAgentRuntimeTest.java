@@ -312,6 +312,26 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void embeddedActionsCannotReplaceHeldWorkWithoutItsIdentity() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			runtime.injectDialogueResponseForTests(new DialogueResponse("", new DialogueIntent(DialogueIntentType.JOB_UPDATE,
+				ActiveJobProposal.mineBlocks(new GoalMineSpec(List.of("minecraft:dirt"),3))),1));
+			String id = runtime.activeJob().jobId();
+			activeJobRuntime(runtime).pauseForReflex(2);
+			setReflexSnapshot(runtime,reflexSnapshot(SurvivalReflexState.AWAITING_PLANNER,"hold-1",id,null));
+			JsonObject args = new JsonObject(); args.addProperty("x",1); args.addProperty("y",64); args.addProperty("z",1);
+			String denied = runtime.executePlannerAction(new PlannerToolCall("replace","navigate_to",args,null,null)).join();
+			assertTrue(denied.contains("work_in_safety_hold")); assertEquals(id,runtime.activeJob().jobId());
+			JsonObject resume = new JsonObject(); resume.addProperty("workId","JOB:"+id);resume.addProperty("holdId","hold-1");
+			String resumed = runtime.executePlannerAction(new PlannerToolCall("resume","resume_work",resume,null,null)).join();
+			assertTrue(resumed.contains("\"accepted\":true"),resumed);
+			assertEquals(SurvivalReflexState.IDLE,runtime.survivalReflexSnapshot().state());
+			assertEquals(id,runtime.activeJob().jobId());
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void matchingSafetyHoldResumesSamePausedJob() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		runtime.injectDialogueResponseForTests(new DialogueResponse(
