@@ -586,9 +586,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			});
 		});
 		WorldTaskType lightingActivity = activeTaskRequest
-			.filter(request -> taskExecutionSnapshot.state() == TaskExecutionState.RUNNING)
 			.map(WorldTaskRequest::type).orElse(null);
-		lightingRuntime.tick(client, lightingActivity, tickCount).ifPresent(event ->
+		boolean lightingActuationAllowed = sessionSnapshot.companionActuationAllowed()
+			&& (activeTaskRequest.isEmpty() || taskExecutionSnapshot.state() == TaskExecutionState.RUNNING);
+		lightingRuntime.tick(client, lightingActivity, lightingActuationAllowed, tickCount).ifPresent(event ->
 			eventBuffer.append(tickCount, "lighting.torch_placed", event.payload())
 		);
 		completePendingCraftToolResultFromTaskSnapshot(taskSnapshot);

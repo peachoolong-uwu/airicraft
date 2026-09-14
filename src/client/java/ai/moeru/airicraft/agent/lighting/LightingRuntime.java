@@ -29,10 +29,14 @@ public final class LightingRuntime {
 	private static final long ATTEMPT_INTERVAL_TICKS = 10L;
 	private static final long CONFIRMATION_TIMEOUT_TICKS = 20L;
 	private static final double MAX_REACH_SQUARED = 4.5D * 4.5D;
+	private static final long STATIONARY_TICKS = 100L;
 
 	private LightingPolicy policy = LightingPolicy.defaults();
 	private PendingPlacement pendingPlacement;
 	private long nextAttemptTick;
+	private Vec3d stationaryPosition;
+	private long stationarySinceTick;
+	private long lastObservedTick;
 
 	public LightingPolicy configure(
 		boolean enabled,
@@ -53,19 +57,21 @@ public final class LightingRuntime {
 		return policy;
 	}
 
-	public Optional<PlacementEvent> tick(MinecraftClient client, WorldTaskType activity, long tick) {
-		if (client == null || client.world == null || client.player == null || client.interactionManager == null) {
+	public Optional<PlacementEvent> tick(MinecraftClient client, WorldTaskType activity, boolean actuationAllowed, long tick) {
+		if (client == null || client.world == null || client.player == null || client.interactionManager == null || !actuationAllowed) {
 			pendingPlacement = null;
+			stationaryPosition = null;
 			return Optional.empty();
 		}
+		ClientPlayerEntity player = client.player;
+		boolean stationaryLongEnough = observeStationary(player.getPos(), player.isOnGround(), tick);
 		Optional<PlacementEvent> confirmation = confirmPending(client, tick);
 		if (confirmation.isPresent() || pendingPlacement != null || tick < nextAttemptTick) {
 			return confirmation;
 		}
 		nextAttemptTick = tick + ATTEMPT_INTERVAL_TICKS;
 
-		ClientPlayerEntity player = client.player;
-		if (!LightingPolicyEvaluator.supportsActivity(activity) || !policy.enabled()
+		if (!LightingPolicyEvaluator.supportsActivity(activity, stationaryLongEnough) || !policy.enabled()
 			|| player.isUsingItem() || client.interactionManager.isBreakingBlock()
 			|| player.currentScreenHandler != player.playerScreenHandler
 			|| !player.currentScreenHandler.getCursorStack().isEmpty()) return Optional.empty();
@@ -81,7 +87,7 @@ public final class LightingRuntime {
 			policy,
 			true,
 			torchCount(player) > 0,
-			client.world.isSkyVisible(origin.up()),
+			hasFootLevelSkyAccess(origin, pos -> client.world.isSkyVisible(pos)),
 			combinedLight,
 			blockLight,
 			nearbyTorch
@@ -98,6 +104,21 @@ public final class LightingRuntime {
 		return Optional.empty();
 	}
 
+	boolean observeStationary(Vec3d position, boolean grounded, long tick) {
+		if (!grounded) {
+			stationaryPosition = null;
+			lastObservedTick = tick;
+			return false;
+		}
+		if (stationaryPosition == null || tick != lastObservedTick + 1
+			|| stationaryPosition.squaredDistanceTo(position) > 0.0001D) {
+			stationaryPosition = position;
+			stationarySinceTick = tick;
+		}
+		lastObservedTick = tick;
+		return tick - stationarySinceTick >= STATIONARY_TICKS;
+	}
+
 	static double averageFootLevelLight(BlockPos origin, java.util.function.Predicate<BlockPos> isAirAt,
 		java.util.function.ToIntFunction<BlockPos> lightAt) {
 		int total = 0;
@@ -111,10 +132,18 @@ public final class LightingRuntime {
 		return samples == 0 ? Double.POSITIVE_INFINITY : total / (double) samples;
 	}
 
+	static boolean hasFootLevelSkyAccess(BlockPos origin, java.util.function.Predicate<BlockPos> skyVisibleAt) {
+		for (BlockPos sample : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			if (skyVisibleAt.test(sample)) return true;
+		}
+		return false;
+	}
+
 	public void reset() {
 		policy = LightingPolicy.defaults();
 		pendingPlacement = null;
 		nextAttemptTick = 0L;
+		stationaryPosition = null;
 	}
 
 	public LightingPolicy policy() {
@@ -139,7 +168,7 @@ public final class LightingRuntime {
 				"torchCount", torchCount(client.player),
 				"side", confirmed.side(),
 				"facing", confirmed.face().asString(),
-				"activity", confirmed.activity().name().toLowerCase(java.util.Locale.ROOT)
+				"activity", confirmed.activity() == null ? "idle" : confirmed.activity().name().toLowerCase(java.util.Locale.ROOT)
 			)));
 		}
 		if (tick - pendingPlacement.startedTick() > CONFIRMATION_TIMEOUT_TICKS) {
