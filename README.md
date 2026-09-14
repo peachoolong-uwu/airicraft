@@ -34,6 +34,16 @@ Every queried block must be within 64 blocks of the player. Radius defaults are 
 
 Planner-facing block modification is guarded by the world-read ledger. `place_block` and `use_block` take an intended modified target `x/y/z`; for example, planting seeds targets the crop position above farmland, while the runtime derives the support click. The target position must have been returned by `inspect_world` within the last 10 planner tool calls. If not, the runtime does not queue the modification. It returns a `place_block`/`use_block` tool result containing a small `inspect_world` `inspect_area` query centered on the target and tells the planner to call the same tool again only if it still wants to proceed.
 
+### Location memory
+
+The planner uses one interface: `remember_place`, `recall_place`, `list_places`, and `forget_place`. With JourneyMap installed, these operate directly on persistent native waypoints in the current world/server, including user-created and death waypoints. Names, coordinates, and native UI edits share the same store; notes and `preserveArea` are stored in namespaced waypoint custom data. `take_map_look` remains the map-image tool. The separate planner map-waypoint CRUD tools have been removed; the wrapper's map commands remain available.
+
+Use an exact, case-sensitive name or a returned stable `id` for recall/forget. If names are duplicated, the tool returns candidate IDs and requires an ID. `remember_place` requires a name and accepts an existing ID to update or rename that entry. Replacing a location without `note` or `preserveArea` clears that metadata. `read_logbook` resolves its `place` filter through the same backend and accepts `placeId` for ambiguous names. Native waypoints without Airicraft metadata have no note or protected area; arbitrary non-JSON custom data is left intact, and metadata writes to such a waypoint report a conflict.
+
+JourneyMap starts fresh: existing `airicraft/places.json` files are neither imported nor updated while it is installed. A loading/unavailable JourneyMap returns a backend error instead of switching stores. Without JourneyMap, the local world-save backend uses `places.json`; old files remain readable and gain stable IDs when edited. Removing JourneyMap exposes that independent local store, not a copy of JourneyMap's locations. The local backend still requires a locally hosted world.
+
+Protection follows the selected backend. Legacy local protected areas are inactive with JourneyMap selected. Native waypoint changes refresh protection on the next client tick; periodic refresh also catches file/backend changes. Invalid or unavailable protection data blocks automatic terrain edits until a valid snapshot is available. Location names and notes remain data, not instructions or evidence of safety/reachability.
+
 ### Evaluation scenario checks
 
 Scenario evaluations load only the optional integrations declared by the scenario manifest:

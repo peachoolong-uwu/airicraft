@@ -280,13 +280,14 @@ public final class JourneyMapIntegrationProvider implements MapIntegrationProvid
 
 	static MapWaypoint toMapWaypoint(Waypoint waypoint) {
 		Objects.requireNonNull(waypoint, "waypoint");
+		BlockPos pos = waypoint.getBlockPos();
 		return JourneyMapWaypointMapper.toMapWaypoint(
 			waypoint.getGuid(),
 			waypoint.getName(),
 			waypoint.getPrimaryDimension(),
-			waypoint.getX(),
-			waypoint.getY(),
-			waypoint.getZ(),
+			pos.getX(),
+			pos.getY(),
+			pos.getZ(),
 			waypoint.getColor(),
 			waypoint.isEnabled(),
 			visibilityFlag(waypoint, "showOnMap", waypoint.isEnabled()),
