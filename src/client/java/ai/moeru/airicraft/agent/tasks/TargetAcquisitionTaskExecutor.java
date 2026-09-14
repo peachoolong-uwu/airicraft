@@ -25,6 +25,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	private int activeTicks;
 	private int phaseTicks;
 	private int progressTicks;
+	private int targetInventoryCount;
 	private GoalPosition progressPosition;
 	private boolean navigationOwned;
 	private TaskTerminalEvent terminal;
@@ -86,9 +87,12 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 		if (phase == Phase.SETTLE) {
-			if (phaseTicks >= 20) enter(Phase.SELECT);
+			// Give delayed server drops a bounded grace period, but never sleep
+			// through inventory confirmation or a drop that is already observable.
+			if (count > targetInventoryCount || environment.dropsAvailable(spec, constraints) || phaseTicks >= 20)
+				enter(Phase.SELECT);
 		}
-		else if (phase == Phase.SELECT) {
+		if (phase == Phase.SELECT) {
 			// Pickup movement can hide a vein we already saw. Keep that knowledge for
 			// this attempt, while the environment rechecks blocks and work positions.
 			if (constraints.visibleOnly()) observedSources.addAll(environment.observeSources(spec, constraints));
@@ -99,15 +103,17 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 					+ " evidence=" + new com.google.gson.Gson().toJson(java.util.Map.of("failedPredicate", "eligible_loaded_resource", "scope", "searched_region", "actorPosition", environment.position(), "bounds", constraints)) + " itemCount=" + count + " rejectedTargets=" + rejected.size() + " lastRejection=" + lastRejection);
 			}
 			target = candidates.getFirst();
+			targetInventoryCount = count;
 			if (((WorldTaskRequest.Mine) request.task()).mineGoalSatisfied() && target.kind() == Kind.BLOCK)
 				return finish(true, "requested_blocks_broken");
 			enter(Phase.APPROACH);
 			progressPosition = environment.position();
 			progressTicks = 0;
 		}
-		else if (!environment.targetPresent(target)) {
+		else if (phase != Phase.SETTLE && !environment.targetPresent(target)) {
 			release();
-			enter(Phase.SETTLE);
+			// A collected/despawned item cannot produce another drop to settle.
+			enter(target.kind() == Kind.DROP ? Phase.SELECT : Phase.SETTLE);
 		}
 		else if (phase == Phase.APPROACH) {
 			boolean reached = environment.canInteract(target);
@@ -220,6 +226,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		Set<GoalPosition> observeSources(GoalMineSpec spec, AcquisitionConstraints constraints);
 		List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected, Set<GoalPosition> observedSources);
 		boolean targetPresent(Candidate target);
+		boolean dropsAvailable(GoalMineSpec spec, AcquisitionConstraints constraints);
 		boolean canInteract(Candidate target);
 		BreakResult breakTarget(Candidate target, GoalMineSpec spec);
 		void cancelBreaking();

@@ -90,6 +90,15 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		return spec.blockIds().contains(id(state)) && HarvestableBlocks.ready(state) && !WorldPlacePreservation.contains(world, pos);
 	}
 
+	@Override public boolean dropsAvailable(GoalMineSpec spec, AcquisitionConstraints constraints) {
+		// Settling polls only item entities, not the full block/work-position search.
+		return !client().world.getEntitiesByClass(ItemEntity.class,
+			new Box(block(constraints.center())).expand(constraints.radius(), constraints.verticalRadius(), constraints.radius()),
+			item -> item.isAlive()
+				&& spec.matchingItemIds().contains(Registries.ITEM.getId(item.getStack().getItem()).toString())
+				&& inScope(position(item.getBlockPos()), constraints, true)).isEmpty();
+	}
+
 	@Override public List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected,
 		Set<GoalPosition> observedSources) {
 		var world = client().world;

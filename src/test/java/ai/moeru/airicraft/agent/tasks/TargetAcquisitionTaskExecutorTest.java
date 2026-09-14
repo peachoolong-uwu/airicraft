@@ -9,6 +9,57 @@ import static org.junit.jupiter.api.Assertions.*;
 import static ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor.*;
 
 class TargetAcquisitionTaskExecutorTest {
+	@Test void confirmedInventoryProgressStartsTheNextBlockWithoutASettlingDelay() {
+		Fixture f = visibleVein(2);
+		f.tick(6);
+		assertEquals(2, f.env.breaks, "Confirmed pickup must not incur a fixed twenty-tick pause");
+	}
+
+	@Test void anObservedDropStartsPickupBeforeTheServerUpdateGraceExpires() {
+		Fixture f = new Fixture();
+		f.env.interactable = true;
+		f.tick(3);
+		assertEquals(1, f.env.breaks);
+		f.env.sources = List.of(new Candidate(Kind.DROP, "drop", f.env.position, f.env.position));
+		f.tick(2);
+		assertTrue(f.executor.snapshot().lastPathEvent().contains("phase=PICKUP"));
+		assertTrue(f.events.isEmpty(), "Seeing a drop is not confirmed inventory");
+	}
+
+	@Test void collectingADropDoesNotAddASecondSettlingDelay() {
+		Fixture f = visibleVein(3);
+		Candidate block = f.env.sources.getFirst();
+		f.env.sources = List.of(new Candidate(Kind.DROP, "drop", f.env.position, f.env.position), block);
+		f.tick(2);
+		f.env.sources = List.of(block);
+		f.env.count = 1;
+		f.tick(4);
+		assertEquals(1, f.env.breaks, "Resume mining immediately after the pickup disappears");
+	}
+
+	@Test void delayedDropsStillHaveTimeToAppearBeforeTheSearchFails() {
+		Fixture f = new Fixture();
+		f.env.interactable = true;
+		f.tick(3);
+		f.tick(10);
+		assertTrue(f.events.isEmpty());
+		f.env.sources = List.of(new Candidate(Kind.DROP, "late-drop", f.env.position, f.env.position));
+		f.tick(2);
+		assertTrue(f.executor.snapshot().lastPathEvent().contains("phase=PICKUP"));
+		f.env.count = 1;
+		f.tick(1);
+		assertEquals(TaskExecutionState.COMPLETED, f.executor.snapshot().state());
+	}
+
+	@Test void missingDropsStillExhaustTheBoundedGracePeriod() {
+		Fixture f = new Fixture();
+		f.env.interactable = true;
+		f.tick(24);
+		assertEquals(1, f.env.breaks);
+		assertEquals(TaskExecutionState.FAILED, f.executor.snapshot().state());
+		assertTrue(f.events.getFirst().message().contains("no_eligible_resource_in_search_region"));
+	}
+
 	@Test void retainsSeenVeinWhenPickupMovementHidesItButDoesNotDiscoverHiddenOre() {
 		Fixture f = visibleVein(3);
 		f.tick(4);
@@ -254,6 +305,9 @@ class TargetAcquisitionTaskExecutorTest {
 				.filter(t -> !c.visibleOnly() || t.kind() == Kind.DROP || observedSources.contains(t.position())).toList();
 		}
 		public boolean targetPresent(Candidate t) { return sources.contains(t); }
+		public boolean dropsAvailable(GoalMineSpec spec, AcquisitionConstraints constraints) {
+			return sources.stream().anyMatch(t -> t.kind() == Kind.DROP);
+		}
 		public boolean canInteract(Candidate t) { return interactable; }
 		public BreakResult breakTarget(Candidate t, GoalMineSpec s) {
 			breaks++;
