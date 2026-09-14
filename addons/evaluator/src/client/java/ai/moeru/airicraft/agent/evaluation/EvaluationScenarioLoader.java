@@ -63,7 +63,8 @@ public final class EvaluationScenarioLoader {
 				bool(evidenceRoot, "includeRecentEvents", true),
 				bool(evidenceRoot, "includeTaskState", true),
 				bool(evidenceRoot, "includeWorldSnapshot", true)
-			)
+			),
+			requiredMods(root)
 		);
 	}
 
@@ -75,6 +76,7 @@ public final class EvaluationScenarioLoader {
 			"minecraftVersion", scenario.minecraftVersion(),
 			"airicraftVersion", scenario.airicraftVersion()
 		));
+		root.put("requiredMods", scenario.requiredMods());
 		root.put("worldArchive", scenario.worldArchive());
 		root.put("frozen", scenario.frozen());
 		root.put("prompt", scenario.prompt());
@@ -128,6 +130,17 @@ public final class EvaluationScenarioLoader {
 			return typed;
 		}
 		return Map.of();
+	}
+
+	private static List<String> requiredMods(Map<String, Object> root) {
+		if (!root.containsKey("requiredMods")) {
+			return List.of();
+		}
+		if (!(root.get("requiredMods") instanceof List<?> list)
+			|| list.stream().anyMatch(value -> !(value instanceof String))) {
+			throw new IllegalArgumentException("requiredMods must be a list of supported mod IDs");
+		}
+		return list.stream().map(String.class::cast).toList();
 	}
 
 	private static List<EvaluationCheck> checks(Object value) {

@@ -10,22 +10,23 @@
 
 ## Build And Run
 - Full build: `./gradlew build`
-- Run Minecraft client in dev: `./gradlew runClient`
+- Normal Minecraft launches (`./gradlew runClient`, `scripts/codex-driver`, `scripts/arthas kickstart`) enable all supported mod integrations by default.
 - `runClient` starts JDWP by default on `127.0.0.1:5005` with `suspend=n`
 - Attach a debugger with `jdb -attach 127.0.0.1:5005` or any JDWP client
 - Override JDWP settings with Gradle properties, for example:
   - `./gradlew runClient -Pairicraft.jdwp.port=5006`
   - `./gradlew runClient -Pairicraft.jdwp.suspend=y`
 - Compatibility smoke:
-  - Use `scripts/compat run`, not plain `runClient`.
-  - Why: external optional-mod jars are production/intermediary; dev remap path can conflict.
-  - It integrates all supported optional mods instead of testing them one at a time.
+  - `scripts/compat run` and normal `runClient` use the production/intermediary client with all integrations; this avoids optional-mod dev remapping conflicts.
+  - Use `-Pairicraft.includeCompat=false` only when explicitly testing the bare development client.
   - Debug port: JDWP `127.0.0.1:5007`.
   - Config shared with normal dev: `run/config/airicraft`.
   - Jar cache ignored: `.airicraft-compat/integration/`; never vendor optional-mod jars or copy them into `run/mods`.
   - Setup/list jars: `scripts/compat setup`, `scripts/compat mods`.
   - Verify live: mod list has `airicraft` + `airicraft-journeymap-compat` + `journeymap` + `airicraft-rei-compat` + `roughlyenoughitems`; `airicraft map status` says `available: true`, `preferredProvider: journeymap`; planner still exposes `search_recipes`.
 - Evaluation batches:
+  - Each `scenarios/<id>/scenario.yml` declares `requiredMods: [journeymap, roughlyenoughitems]` as needed. Omitted or empty means no optional integrations; dependencies of a declared mod are included automatically.
+  - Manual evaluator launches: set `AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST` to the chosen manifest path. The evaluation harness sets it per worker; discovery loads no integrations.
   - Use `scripts/run-evaluation-scenarios --scenario <id>` for a serial run.
   - Add repeated `--scenario` options and `--jobs <count>` for isolated parallel clients.
   - Parallel clients use separate game directories and bridge files.

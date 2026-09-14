@@ -12,7 +12,8 @@ usage() {
 		'provider or observability configuration.' \
 		'' \
 		'Set AIRICRAFT_BRIDGE_STATE_FILE to an absolute path to isolate discovery.' \
-		'Set AIRICRAFT_EVALUATOR_GAME_DIR to an absolute path to isolate game data.'
+		'Set AIRICRAFT_EVALUATOR_GAME_DIR to an absolute path to isolate game data.' \
+		'Set AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST to its scenario.yml to load requiredMods.'
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then

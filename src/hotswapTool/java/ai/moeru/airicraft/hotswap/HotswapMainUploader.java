@@ -47,7 +47,7 @@ public final class HotswapMainUploader {
 		}
 
 		int connectedClients = 0;
-		if (!changedDevClasses.isEmpty()) {
+		if (options.devPort() != null && !changedDevClasses.isEmpty()) {
 			connectedClients += reloadOnPorts(List.of(options.devPort()), changedDevClasses);
 		}
 		if (!changedProductionClasses.isEmpty()) {
@@ -234,7 +234,7 @@ public final class HotswapMainUploader {
 		Path stateFile,
 		List<Path> devRoots,
 		Path productionRoot,
-		int devPort,
+		Integer devPort,
 		List<Integer> productionPorts
 	) {
 		private static Options parse(String[] arguments) {
@@ -249,7 +249,7 @@ public final class HotswapMainUploader {
 				Path.of(single(values, "--state")),
 				values.getOrDefault("--dev-root", List.of()).stream().map(Path::of).toList(),
 				Path.of(single(values, "--production-root")),
-				Integer.parseInt(single(values, "--dev-port")),
+				values.containsKey("--dev-port") ? Integer.parseInt(single(values, "--dev-port")) : null,
 				values.getOrDefault("--production-port", List.of()).stream().map(Integer::parseInt).toList()
 			);
 		}

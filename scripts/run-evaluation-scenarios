@@ -31,6 +31,7 @@ BRIDGE_STATE_ENVIRONMENT_VARIABLE = "AIRICRAFT_BRIDGE_STATE_FILE"
 EVALUATOR_GAME_DIR_ENVIRONMENT_VARIABLE = "AIRICRAFT_EVALUATOR_GAME_DIR"
 EVALUATOR_JDWP_ENVIRONMENT_VARIABLE = "AIRICRAFT_EVALUATOR_JDWP_ENABLED"
 EVALUATOR_PREPARED_ENVIRONMENT_VARIABLE = "AIRICRAFT_EVALUATOR_RUNTIME_PREPARED"
+EVALUATOR_SCENARIO_MANIFEST_ENVIRONMENT_VARIABLE = "AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST"
 EVALUATOR_PLAYER_NAME_ENVIRONMENT_VARIABLE = "AIRICRAFT_EVALUATOR_PLAYER_NAME"
 RECORDER_JAR_ENVIRONMENT_VARIABLE = "AIRICRAFT_RECORDER_JAR"
 RECORDER_EVENTS_RELATIVE_PATH = Path("capture/events.jsonl")
@@ -579,12 +580,17 @@ def client_environment(
     runtime_prepared: bool,
     recorder_options: RecorderOptions,
     source_environment: Mapping[str, str] | None = None,
+    scenario_manifest: Path | None = None,
 ) -> dict[str, str]:
     environment = dict(os.environ if source_environment is None else source_environment)
     environment[BRIDGE_STATE_ENVIRONMENT_VARIABLE] = str(bridge_state_path.resolve())
     environment[EVALUATOR_GAME_DIR_ENVIRONMENT_VARIABLE] = str(game_dir.resolve())
     environment[EVALUATOR_JDWP_ENVIRONMENT_VARIABLE] = "false"
     environment[EVALUATOR_PREPARED_ENVIRONMENT_VARIABLE] = str(runtime_prepared).lower()
+    if scenario_manifest is None:
+        environment.pop(EVALUATOR_SCENARIO_MANIFEST_ENVIRONMENT_VARIABLE, None)
+    else:
+        environment[EVALUATOR_SCENARIO_MANIFEST_ENVIRONMENT_VARIABLE] = str(scenario_manifest.resolve())
     player_suffix = re.sub(r"[^A-Za-z0-9_]", "", worker_id)[-8:]
     environment[EVALUATOR_PLAYER_NAME_ENVIRONMENT_VARIABLE] = "AirEval" + player_suffix
     if recorder_options.enabled:
@@ -606,6 +612,7 @@ def start_client(
     runtime_prepared: bool,
     recorder_options: RecorderOptions,
     detach_output: bool = False,
+    scenario_manifest: Path | None = None,
 ) -> ClientProcess:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     bridge_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -617,6 +624,7 @@ def start_client(
         worker_id,
         runtime_prepared,
         recorder_options,
+        scenario_manifest=scenario_manifest,
     )
     if detach_output:
         log_handle = log_path.open("a", encoding="utf-8")
@@ -1023,6 +1031,7 @@ def run_scenario(
         "outputDir": str(scenario_dir),
         "addonSummaryPath": str(scenario_dir / "summary.json"),
         "archive": scenario_archive_metadata(scenario_root, scenario),
+        "requiredMods": scenario.get("requiredMods", []),
     }
     if recorder_options.enabled:
         summary["recorderPlayPath"] = None
@@ -1053,6 +1062,7 @@ def run_scenario(
             True,
             recorder_options,
             detach_output=keep_client_after_scenario,
+            scenario_manifest=scenario_dir / "scenario.yml",
         )
         summary["clientPid"] = client.process.pid
         write_json(scenario_dir / "harness-summary.json", summary)
@@ -1262,7 +1272,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-root", default="eval-output", help="Directory for ignored run bundles.")
     parser.add_argument(
         "--client-command",
-        help="Command used to launch Minecraft. Defaults to compat-enabled runClientCompatEvaluator with .envrc sourced.",
+        help="Command used to launch Minecraft. Defaults to scripts/eval run with only the scenario manifest requiredMods.",
     )
     parser.add_argument("--poll-seconds", type=float, default=5.0, help="Seconds between evaluation result polls.")
     parser.add_argument("--bridge-timeout-seconds", type=float, default=180.0, help="Seconds to wait for the bridge at startup.")

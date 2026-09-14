@@ -10,8 +10,30 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EvaluationScenarioLoaderTest {
+	@Test
+	void optionalModsDefaultToNoneAndRoundTrip(@TempDir Path tempDir) throws Exception {
+		Path config = tempDir.resolve("scenario.yml");
+		assertEquals(java.util.List.of(), EvaluationScenarioLoader.fromMap(java.util.Map.of(), config).requiredMods());
+		for (var mods : java.util.List.of(java.util.List.<String>of(), java.util.List.of("journeymap"),
+			java.util.List.of("roughlyenoughitems"), java.util.List.of("journeymap", "roughlyenoughitems"))) {
+			var scenario = EvaluationScenarioLoader.fromMap(java.util.Map.of("requiredMods", mods), config);
+			EvaluationScenarioLoader.write(config, scenario);
+			assertEquals(mods, EvaluationScenarioLoader.load(config).requiredMods());
+		}
+	}
+
+	@Test
+	void rejectsMalformedOrUnsupportedRequiredMods(@TempDir Path tempDir) throws Exception {
+		Path config = tempDir.resolve("scenario.yml");
+		for (String value : java.util.List.of("null", "journeymap", "[unknown_mod]", "[1]")) {
+			Files.writeString(config, "requiredMods: " + value);
+			assertThrows(IllegalArgumentException.class, () -> EvaluationScenarioLoader.load(config));
+		}
+	}
+
 	@Test
 	void parsesScenarioConfig(@TempDir Path tempDir) throws Exception {
 		Path config = tempDir.resolve("scenarios").resolve("smelting-basic").resolve("scenario.yml");

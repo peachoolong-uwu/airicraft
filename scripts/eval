@@ -11,29 +11,12 @@ usage() {
 	cat <<'USAGE'
 usage: scripts/eval run [gradle args...]
 
-run launches the HotSwap compatibility client with the evaluator addon.
+run launches the HotSwap evaluator with no optional integrations by default.
+Set AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST to a scenario.yml path to load its requiredMods.
+You can also pass -Pairicraft.evaluator.scenarioManifest=/absolute/path/scenario.yml.
 Run ./gradlew hotswapMain --continuous in a second terminal to reload main-mod classes.
 Evaluator-addon and compatibility-addon changes still need a client restart.
 USAGE
-}
-
-disable_journeymap_minimap_for_evaluator() {
-	local game_dir="$1"
-	local config_dir="$game_dir/journeymap/config/6.0"
-	local config_file
-	mkdir -p "$config_dir"
-	for config_file in "$config_dir"/journeymap.minimap.config "$config_dir"/journeymap.minimap2.config; do
-		cat >"$config_file" <<'EOF'
-// Airicraft evaluator disables the JourneyMap HUD minimap to keep headless smoke runs stable.
-{
-  "enabled": "false",
-  "moveEffectIcons": "false",
-  "hideEffectIcons": "true",
-  "active": false,
-  "configVersion": "6.0.0-beta.52"
-}
-EOF
-	done
 }
 
 case "$command" in
@@ -48,7 +31,6 @@ case "$command" in
 			printf 'AIRICRAFT_EVALUATOR_GAME_DIR must be an absolute path\n' >&2
 			exit 2
 		fi
-		disable_journeymap_minimap_for_evaluator "$game_dir"
 		gradle_args=(
 			"-Pairicraft.evaluator.runDir=$game_dir"
 			"-Pairicraft.evaluator.jdwp.enabled=${AIRICRAFT_EVALUATOR_JDWP_ENABLED:-true}"
@@ -60,7 +42,7 @@ case "$command" in
 		if [[ -n "${AIRICRAFT_RECORDER_JAR:-}" ]]; then
 			gradle_args+=("-Pairicraft.evaluator.recorderJar=$AIRICRAFT_RECORDER_JAR")
 		fi
-		exec ./gradlew "${gradle_args[@]}" -Pairicraft.includeEvaluator=true -Pairicraft.includeCompat=true :runClientCompatEvaluator "$@"
+		exec ./gradlew "${gradle_args[@]}" -Pairicraft.includeEvaluator=true -Pairicraft.includeCompat=true :runClientEvaluator "$@"
 		;;
 	-h | --help | help)
 		usage
