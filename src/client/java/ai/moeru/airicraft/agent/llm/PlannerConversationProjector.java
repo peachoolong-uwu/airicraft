@@ -29,6 +29,23 @@ public final class PlannerConversationProjector {
 	public PlannerConversationDebugSnapshot projectedSnapshot(PlannerTurnJournal journal) {
 		Objects.requireNonNull(journal, "journal");
 		List<PlannerTurnEvent> events = journal.snapshot();
+		ArrayList<PlannerConversationDebugMessage> history = new ArrayList<>();
+		int segmentStart = 0;
+		for (int index = 0; index < events.size(); index++) {
+			PlannerTurnEvent event = events.get(index);
+			if (event.kind() != PlannerTurnEvent.Kind.COMPACTION || !event.toolResultText().equals("checkpoint_updated")) continue;
+			history.addAll(projectSegment(journal, events.subList(segmentStart, index), segmentStart > 0).messages());
+			if (event.debugMessage() != null) history.add(event.debugMessage());
+			segmentStart = index + 1;
+		}
+		var current = projectSegment(journal, events.subList(segmentStart, events.size()), segmentStart > 0);
+		history.addAll(current.messages());
+		PlannerTurnEvent latest = latestSubmission(events);
+		return new PlannerConversationDebugSnapshot(latest == null ? 0 : latest.generation(),
+			latest == null ? "COMPACTION" : latest.phase(), latest == null ? 0 : latest.attempt(), trim(history));
+	}
+
+	private PlannerConversationDebugSnapshot projectSegment(PlannerTurnJournal journal, List<PlannerTurnEvent> events, boolean afterCompaction) {
 		PlannerTurnEvent latestSubmission = latestSubmission(events);
 		if (latestSubmission == null) {
 			return PlannerConversationDebugSnapshot.empty();
@@ -50,9 +67,20 @@ public final class PlannerConversationProjector {
 			}
 			messages.add(event.debugMessage());
 		}
-		messages.addAll(submitted.messages());
+		// The checkpoint already has its chronological compaction card. Do not repeat the
+		// frozen system prefix or checkpoint every time a post-compaction request arrives.
+		for (var message : submitted.messages()) {
+			if (afterCompaction && (message.kind() == PlannerConversationDebugKind.SYSTEM
+				|| message.kind() == PlannerConversationDebugKind.CHECKPOINT)) continue;
+			messages.add(message);
+		}
 		for (PlannerTurnEvent event : events) {
-			if (event.id() <= latestSubmission.id() || event.generation() != latestSubmission.generation()) {
+			if (event.id() <= latestSubmission.id()) continue;
+			if (event.kind() == PlannerTurnEvent.Kind.COMPACTION && event.debugMessage() != null) {
+				messages.add(event.debugMessage());
+				continue;
+			}
+			if (event.generation() != latestSubmission.generation()) {
 				continue;
 			}
 			if (!Objects.equals(event.phase(), latestSubmission.phase()) || event.attempt() != latestSubmission.attempt()) {
@@ -66,12 +94,13 @@ public final class PlannerConversationProjector {
 			latestSubmission.generation(),
 			latestSubmission.phase(),
 			latestSubmission.attempt(),
-			trim(messages)
+			List.copyOf(messages)
 		);
 	}
 
 	public List<String> contextExcerpt(PlannerTurnJournal journal) {
-		PlannerConversationDebugSnapshot snapshot = projectedSnapshot(journal);
+		// This excerpt can feed delegation; archived display history is not model context.
+		PlannerConversationDebugSnapshot snapshot = submittedSnapshot(journal);
 		if (snapshot.isEmpty()) {
 			return List.of();
 		}
@@ -140,19 +169,17 @@ public final class PlannerConversationProjector {
 		}
 		ArrayList<PlannerConversationDebugMessage> trimmed = new ArrayList<>(messages);
 		while (trimmed.size() > messageLimit) {
-			int removableIndex = firstNonPersistentIndex(trimmed);
-			trimmed.remove(removableIndex >= 0 ? removableIndex : 0);
+			int noise = -1;
+			for (int index = 0; index < trimmed.size(); index++) {
+				var kind = trimmed.get(index).kind();
+				if (kind == PlannerConversationDebugKind.SYSTEM || kind == PlannerConversationDebugKind.NOTICE) {
+					noise = index;
+					break;
+				}
+			}
+			trimmed.remove(noise >= 0 ? noise : 0);
 		}
 		return List.copyOf(trimmed);
-	}
-
-	private static int firstNonPersistentIndex(List<PlannerConversationDebugMessage> messages) {
-		for (int index = 0; index < messages.size(); index++) {
-			if (!isVisiblePersistentCard(messages.get(index))) {
-				return index;
-			}
-		}
-		return -1;
 	}
 
 	private static PlannerSessionPhase phase(String value) {

@@ -1405,6 +1405,7 @@ public final class PlannerOrchestrator {
 		lastCompactionResult = compactionResult;
 		lifecycleListener.onCompactionCompleted(compactionResult);
 		turnJournal.recordCompaction(compactionResult);
+		recordConversationSources();
 		if (compactionResult.succeeded()) {
 			contextAggregator.recordObservedUsage(compactionResult.usage());
 			contextAggregator.applyCheckpoint(compactionResult.checkpoint());

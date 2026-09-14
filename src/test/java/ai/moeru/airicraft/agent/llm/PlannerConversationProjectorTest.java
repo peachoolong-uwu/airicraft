@@ -81,6 +81,65 @@ class PlannerConversationProjectorTest {
 		assertTrue(projected.messages().stream().anyMatch(message -> message.text().contains("second")));
 	}
 
+	@Test
+	void compactionKeepsEarlierMessagesThenCheckpointThenNewTurns() {
+		var journal = new PlannerTurnJournal(fixedClock(), 64);
+		var projector = new PlannerConversationProjector(48);
+		var first = LlmConversation.of(List.of(LlmChatMessage.system("system"),
+			LlmChatMessage.user("Gather iron", LlmMessageKind.USER_TURN), LlmChatMessage.assistant("I found ore")));
+		journal.recordSubmission(1, 1, PlannerSessionPhase.PLANNER_REQUEST, requestAt(1, 1000, "Gather iron"), first);
+		var before = projector.projectedSnapshot(journal).messages();
+		var checkpoint = new CompactionCheckpoint("today", "cave", "iron pickaxe", List.of(), List.of("Three raw iron gathered"), List.of(), List.of(), List.of(), List.of());
+		journal.recordCompaction(new CompactionExecutionResult(checkpoint, null, null, null));
+		var compacted = projector.projectedSnapshot(journal).messages();
+		assertEquals(before, compacted.subList(0, before.size()));
+		assertEquals(PlannerConversationDebugKind.CHECKPOINT, compacted.getLast().kind());
+		assertTrue(compacted.getLast().text().contains("Three raw iron gathered"));
+		var next = LlmConversation.of(List.of(LlmChatMessage.system("system"),
+			LlmChatMessage.user(checkpoint.renderMessage(), LlmMessageKind.CHECKPOINT),
+			LlmChatMessage.user("Smelt iron", LlmMessageKind.USER_TURN)));
+		journal.recordSubmission(2, 1, PlannerSessionPhase.PLANNER_REQUEST, requestAt(2, 2000, "Smelt iron"), next);
+		var after = projector.projectedSnapshot(journal).messages();
+		assertEquals(compacted, after.subList(0, compacted.size()));
+		assertEquals("Smelt iron", after.getLast().text());
+		assertEquals(1, after.stream().filter(m -> m.kind() == PlannerConversationDebugKind.CHECKPOINT).count());
+		assertEquals(List.of(checkpoint.renderMessage()), projector.contextExcerpt(journal), "Delegation excerpt stays limited to submitted context");
+		assertFalse(projector.submittedSnapshot(journal).messages().stream().anyMatch(m -> m.text().equals("I found ore")), "Display history must not re-enter the model request");
+		journal.recordSubmission(2, 2, PlannerSessionPhase.PLANNER_REQUEST, requestAt(2, 2000, "Smelt iron"), next);
+		assertEquals(after.stream().map(PlannerConversationDebugMessage::text).toList(), projector.projectedSnapshot(journal).messages().stream().map(PlannerConversationDebugMessage::text).toList());
+	}
+
+	@Test
+	void repeatedCompactionIsBoundedAndResetClearsDisplayHistory() {
+		var journal = new PlannerTurnJournal(fixedClock(), 32);
+		var projector = new PlannerConversationProjector(8);
+		for (int i = 1; i <= 20; i++) {
+			journal.recordSubmission(i, 1, PlannerSessionPhase.PLANNER_REQUEST, requestAt(i, i, "turn"),
+				LlmConversation.of(List.of(LlmChatMessage.user("turn " + i, LlmMessageKind.USER_TURN))));
+			journal.recordCompaction(new CompactionExecutionResult(new CompactionCheckpoint("now", "world", "goal " + i,
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of()), null, null, null));
+			assertTrue(projector.projectedSnapshot(journal).messages().size() <= 8);
+		}
+		var messages = projector.projectedSnapshot(journal).messages();
+		assertTrue(messages.getLast().text().contains("goal 20"));
+		assertEquals("turn 20", messages.get(messages.size()-2).text());
+		journal.clear("world changed");
+		assertTrue(projector.projectedSnapshot(journal).isEmpty());
+	}
+
+	@Test
+	void failedCompactionReportsFailureWithoutReplacingConversation() {
+		var journal = new PlannerTurnJournal(fixedClock(), 64);
+		var projector = new PlannerConversationProjector(48);
+		journal.recordSubmission(1, 1, PlannerSessionPhase.PLANNER_REQUEST, requestAt(1, 1000, "turn"),
+			LlmConversation.of(List.of(LlmChatMessage.user("Keep this turn", LlmMessageKind.USER_TURN))));
+		journal.recordCompaction(new CompactionExecutionResult(null, null, LlmFailureType.TIMEOUT, "Timed out"));
+		var messages = projector.projectedSnapshot(journal).messages();
+		assertEquals("Keep this turn", messages.getFirst().text());
+		assertEquals(PlannerConversationDebugKind.FAILURE, messages.getLast().kind());
+		assertTrue(messages.getLast().text().contains("Timed out"));
+	}
+
 	private static PlannerContextSnapshot snapshot(PlannerRequest request, LlmConversation conversation) {
 		return new PlannerContextSnapshot(
 			request,

@@ -121,6 +121,9 @@ public final class PlannerTurnJournal {
 	}
 
 	public synchronized void recordCompaction(CompactionExecutionResult result) {
+		boolean succeeded = result != null && result.succeeded();
+		String text = succeeded ? "Compaction completed\n" + result.checkpoint().renderMessage()
+			: "Compaction failed: " + (result == null ? "No result" : result.failureType() + ": " + result.failureMessage());
 		append(new PlannerTurnEvent(
 			nextEventId++,
 			PlannerTurnEvent.Kind.COMPACTION,
@@ -130,7 +133,8 @@ public final class PlannerTurnJournal {
 			"COMPACTION",
 			null,
 			null,
-			null,
+			new PlannerConversationDebugMessage("system", succeeded ? PlannerConversationDebugKind.CHECKPOINT
+				: PlannerConversationDebugKind.FAILURE, text, 0, "COMPACTION", 0, false),
 			null,
 			null,
 			result == null ? "" : result.succeeded() ? "checkpoint_updated" : String.valueOf(result.failureType()),

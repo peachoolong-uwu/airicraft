@@ -960,6 +960,16 @@ class PlannerOrchestratorTest {
 				assertEquals(2, context.get("throughEventSequence").getAsLong());
 				assertEquals(1, context.getAsJsonArray("events").size());
 				assertEquals("hold-one", context.getAsJsonObject("current").getAsJsonObject("work").get("holdId").getAsString());
+				var display = orchestrator.projectedConversationDebugSnapshot().messages();
+				int oldTurn = -1, compaction = -1, newTurn = -1;
+				for (int i = 0; i < display.size(); i++) {
+					var message = display.get(i);
+					if (oldTurn < 0 && message.text().contains("Inspect held work")) oldTurn = i;
+					if (message.kind() == PlannerConversationDebugKind.CHECKPOINT && message.text().contains("Compaction completed")) compaction = i;
+					if (message.text().contains("Inspect again")) newTurn = i;
+				}
+				assertTrue(oldTurn >= 0 && compaction > oldTurn && newTurn > compaction,
+					"Overlay order indices: " + oldTurn + "," + compaction + "," + newTurn);
 			} finally { orchestrator.shutdown(); }
 		}
 	}
