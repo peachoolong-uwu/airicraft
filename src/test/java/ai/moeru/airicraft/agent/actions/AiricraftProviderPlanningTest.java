@@ -1003,7 +1003,23 @@ class AiricraftProviderPlanningTest {
 	}
 
 	@Test
-	void smeltingProviderPrefersMineableCoalOverWoodFuelWhenPickaxeAvailable() {
+	void charcoalFuelSelectionDoesNotSpendTheInputLogs() {
+		ActionFactStore facts = new ActionFactStore();
+		for (var entry : Map.of("minecraft:oak_log", 2, "minecraft:coal", 1).entrySet()) {
+			facts.upsert(new ActionFact(ActionFactIdentity.inventoryItem("world-a", "bot", entry.getKey()),
+				Map.of("count", entry.getValue()), ActionFactProvenance.OBSERVED, 90, ActionFact.NEVER_STALE));
+		}
+		facts.upsert(new ActionFact(ActionFactIdentity.smeltRecipe("world-a", "bot", "charcoal"),
+			Map.of("inputItemId", "minecraft:oak_log", "outputItemId", "minecraft:charcoal",
+				"outputCount", 1, "maxInputQuantity", 2, "cookTimeTicks", 200),
+			ActionFactProvenance.OBSERVED, 90, ActionFact.NEVER_STALE));
+		ActionResolveResult result = resolve(facts, ActionGoal.inventoryItem("minecraft:charcoal", 2));
+		assertTrue(result.resolved(), () -> result.trace().toString());
+		assertEquals("minecraft:coal", result.route().steps().getFirst().args().get("fuelItemId"));
+	}
+
+	@Test
+	void smeltingProviderUsesCarriedPlanksBeforeMiningCoal() {
 		ActionFactStore facts = new ActionFactStore();
 		facts.upsert(new ActionFact(
 			ActionFactIdentity.inventoryItem("world-a", "bot", "minecraft:raw_iron"),
@@ -1043,13 +1059,11 @@ class AiricraftProviderPlanningTest {
 		ActionResolveResult result = resolve(facts, ActionGoal.inventoryItem("minecraft:iron_ingot", 3));
 
 		assertTrue(result.resolved(), () -> result.trace().toString());
-		assertEquals(List.of("mine_block", "smelt_item", "watch", "collect_smelted_item"), result.route().steps().stream().map(ActionPlanStep::targetId).toList());
-		ActionPlanStep fuel = result.route().steps().getFirst();
-		assertEquals("minecraft:coal", fuel.args().get("itemId"));
-		ActionPlanStep smelt = result.route().steps().get(1);
-		assertEquals("minecraft:coal", smelt.args().get("fuelItemId"));
-		assertEquals(1, smelt.args().get("fuelQuantity"));
-		assertTrace(result.trace(), "fuel_subgoal_planned", "smelting_provider", "minecraft:coal");
+		assertEquals(List.of("smelt_item", "watch", "collect_smelted_item"), result.route().steps().stream().map(ActionPlanStep::targetId).toList());
+		ActionPlanStep smelt = result.route().steps().getFirst();
+		assertEquals("minecraft:birch_planks", smelt.args().get("fuelItemId"));
+		assertEquals(2, smelt.args().get("fuelQuantity"));
+		assertTrace(result.trace(), "fuel_subgoal_satisfied", "smelting_provider", "minecraft:birch_planks");
 	}
 
 	@Test

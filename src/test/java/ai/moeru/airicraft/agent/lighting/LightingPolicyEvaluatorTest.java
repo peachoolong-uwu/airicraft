@@ -11,6 +11,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LightingPolicyEvaluatorTest {
 	@Test
+	void freshAndResetRuntimeAutomaticallyLightsDarkUndergroundWork() {
+		var runtime = new LightingRuntime();
+		assertTrue(LightingPolicyEvaluator.shouldPlace(runtime.policy(), true, true, false, 0, 0, false));
+		assertFalse(LightingPolicyEvaluator.shouldPlace(runtime.policy(), true, true, true, 15, 0, false));
+		runtime.configure(false, LightingPolicy.Mode.DARKNESS, 0, true, 6);
+		assertFalse(runtime.policy().enabled());
+		runtime.reset();
+		assertTrue(runtime.policy().enabled());
+	}
+
+	@Test
 	void darknessPolicyRequiresSupportedActivityTorchAndUndergroundWhenConfigured() {
 		LightingPolicy policy = new LightingPolicy(true, LightingPolicy.Mode.DARKNESS, 2, true, 6, 1L);
 

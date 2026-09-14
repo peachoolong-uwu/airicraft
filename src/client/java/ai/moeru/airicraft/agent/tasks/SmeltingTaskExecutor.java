@@ -301,11 +301,17 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 			availableFuelCounts.merge(itemId, stack.getCount(), Integer::sum);
 			fuelTicksByItemId.putIfAbsent(itemId, client.world.getFuelRegistry().getFuelTicks(stack));
 		}
+		return selectFuel(availableFuelCounts, fuelTicksByItemId, option.inputItemId(), reservedInput, requiredFuelTicks);
+	}
+
+	static Optional<FuelSelection> selectFuel(Map<String, Integer> availableFuelCounts,
+		Map<String, Integer> fuelTicksByItemId, String inputItemId, int reservedInput, int requiredFuelTicks) {
 		FuelSelection best = null;
-		for (Map.Entry<String, Integer> entry : availableFuelCounts.entrySet()) {
+		for (Map.Entry<String, Integer> entry : new java.util.TreeMap<>(availableFuelCounts).entrySet()) {
 			int needed = fuelItemsNeeded(requiredFuelTicks, fuelTicksByItemId.getOrDefault(entry.getKey(), 0));
-			if (needed > 0 && fuelCountAfterReservingInput(entry.getKey(), entry.getValue(), option.inputItemId(), reservedInput) >= needed) {
-				if (best == null || needed < best.quantity()) {
+			if (needed > 0 && fuelCountAfterReservingInput(entry.getKey(), entry.getValue(), inputItemId, reservedInput) >= needed) {
+				if (best == null || SmeltingFuelCost.compare(entry.getKey(), needed, fuelTicksByItemId.get(entry.getKey()),
+					best.itemId(), best.quantity(), fuelTicksByItemId.get(best.itemId())) < 0) {
 					best = new FuelSelection(entry.getKey(), needed);
 				}
 			}
@@ -725,7 +731,7 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		snapshot = TaskExecutionSnapshot.idle();
 	}
 
-	private record FuelSelection(String itemId, int quantity) {
+	record FuelSelection(String itemId, int quantity) {
 	}
 
 	private record PlacementAttempt(boolean placed, String reason) {

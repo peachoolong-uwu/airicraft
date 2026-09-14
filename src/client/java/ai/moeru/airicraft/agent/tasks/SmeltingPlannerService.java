@@ -745,19 +745,14 @@ public final class SmeltingPlannerService {
 		}
 
 		String bestFuelFor(String inputItemId, int inputQuantity, int cookTimeTicks) {
-			FuelItemSummary best = null;
-			int bestQuantity = Integer.MAX_VALUE;
-			for (FuelItemSummary fuel : fuels.values()) {
-				int needed = SmeltingTaskExecutor.fuelItemsNeeded(inputQuantity * cookTimeTicks, fuel.fuelTicksPerItem());
-				if (needed <= 0 || SmeltingTaskExecutor.fuelCountAfterReservingInput(fuel.itemId(), fuel.count(), inputItemId, inputQuantity) < needed) {
-					continue;
-				}
-				if (needed < bestQuantity || needed == bestQuantity && (best == null || fuel.itemId().compareTo(best.itemId()) < 0)) {
-					best = fuel;
-					bestQuantity = needed;
-				}
-			}
-			return best == null ? "missing" : best.itemId() + "x" + bestQuantity;
+			Map<String, Integer> counts = new LinkedHashMap<>();
+			Map<String, Integer> ticks = new LinkedHashMap<>();
+			fuels.values().forEach(fuel -> {
+				counts.put(fuel.itemId(), fuel.count());
+				ticks.put(fuel.itemId(), fuel.fuelTicksPerItem());
+			});
+			return SmeltingTaskExecutor.selectFuel(counts, ticks, inputItemId, inputQuantity, inputQuantity * cookTimeTicks)
+				.map(fuel -> fuel.itemId() + "x" + fuel.quantity()).orElse("missing");
 		}
 
 		private static int defaultCookOperations(FuelItemSummary fuel) {

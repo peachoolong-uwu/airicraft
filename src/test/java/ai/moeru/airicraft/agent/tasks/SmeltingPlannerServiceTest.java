@@ -10,6 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SmeltingPlannerServiceTest {
+	@Test void smallBatchUsesPlanksButBulkBatchCanUseCoal() {
+		var fuel = new SmeltingPlannerService.FuelInventorySummary(Map.of(
+			"minecraft:coal", new SmeltingPlannerService.FuelItemSummary("minecraft:coal", 1, 1600),
+			"minecraft:spruce_planks", new SmeltingPlannerService.FuelItemSummary("minecraft:spruce_planks", 8, 300)));
+		assertEquals("minecraft:spruce_planksx1", fuel.bestFuelFor("minecraft:spruce_log", 1, 200));
+		assertEquals("minecraft:spruce_planksx2", fuel.bestFuelFor("minecraft:spruce_log", 2, 200));
+		assertEquals("minecraft:coalx1", fuel.bestFuelFor("minecraft:raw_iron", 8, 200));
+	}
+
+	@Test void equalBurnTimePreservesWholeLogsWhenPlanksAreAvailable() {
+		var fuel = new SmeltingPlannerService.FuelInventorySummary(Map.of(
+			"minecraft:oak_log", new SmeltingPlannerService.FuelItemSummary("minecraft:oak_log", 2, 300),
+			"minecraft:oak_planks", new SmeltingPlannerService.FuelItemSummary("minecraft:oak_planks", 2, 300)));
+		assertEquals("minecraft:oak_planksx1", fuel.bestFuelFor("minecraft:raw_iron", 1, 200));
+	}
+
 	@Test void charcoalPreviewReservesLogsBeforeChoosingFuel() {
 		var fuel = new SmeltingPlannerService.FuelInventorySummary(Map.of(
 			"log", new SmeltingPlannerService.FuelItemSummary("log", 6, 300),

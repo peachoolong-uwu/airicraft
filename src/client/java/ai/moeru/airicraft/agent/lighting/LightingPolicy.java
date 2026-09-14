@@ -22,6 +22,10 @@ public record LightingPolicy(
 		}
 	}
 
+	public static LightingPolicy defaults() {
+		return new LightingPolicy(true, Mode.DARKNESS, 0, true, 6, 0L);
+	}
+
 	public static LightingPolicy disabled() {
 		return new LightingPolicy(false, Mode.DARKNESS, 0, true, 6, 0L);
 	}

@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.actions;
 
 import ai.moeru.airicraft.agent.tasks.ResourceGatheringCatalog;
+import ai.moeru.airicraft.agent.tasks.SmeltingFuelCost;
 import ai.moeru.actionplan.ResolutionContext;
 
 import java.util.ArrayList;
@@ -659,6 +660,7 @@ final class AiricraftDomainMethodSession {
 
 			int cookTimeTicks = intPayload(recipe, "cookTimeTicks", DEFAULT_SMELT_COOK_TICKS);
 			Optional<FuelPlan> fuelPlan = resolveSmeltingFuel(
+				inputItemId,
 				inputQuantity,
 				cookTimeTicks,
 				trace,
@@ -764,6 +766,7 @@ final class AiricraftDomainMethodSession {
 	}
 
 	private Optional<FuelPlan> resolveSmeltingFuel(
+		String inputItemId,
 		int inputQuantity,
 		int cookTimeTicks,
 		List<ActionTraceEvent> trace,
@@ -775,8 +778,7 @@ final class AiricraftDomainMethodSession {
 		}
 		List<FuelCandidate> orderedCandidates = fuelCandidates().stream()
 			.sorted(Comparator
-				.comparingInt((FuelCandidate candidate) -> fuelPriority(candidate.itemId()))
-				.thenComparing(Comparator.comparingInt(this::fuelAcquisitionAffinity).reversed()))
+				.comparingInt(this::fuelAcquisitionAffinity).reversed())
 			.toList();
 		FuelPlan bestPlan = null;
 		for (FuelCandidate candidate : orderedCandidates) {
@@ -784,26 +786,23 @@ final class AiricraftDomainMethodSession {
 			if (requiredQuantity <= 0) {
 				continue;
 			}
-			ActionGoal fuelGoal = ActionGoal.inventoryItem(candidate.itemId(), requiredQuantity);
-			int priority = fuelPriority(candidate.itemId());
-			if (existingGoalCount(fuelGoal) >= requiredQuantity) {
-				bestPlan = chooseCheaperFuelPlan(bestPlan, new FuelPlan(candidate.itemId(), requiredQuantity, ActionRoute.empty(), priority));
+			ActionGoal fuelGoal = ActionGoal.inventoryItem(candidate.itemId(), requiredQuantity + (candidate.itemId().equals(inputItemId) ? inputQuantity : 0));
+			if (existingGoalCount(fuelGoal) >= fuelGoal.minimum("countAtLeast", 1)) {
+				bestPlan = chooseCheaperFuelPlan(bestPlan, new FuelPlan(candidate.itemId(), requiredQuantity, ActionRoute.empty(), candidate.fuelTicks()));
 			}
 		}
-		for (FuelCandidate candidate : orderedCandidates) {
-			int priority = fuelPriority(candidate.itemId());
-			if (bestPlan != null && priority >= bestPlan.priority()) {
-				break;
-			}
-			int requiredQuantity = fuelItemsNeeded(requiredFuelTicks, candidate.fuelTicks());
-			if (requiredQuantity <= 0) {
-				continue;
-			}
-			ActionGoal fuelGoal = ActionGoal.inventoryItem(candidate.itemId(), requiredQuantity);
-			Optional<ActionRoute> fuelRoute = resolveGoal(fuelGoal);
-			if (fuelRoute.isPresent()) {
-				bestPlan = new FuelPlan(candidate.itemId(), requiredQuantity, fuelRoute.get(), priority);
-				break;
+		// Existing fuel needs no acquisition. Do not replace it with a mining trip.
+		if (bestPlan == null) {
+			for (FuelCandidate candidate : orderedCandidates) {
+				int requiredQuantity = fuelItemsNeeded(requiredFuelTicks, candidate.fuelTicks());
+				if (requiredQuantity <= 0) {
+					continue;
+				}
+				ActionGoal fuelGoal = ActionGoal.inventoryItem(candidate.itemId(), requiredQuantity + (candidate.itemId().equals(inputItemId) ? inputQuantity : 0));
+				Optional<ActionRoute> fuelRoute = resolveGoal(fuelGoal);
+				if (fuelRoute.isPresent()) {
+					bestPlan = chooseCheaperFuelPlan(bestPlan, new FuelPlan(candidate.itemId(), requiredQuantity, fuelRoute.get(), candidate.fuelTicks()));
+				}
 			}
 		}
 		if (bestPlan == null) {
@@ -829,47 +828,13 @@ final class AiricraftDomainMethodSession {
 		return affinity;
 	}
 
-	private int fuelPriority(String itemId) {
-		if ("minecraft:coal".equals(itemId) && hasExistingMiningToolFor("minecraft:coal")) {
-			return 0;
-		}
-		if ("minecraft:coal".equals(itemId) || "minecraft:charcoal".equals(itemId)) {
-			return 30;
-		}
-		if (ActionGraphDomainKnowledge.plankItemIds().contains(itemId) || "minecraft:stick".equals(itemId)) {
-			return 10;
-		}
-		if (ActionGraphDomainKnowledge.logItemIds().contains(itemId)) {
-			return 20;
-		}
-		return 5;
-	}
-
-	private boolean hasExistingMiningToolFor(String itemId) {
-		return blockAcquisitions.rulesForOutput(itemId).stream()
-			.anyMatch(rule -> rule.emptyHandAllowed() || rule.usableToolItemIds().stream()
-				.anyMatch(toolItemId -> existingGoalCount(ActionGoal.inventoryItem(toolItemId, 1)) >= 1));
-	}
-
 	private static FuelPlan chooseCheaperFuelPlan(FuelPlan current, FuelPlan candidate) {
-		if (current == null) {
-			return candidate;
-		}
-		int priorityCompare = Integer.compare(candidate.priority(), current.priority());
-		if (priorityCompare < 0) {
-			return candidate;
-		}
-		if (priorityCompare > 0) {
-			return current;
-		}
-		int costCompare = Integer.compare(candidate.route().cost(), current.route().cost());
-		if (costCompare < 0) {
-			return candidate;
-		}
-		if (costCompare == 0 && candidate.quantity() < current.quantity()) {
-			return candidate;
-		}
-		return current;
+		if (current == null) return candidate;
+		int acquisition = Integer.compare(candidate.route().cost(), current.route().cost());
+		if (acquisition < 0) return candidate;
+		if (acquisition > 0) return current;
+		return SmeltingFuelCost.compare(candidate.itemId(), candidate.quantity(), candidate.fuelTicks(),
+			current.itemId(), current.quantity(), current.fuelTicks()) < 0 ? candidate : current;
 	}
 
 	private boolean goalSatisfied(ActionGoal goal, List<ActionTraceEvent> trace) {
@@ -1177,7 +1142,7 @@ final class AiricraftDomainMethodSession {
 	private record FuelCandidate(String itemId, int fuelTicks) {
 	}
 
-	private record FuelPlan(String itemId, int quantity, ActionRoute route, int priority) {
+	private record FuelPlan(String itemId, int quantity, ActionRoute route, int fuelTicks) {
 	}
 
 }

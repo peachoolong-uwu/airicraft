@@ -366,7 +366,7 @@ public final class PlannerToolCatalog {
 			prop("maxThreatDistance", integer("Maximum eligible mob distance in blocks, 1..32; default 16.")),
 			prop("requireLineOfSight", bool("Ignore mobs out of line of sight when true; default true."))
 		), List.of()), PlannerToolCatalog::validateConfigureReflexArguments),
-		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic torch placement while mining or navigating. Keeps offhand equipment such as a shield, temporarily uses a carried torch and restores the held item. Does not interrupt combat, item use or active block breaking. Confirmed placements are batched into the next planner window.", properties(
+		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic torch placement while mining or navigating. Enabled by default for dark underground work (darkness, light 0, spacing 6); can be disabled explicitly. Keeps offhand equipment such as a shield, temporarily uses a carried torch and restores the held item. Does not interrupt combat, item use or active block breaking. Confirmed placements are batched into the next planner window.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("enabled", bool("Whether automatic torch placement is enabled.")),
 				prop("mode", enumString("Lighting rule. darkness uses combined light; spawn_proof uses block light.", List.of("darkness", "spawn_proof"))),

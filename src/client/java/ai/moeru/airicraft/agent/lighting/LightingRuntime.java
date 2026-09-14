@@ -30,7 +30,7 @@ public final class LightingRuntime {
 	private static final long CONFIRMATION_TIMEOUT_TICKS = 20L;
 	private static final double MAX_REACH_SQUARED = 4.5D * 4.5D;
 
-	private LightingPolicy policy = LightingPolicy.disabled();
+	private LightingPolicy policy = LightingPolicy.defaults();
 	private PendingPlacement pendingPlacement;
 	private long nextAttemptTick;
 
@@ -92,7 +92,7 @@ public final class LightingRuntime {
 	}
 
 	public void reset() {
-		policy = LightingPolicy.disabled();
+		policy = LightingPolicy.defaults();
 		pendingPlacement = null;
 		nextAttemptTick = 0L;
 	}
