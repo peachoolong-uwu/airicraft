@@ -70,25 +70,45 @@ public final class LightingRuntime {
 			|| player.currentScreenHandler != player.playerScreenHandler
 			|| !player.currentScreenHandler.getCursorStack().isEmpty()) return Optional.empty();
 		BlockPos origin = player.getBlockPos();
+		// Do not interpret an unloaded edge of the sampling area as darkness.
+		for (BlockPos sample : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			if (!client.world.isChunkLoaded(sample)) return Optional.empty();
+		}
+		double combinedLight = averageFootLevelLight(origin, client.world::isAir, pos -> client.world.getLightLevel(pos));
+		double blockLight = averageFootLevelLight(origin, client.world::isAir, pos -> client.world.getLightLevel(LightType.BLOCK, pos));
 		boolean nearbyTorch = hasNearbyTorch(client, origin, policy.minSpacingBlocks());
 		boolean placementRequired = LightingPolicyEvaluator.shouldPlace(
 			policy,
 			true,
 			torchCount(player) > 0,
 			client.world.isSkyVisible(origin.up()),
-			client.world.getLightLevel(origin),
-			client.world.getLightLevel(LightType.BLOCK, origin),
+			combinedLight,
+			blockLight,
 			nearbyTorch
 		);
 		if (!placementRequired) {
 			return Optional.empty();
 		}
 		for (PlacementCandidate candidate : placementCandidates(player.getBlockPos(), player.getHorizontalFacing())) {
-			if (tryPlace(client, player, candidate, activity, tick)) {
+			if (tryPlace(client, player, candidate, activity, tick,
+				policy.mode() == LightingPolicy.Mode.SPAWN_PROOF ? blockLight : combinedLight)) {
 				break;
 			}
 		}
 		return Optional.empty();
+	}
+
+	static double averageFootLevelLight(BlockPos origin, java.util.function.Predicate<BlockPos> isAirAt,
+		java.util.function.ToIntFunction<BlockPos> lightAt) {
+		int total = 0;
+		int samples = 0;
+		for (BlockPos sample : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			if (!isAirAt.test(sample)) continue;
+			total += lightAt.applyAsInt(sample);
+			samples++;
+		}
+		// No air means no evidence of darkness that should trigger placement.
+		return samples == 0 ? Double.POSITIVE_INFINITY : total / (double) samples;
 	}
 
 	public void reset() {
@@ -128,7 +148,7 @@ public final class LightingRuntime {
 		return Optional.empty();
 	}
 
-	private boolean tryPlace(MinecraftClient client, ClientPlayerEntity player, PlacementCandidate candidate, WorldTaskType activity, long tick) {
+	private boolean tryPlace(MinecraftClient client, ClientPlayerEntity player, PlacementCandidate candidate, WorldTaskType activity, long tick, double lightBefore) {
 		BlockPos target = candidate.target();
 		if (!client.world.isChunkLoaded(target)) {
 			return false;
@@ -154,7 +174,6 @@ public final class LightingRuntime {
 		var visible = client.world.raycast(new RaycastContext(player.getEyePos(), inside,
 			RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, player));
 		if (visible.getType() != HitResult.Type.BLOCK || !visible.getBlockPos().equals(candidate.support())) return false;
-		int lightBefore = client.world.getLightLevel(target);
 		ActionResult result = placeWithTorch(client, player, new BlockHitResult(hit, candidate.face(), candidate.support(), false));
 		if (!result.isAccepted()) {
 			return false;
@@ -277,7 +296,7 @@ public final class LightingRuntime {
 		long startedTick,
 		long policyRevision,
 		LightingPolicy.Mode mode,
-		int lightLevelBefore,
+		double lightLevelBefore,
 		String side,
 		Direction face,
 		WorldTaskType activity

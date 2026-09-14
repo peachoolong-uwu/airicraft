@@ -15,8 +15,8 @@ public final class LightingPolicyEvaluator {
 		boolean supportedActivity,
 		boolean torchAvailable,
 		boolean skyVisible,
-		int combinedLightLevel,
-		int blockLightLevel,
+		double combinedLightLevel,
+		double blockLightLevel,
 		boolean nearbyTorch
 	) {
 		if (policy == null || !policy.enabled() || !supportedActivity || !torchAvailable || nearbyTorch) {
@@ -25,7 +25,7 @@ public final class LightingPolicyEvaluator {
 		if (policy.requireUnderground() && skyVisible) {
 			return false;
 		}
-		int observedLight = policy.mode() == LightingPolicy.Mode.SPAWN_PROOF
+		double observedLight = policy.mode() == LightingPolicy.Mode.SPAWN_PROOF
 			? blockLightLevel
 			: combinedLightLevel;
 		return observedLight <= policy.maxLightLevel();
