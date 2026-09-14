@@ -4,7 +4,7 @@ import ai.moeru.airicraft.Airicraft;
 import baritone.api.BaritoneAPI;
 import baritone.api.utils.input.Input;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.WorldSavePath;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.util.math.BlockPos;
 
 import java.io.IOException;
@@ -13,11 +13,14 @@ import java.util.List;
 /** Client-thread publication, immutable reads on Baritone's path calculation thread. */
 public final class WorldPlacePreservation {
 	private static volatile Snapshot current = new Snapshot(null, List.of(), false);
+	private static long revision = -1;
+	private static int ticksUntilRefresh;
+	private static long lastFailureLog;
 
 	private WorldPlacePreservation() {}
 
 	public static void tick(MinecraftClient client) {
-		if (current.world() != client.world) reload(client);
+		if (current.world() != client.world || revision != LocationMemoryBridge.revision() || --ticksUntilRefresh <= 0) reload(client);
 	}
 
 	public static void clear() {
@@ -25,19 +28,31 @@ public final class WorldPlacePreservation {
 	}
 
 	public static void reload(MinecraftClient client) {
-		if (client.world == null || client.getServer() == null) {
+		ticksUntilRefresh = 20;
+		revision = LocationMemoryBridge.revision();
+		if (client.world == null || (client.getServer() == null && !FabricLoader.getInstance().isModLoaded("journeymap"))) {
 			current = new Snapshot(client.world, List.of(), false);
 			return;
 		}
 		try {
-			List<PlaceMemory.Place> places = new PlaceMemory(client.getServer().getSavePath(WorldSavePath.ROOT)).list();
-			current = Snapshot.from(client.world, client.world.getRegistryKey().getValue().toString(), places);
+			var places = LocationMemoryBridge.forClient(client).list();
+			String dimension = client.world.getRegistryKey().getValue().toString();
+			current = new Snapshot(client.world, places.stream().filter(place -> place.dimension().equals(dimension))
+				.map(LocationMemoryProvider.Location::preserveArea).filter(java.util.Objects::nonNull).toList(), false);
 		}
-		catch (IOException exception) {
+		catch (IOException | RuntimeException exception) {
 			// A broken memory file must not silently turn a built home into available resources.
-			if (current.world() != client.world) current = new Snapshot(client.world, List.of(), true);
-			Airicraft.LOGGER.error("Cannot load preserved places; automatic terrain edits remain restricted", exception);
+			current = failedSnapshot(current, client.world);
+			long now = System.currentTimeMillis();
+			if (now - lastFailureLog >= 10_000L) {
+				lastFailureLog = now;
+				Airicraft.LOGGER.error("Cannot load location protection; automatic terrain edits remain restricted", exception);
+			}
 		}
+	}
+
+	static Snapshot failedSnapshot(Snapshot previous, Object world) {
+		return new Snapshot(world, previous.world() == world ? previous.areas() : List.of(), true);
 	}
 
 	public static java.util.Map<String, Object> debugSnapshot() {

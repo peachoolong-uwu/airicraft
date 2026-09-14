@@ -92,6 +92,18 @@ class PlaceMemoryToolProviderTest {
 	}
 
 	@Test
+	void toolsAcceptIdsAndRejectAmbiguousSelectors() {
+		var provider = provider();
+		call(provider, "remember_place", "{\"name\":\"home\"}");
+		String result = call(provider, "list_places", "{}");
+		String id = JsonParser.parseString(result.substring(result.indexOf("result=") + 7)).getAsJsonArray().get(0).getAsJsonObject().get("id").getAsString();
+		assertTrue(call(provider, "remember_place", "{\"id\":\"" + id + "\",\"name\":\"base\"}").contains("base"));
+		assertTrue(call(provider, "recall_place", "{\"id\":\"" + id + "\"}").contains("base"));
+		assertTrue(call(provider, "recall_place", "{\"id\":\"" + id + "\",\"name\":\"base\"}").contains("TOOL_ERROR"));
+		assertTrue(call(provider, "forget_place", "{\"id\":\"" + id + "\"}").contains("\"deleted\":true"));
+	}
+
+	@Test
 	void missingWorldReturnsAnErrorRatherThanCreatingGlobalMemory() {
 		var provider = new PlaceMemoryToolProvider(() -> { throw new IllegalStateException("world_not_loaded"); }, Runnable::run);
 		assertTrue(call(provider, "remember_place", "{\"name\":\"home\"}").contains("TOOL_ERROR: remember_place world_not_loaded"));

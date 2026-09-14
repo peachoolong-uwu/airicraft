@@ -887,19 +887,18 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		}
 
 		if (!deathBoundaryApplied) {
-			if (client != null && client.player != null && client.world != null && client.getServer() != null) {
+			if (client != null && client.player != null && client.world != null) {
 				var pos = client.player.getBlockPos();
 				try {
 					var place = new ai.moeru.airicraft.agent.memory.PlaceMemory.Place("last_death",
 						client.world.getRegistryKey().getValue().toString(), pos.getX(), pos.getY(), pos.getZ(),
 						"Automatically recorded at the most recent death. Dropped items may have moved or despawned; this location is not necessarily safe.");
-					new ai.moeru.airicraft.agent.memory.PlaceMemory(
-						client.getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT)).remember(place);
+					ai.moeru.airicraft.agent.memory.LocationMemoryBridge.forClient(client).remember(null, place);
 					ai.moeru.airicraft.agent.memory.WorldPlacePreservation.reload(client);
 					eventBuffer.append(tickCount, "player.death_place_saved", Map.of(
 						"name", place.name(), "dimension", place.dimension(), "x", place.x(), "y", place.y(), "z", place.z()));
 				}
-				catch (java.io.IOException exception) {
+				catch (java.io.IOException | IllegalArgumentException | IllegalStateException exception) {
 					eventBuffer.append(tickCount, "player.death_place_save_failed", Map.of("message", exception.toString()));
 				}
 			}
