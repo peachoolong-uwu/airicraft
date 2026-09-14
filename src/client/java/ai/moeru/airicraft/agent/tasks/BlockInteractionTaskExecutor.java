@@ -216,7 +216,10 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		BlockState before = client.world.getBlockState(target);
 		TargetMaterial expectedTargetMaterial = targetMaterial(args.expectedTargetMaterial(), null);
 		if (expectedTargetMaterial != null && !expectedTargetMaterial.matches(before)) {
-			return fail(request, targetFailure(TaskFailureCode.MISSING_FACT, target, "target_material_mismatch beforeBlockId=" + blockId(before)));
+			return fail(request, targetFailure(TaskFailureCode.MISSING_FACT, target,
+				"target_material_mismatch expectedTargetMaterial=" + args.expectedTargetMaterial()
+					+ " beforeBlockId=" + blockId(before)
+					+ " hint=omit_expectedTargetMaterial_to_interact_with_an_existing_solid_block"));
 		}
 		Hand hand = resolveInteractionHand(client, player, useArgs(request).itemId());
 		if (hand == null) {

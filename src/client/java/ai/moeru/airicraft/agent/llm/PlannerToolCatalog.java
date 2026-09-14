@@ -311,7 +311,7 @@ public final class PlannerToolCatalog {
 				prop("requireCurrentTargetMaterial", enumString("Required current target material before placement. Default air_or_replaceable.", List.of("air", "replaceable", "air_or_replaceable"))),
 				prop("targets", array("Ordered target blocks to place into. Maximum 16. Root facePreference and requireCurrentTargetMaterial apply as defaults.", placeBlockTargetSchema()))
 			), List.of("itemId")), PlannerToolCatalog::validatePlaceBlockArguments),
-		builtInTool(USE_BLOCK, false, tool(USE_BLOCK, "Use current hand or an optional item on one or more intended modified target positions. If target is air/replaceable, runtime clicks adjacent support such as farmland below seeds. Target positions must have been observed by a world read tool such as inspect_world or find_world_features within the last 10 planner tool calls.", properties(
+		builtInTool(USE_BLOCK, false, tool(USE_BLOCK, "Interact with an existing block (including opening chests, furnaces, or doors), or use an optional item at a target position. To open a chest, call with x,y,z only; omit itemId and expectedTargetMaterial. If target is air/replaceable, runtime clicks adjacent support such as farmland below seeds. Target positions must have been observed by a world read tool such as inspect_world or find_world_features within the last 10 planner tool calls.", properties(
 				prop("narration", optionalString("Optional visible narration before using the tool. Omit this field when no narration is needed.")),
 				prop("itemId", optionalString("Optional exact namespaced item id to equip first, for example minecraft:wheat_seeds.")),
 				prop("x", integer("Intended modified target block x coordinate.")),
@@ -319,7 +319,7 @@ public final class PlannerToolCatalog {
 				prop("z", integer("Intended modified target block z coordinate.")),
 				prop("facePreference", enumString("For air/replaceable targets, direction from target to support: down selects the floor below and clicks its top (for example placing a torch). For an existing solid target, selects the clicked face. Prefer auto.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
 				prop("expectedSupportBlockIds", stringArray("Optional exact block ids expected on the clicked support block.")),
-				prop("expectedTargetMaterial", enumString("Optional current target material check before use.", List.of("air", "replaceable", "air_or_replaceable"))),
+				prop("expectedTargetMaterial", enumString("Optional precondition for an air/replaceable target, such as planting. Omit when interacting with existing solid blocks (chests, furnaces, doors); every listed value rejects them.", List.of("air", "replaceable", "air_or_replaceable"))),
 				prop("targets", array("Ordered target blocks to use. Maximum 16. Root facePreference, expectedSupportBlockIds, and expectedTargetMaterial apply as defaults.", useBlockTargetSchema()))
 			), List.of()), PlannerToolCatalog::validateUseBlockArguments),
 		builtInTool(LURE_ENTITIES, false, tool(LURE_ENTITIES, "Lure 1..8 observed animals into an inclusive destination box within 64 blocks. Animals must respond to the held food item. System 1 approaches moving followers, pauses travel for catch-up and chooses standing positions inside the area. Completion requires every selected animal's body inside; player arrival is insufficient. Does not feed animals or close gates. Use a roomy interior box and an open entrance. Uses temporary walking-only path settings, restored on release. Resume a safety hold after combat to reacquire followers.", properties(
@@ -1287,7 +1287,7 @@ public final class PlannerToolCatalog {
 				prop("z", integer("Intended modified target block z coordinate.")),
 				prop("facePreference", enumString("For air/replaceable targets, direction from target to support: down selects the floor below and clicks its top (for example placing a torch). For an existing solid target, selects the clicked face. Prefer auto. Overrides root default.", List.of("auto", "down", "north", "south", "east", "west", "up"))),
 				prop("expectedSupportBlockIds", stringArray("Optional exact block ids expected on the clicked support block. Overrides root default.")),
-				prop("expectedTargetMaterial", enumString("Optional current target material check before use. Overrides root default.", List.of("air", "replaceable", "air_or_replaceable")))
+				prop("expectedTargetMaterial", enumString("Optional precondition for an air/replaceable target, such as planting. Omit when interacting with existing solid blocks (chests, furnaces, doors); every listed value rejects them. Overrides root default.", List.of("air", "replaceable", "air_or_replaceable")))
 			),
 			"required", List.of("x", "y", "z"),
 			"additionalProperties", false
