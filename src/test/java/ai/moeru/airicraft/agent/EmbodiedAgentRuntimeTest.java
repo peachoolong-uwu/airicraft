@@ -2483,10 +2483,11 @@ class EmbodiedAgentRuntimeTest {
 			10L
 		));
 
-		assertTrue(result.contains("inventorySnapshot={itemCounts={minecraft:stick=4, minecraft:stone_pickaxe=1}"));
-		assertTrue(result.contains("selectedHotbarSlot=2"));
-		assertTrue(result.contains("equippedItemId=minecraft:stone_pickaxe"));
-		assertTrue(result.contains("hotbarItems=[0=minecraft:stickx4, 1=empty, 2=minecraft:stone_pickaxex1]"));
+		assertTrue(result.contains("Carrying 4 stick, stone_pickaxe."));
+		assertTrue(result.contains("stone_pickaxe in third slot (selected)"));
+		assertTrue(result.contains("Main hand: stone_pickaxe."));
+		assertTrue(result.contains("4 stick in first slot"));
+		assertTrue(result.contains("Unobserved slots unknown."));
 	}
 
 	@Test

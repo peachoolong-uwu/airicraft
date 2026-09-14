@@ -87,3 +87,7 @@ HotSwap/config reload where possible, restart cleanly for structural changes. Ne
 reactivate a finished goal. Commit logical stages and record live limitations explicitly.
 
 Verification details, measured evidence latency, provider failures and the remaining live acceptance are in [the validation report](../system2-refactor-validation.md). Checked implementation entries do not imply all live trials passed.
+
+### Semantic input presentation
+
+Model requests use deterministic semantic descriptions over canonical observations. Canonical decision messages remain structured so recorder dispatch metadata and incorporated-event cursors do not depend on prose parsing. The request renderer describes work, ownership, player state and events; only exactly identical work payloads may reference an earlier current snapshot within the same request. Unknown fields pass through. Inventory and spatial query renderers describe sparse arrangements and complete horizontal patches, with individual world records available through `detail=blocks`. See [the compression standard](../planner-semantic-input.md) for preserved distinctions, permitted spatial losses, and validation boundaries.

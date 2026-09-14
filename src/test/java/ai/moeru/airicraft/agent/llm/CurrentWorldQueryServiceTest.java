@@ -46,7 +46,7 @@ final class CurrentWorldQueryServiceTest {
 			var records = bounds.positions().stream().map(pos -> record(pos, Math.max(
 				Math.max(Math.abs(pos.getX() - player.getX()), Math.abs(pos.getY() - player.getY())),
 				Math.abs(pos.getZ() - player.getZ())))).toList();
-			var result = CurrentWorldQueryService.areaResult(bounds, records.size(), records, 32);
+			var result = CurrentWorldQueryService.areaResult(bounds, records.size(), records, 32, true);
 			assertEquals(center, result.observedPositions().getFirst());
 			assertEquals(32, result.observedPositions().size());
 			assertTrue(result.text().contains("truncated=true"), result.text());
@@ -54,7 +54,7 @@ final class CurrentWorldQueryServiceTest {
 		}
 		assertFalse(results.get(0).observedPositions().equals(results.get(1).observedPositions()));
 		// Distances still describe reach from the player, not distance from the requested center.
-		assertTrue(results.get(1).text().contains("pos=-2,133,6, id=minecraft:stone, loaded=true, replaceable=false, air=false, fluid=false, distance=2"));
+		assertTrue(results.get(1).text().contains("pos=-2,133,6, id=stone, loaded=true, replaceable=false, air=false, fluid=false, distance=2"));
 	}
 
 	private static CurrentWorldQueryService.BlockRecord record(BlockPos pos, int distance) {
@@ -101,7 +101,58 @@ final class CurrentWorldQueryServiceTest {
 		assertTrue(result.text().length() < verboseLength / 2, result.text());
 		assertEquals(25, result.observedPositions().size());
 		assertTrue(result.observedPositions().containsAll(bounds.positions()));
-		assertTrue(result.text().contains("columns X: -4 -3 -2 -1 0\nY=136\nZ=2: 0 0 0 0 0"));
+		assertTrue(result.text().contains("5x5 horizontal patch at block Y=136, X=-4..0, Z=2..6: stone"), result.text());
 		assertTrue(result.text().contains("truncated=false"));
 	}
+	@Test void patchSummaryKeepsExactBoundsAndDetailedRecordsRemainAvailable() {
+		var bounds = new CurrentWorldQueryService.QueryBounds("box", new BlockPos(10, 63, 20), new BlockPos(14, 63, 24));
+		var records = bounds.positions().stream().map(pos -> new CurrentWorldQueryService.BlockRecord(pos, "minecraft:dirt", Map.of(), true, false, false, false, pos.getX() - 10)).toList();
+		var summary = CurrentWorldQueryService.areaResult(bounds, 25, records, 64);
+		var detailed = CurrentWorldQueryService.areaResult(bounds, 25, records, 64, true);
+		assertTrue(summary.text().contains("5x5 horizontal patch at block Y=63, X=10..14, Z=20..24: dirt"), summary.text());
+		assertTrue(summary.text().contains("distance 0..4"));
+		assertTrue(summary.text().contains("No clearance or route inferred"));
+		assertTrue(summary.text().contains("detail=blocks"));
+		assertEquals(summary.observedPositions(), detailed.observedPositions());
+		for (var pos : bounds.positions()) assertTrue(detailed.text().contains("pos=" + pos.getX() + ",63," + pos.getZ()));
+		assertTrue(summary.text().length() < detailed.text().length() / 3);
+	}
+
+	@Test void patchMergingDoesNotBridgeUnloadedCellsDifferentStatesOrOmittedCells() {
+		var bounds = new CurrentWorldQueryService.QueryBounds("box", new BlockPos(0, 63, 0), new BlockPos(4, 63, 4));
+		var records = new java.util.ArrayList<>(bounds.positions().stream().map(pos -> new CurrentWorldQueryService.BlockRecord(pos, "minecraft:dirt", Map.<String,String>of(), true, false, false, false, 0)).toList());
+		records.removeIf(record -> record.pos().equals(new BlockPos(2, 63, 2)));
+		records.add(CurrentWorldQueryService.BlockRecord.unloaded(new BlockPos(2, 63, 2), 0));
+		var result = CurrentWorldQueryService.areaResult(bounds, 25, records, 64);
+		assertFalse(result.text().contains("5x5 horizontal patch"));
+		assertTrue(result.text().contains("unloaded"));
+		records.removeIf(record -> record.pos().equals(new BlockPos(2, 63, 2)));
+		records.add(new CurrentWorldQueryService.BlockRecord(new BlockPos(2, 63, 2), "example:slab", Map.of("type", "bottom", "waterlogged", "true"), true, false, false, true, 0));
+		result = CurrentWorldQueryService.areaResult(bounds, 25, records, 64);
+		assertFalse(result.text().contains("5x5 horizontal patch"));
+		assertTrue(result.text().contains("example:slab"));
+		assertTrue(result.text().contains("type=bottom"));
+		assertTrue(result.text().contains("waterlogged=true"));
+		result = CurrentWorldQueryService.areaResult(bounds, 25, records, 20);
+		assertFalse(result.text().contains("5x5 horizontal patch"));
+		assertTrue(result.text().contains("truncated=true"));
+		assertEquals(20, result.observedPositions().size());
+	}
+
+	@Test void placementSitesFactorOnlySharedFactsAndKeepReversedDoorStateAndReachExceptions() {
+		var first = new CurrentWorldQueryService.PlacementSite(new BlockPos(0, 64, 0), "minecraft:air", Map.of(), new BlockPos(0, 63, 0), "minecraft:dirt", Map.of(), 1, new BlockPos(1, 64, 0), null, true);
+		var second = new CurrentWorldQueryService.PlacementSite(new BlockPos(0, 64, 1), "minecraft:air", Map.of(), new BlockPos(0, 63, 1), "minecraft:grass_block", Map.of("snowy", "false"), 2, new BlockPos(1, 64, 1), null, true);
+		String summary = CurrentWorldQueryService.formatSites(List.of(first, second));
+		assertTrue(summary.contains("All listed targets are air"));
+		assertTrue(summary.contains("Each support is directly below"));
+		assertTrue(summary.contains("All are within interaction range"));
+		assertTrue(summary.contains("grass_block support {snowy=false}"));
+		assertTrue(summary.contains("stand at 1,64,1"));
+		var exception = new CurrentWorldQueryService.PlacementSite(new BlockPos(0, 64, 2), "minecraft:oak_door", Map.of("open", "false", "facing", "west"), new BlockPos(0, 63, 2), "minecraft:dirt", Map.of(), 9, null, new BlockPos(0, 64, 3), false);
+		summary = CurrentWorldQueryService.formatSites(List.of(first, exception));
+		assertFalse(summary.contains("All listed targets are air"));
+		assertFalse(summary.contains("All are within interaction range"));
+		for (String fact : List.of("oak_door", "open=false", "facing=west", "out of reach", "no adjacent standing position found", "nearby required-block match 0,64,3")) assertTrue(summary.contains(fact), summary);
+	}
+
 }

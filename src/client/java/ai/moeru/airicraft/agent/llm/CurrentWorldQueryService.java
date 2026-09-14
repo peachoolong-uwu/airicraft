@@ -105,10 +105,14 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			records.add(BlockRecord.of(pos, state, distance(player.getBlockPos(), pos)));
 		}
 		int maxResults = boundedInt(arguments, "maxResults", DEFAULT_MAX_RESULTS, 1, MAX_RESULTS);
-		return areaResult(bounds, scanned, records, maxResults);
+		return areaResult(bounds, scanned, records, maxResults, stringArg(arguments, "detail").orElse("summary").equals("blocks"));
 	}
 
 	static WorldQueryResult areaResult(QueryBounds bounds, int scanned, List<BlockRecord> records, int maxResults) {
+		return areaResult(bounds, scanned, records, maxResults, false);
+	}
+
+	static WorldQueryResult areaResult(QueryBounds bounds, int scanned, List<BlockRecord> records, int maxResults, boolean detailed) {
 		List<BlockRecord> safeRecords = records == null ? List.of() : records;
 		BlockPos center = bounds.center();
 		List<BlockRecord> limited = safeRecords.stream()
@@ -124,10 +128,48 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			+ " returned=" + limited.size()
 			+ " order=nearest_query_center queryCenter=" + compactPos(center) + " distanceOrigin=player"
 			+ " truncated=" + (limited.size() < safeRecords.size())
-			+ formatAreaRecords(bounds, limited)
+			+ (detailed ? " blocks=" + formatRecords(limited, limited.size()) : summarizeArea(bounds, limited))
 			+ (limited.size() < safeRecords.size()
 				? "\nResult truncated. Use a smaller box or radius around the blocks you need; omitted positions have not been inspected."
 				: ""), limited.stream().map(record -> record.pos().toImmutable()).toList());
+	}
+
+	/** Merge only fully observed, identical horizontal rectangles; never bridge gaps or states. */
+	private static String summarizeArea(QueryBounds bounds, List<BlockRecord> records) {
+		var cells = new java.util.TreeMap<BlockPos, BlockRecord>(Comparator.comparingInt(BlockPos::getY)
+			.thenComparingInt(BlockPos::getZ).thenComparingInt(BlockPos::getX));
+		for (var record : records) cells.put(record.pos(), record);
+		var descriptions = new ArrayList<String>();
+		boolean merged = false;
+		while (!cells.isEmpty()) {
+			var start = cells.firstEntry().getValue();
+			BlockPos pos = start.pos();
+			String material = start.materialDescription();
+			int width = 1, depth = 1;
+			while (sameMaterial(cells.get(pos.add(width, 0, 0)), material)) width++;
+			boolean nextRow = true;
+			while (nextRow) {
+				for (int x = 0; x < width; x++) if (!sameMaterial(cells.get(pos.add(x, 0, depth)), material)) { nextRow = false; break; }
+				if (nextRow) depth++;
+			}
+			int near = Integer.MAX_VALUE, far = Integer.MIN_VALUE;
+			for (int z = 0; z < depth; z++) for (int x = 0; x < width; x++) {
+				var cell = cells.remove(pos.add(x, 0, z));
+				near = Math.min(near, cell.distance()); far = Math.max(far, cell.distance());
+			}
+			merged |= width * depth >= 4;
+			String shape = width * depth == 1 ? "At " + compactPos(pos) : width + "x" + depth + " horizontal patch at block Y=" + pos.getY()
+				+ ", X=" + pos.getX() + ".." + (pos.getX() + width - 1) + ", Z=" + pos.getZ() + ".." + (pos.getZ() + depth - 1);
+			descriptions.add(shape + ": " + start.semanticMaterial() + "; distance " + near + (near == far ? "" : ".." + far) + ".");
+		}
+		String summary = "\nObserved horizontal patches (X by Z; block Y, not feet Y). No clearance or route inferred."
+			+ " Per-block distance detail omitted; request detail=blocks for exact records.\n" + String.join("\n", descriptions);
+		String fallback = formatAreaRecords(bounds, records);
+		return merged && summary.length() < fallback.length() ? summary : fallback;
+	}
+
+	private static boolean sameMaterial(BlockRecord record, String material) {
+		return record != null && record.materialDescription().equals(material);
 	}
 
 	private static String formatAreaRecords(QueryBounds bounds, List<BlockRecord> records) {
@@ -210,7 +252,8 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			+ " scanned=" + Math.min(scanned, SEARCH_BLOCK_CAP)
 			+ " matched=" + matches.size()
 			+ " returned=" + limited.size()
-			+ " sites=" + formatSites(limited), observedPlacementPositions(limited));
+			+ " sites=" + (stringArg(arguments, "detail").orElse("summary").equals("blocks")
+				? limited.stream().map(PlacementSite::compact).collect(Collectors.joining(", ", "[", "]")) : formatSites(limited)), observedPlacementPositions(limited));
 	}
 
 	private static Optional<PlacementSite> placementSite(
@@ -347,13 +390,29 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 			.collect(Collectors.joining(", ", "[", "]"));
 	}
 
-	private static String formatSites(List<PlacementSite> sites) {
-		if (sites == null || sites.isEmpty()) {
-			return "none";
+	static String formatSites(List<PlacementSite> sites) {
+		if (sites.isEmpty()) return "No placement sites.";
+		boolean allAir = sites.stream().allMatch(site -> site.targetBlockId().equals("minecraft:air") && site.targetProperties().isEmpty());
+		boolean allBelow = sites.stream().allMatch(site -> site.supportPos().equals(site.targetPos().down()));
+		boolean allReach = sites.stream().allMatch(PlacementSite::withinInteractionRange);
+		boolean noRequired = sites.stream().allMatch(site -> site.nearbyRequiredPos() == null);
+		var text = new StringBuilder("\nPlacement targets are block cells.");
+		if (allAir) text.append(" All listed targets are air.");
+		if (allBelow) text.append(" Each support is directly below its target.");
+		if (allReach) text.append(" All are within interaction range.");
+		if (noRequired) text.append(" No nearby required-block match reported.");
+		for (var site : sites) {
+			text.append("\n- ").append(compactPos(site.targetPos())).append(": ");
+			if (!allAir) text.append("target ").append(PlannerStateText.item(site.targetBlockId())).append(site.targetProperties().isEmpty() ? "" : site.targetProperties()).append("; ");
+			text.append(PlannerStateText.item(site.supportBlockId())).append(" support");
+			if (!allBelow) text.append(" at ").append(compactPos(site.supportPos()));
+			if (!site.supportProperties().isEmpty()) text.append(' ').append(site.supportProperties());
+			text.append("; distance ").append(site.distance());
+			text.append(site.standableAdjacent() == null ? "; no adjacent standing position found" : "; stand at " + compactPos(site.standableAdjacent()));
+			if (!allReach) text.append(site.withinInteractionRange() ? "; within reach" : "; out of reach");
+			if (!noRequired) text.append("; nearby required-block match ").append(site.nearbyRequiredPos() == null ? "none" : compactPos(site.nearbyRequiredPos()));
 		}
-		return sites.stream()
-			.map(PlacementSite::compact)
-			.collect(Collectors.joining(", ", "[", "]"));
+		return text.toString();
 	}
 
 	private static List<StateFilter> stateFilters(JsonObject arguments, String key) {
@@ -496,8 +555,14 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 				+ "}";
 		}
 
+		String semanticMaterial() {
+			if (!loaded) return "unknown (unloaded)";
+			return PlannerStateText.item(blockId) + (properties.isEmpty() ? "" : " " + new java.util.TreeMap<>(properties))
+				+ (replaceable ? "; replaceable" : "") + (fluid ? "; contains fluid" : "");
+		}
+
 		String materialDescription() {
-			return "id=" + blockId
+			return "id=" + PlannerStateText.item(blockId)
 				+ (properties.isEmpty() ? "" : ", state=" + properties)
 				+ ", loaded=" + loaded
 				+ ", replaceable=" + replaceable
@@ -526,10 +591,10 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 
 		String compact() {
 			return "{targetPos=" + compactPos(targetPos)
-				+ ", targetBlockId=" + targetBlockId
+				+ ", targetBlockId=" + PlannerStateText.item(targetBlockId)
 				+ (targetProperties.isEmpty() ? "" : ", targetState=" + targetProperties)
 				+ ", supportPos=" + compactPos(supportPos)
-				+ ", supportBlockId=" + supportBlockId
+				+ ", supportBlockId=" + PlannerStateText.item(supportBlockId)
 				+ (supportProperties.isEmpty() ? "" : ", supportState=" + supportProperties)
 				+ ", distance=" + distance
 				+ ", standableAdjacent=" + (standableAdjacent == null ? "none" : compactPos(standableAdjacent))

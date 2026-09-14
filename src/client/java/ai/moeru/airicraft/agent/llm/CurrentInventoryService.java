@@ -5,9 +5,7 @@ import ai.moeru.airicraft.agent.tasks.CraftingOpportunityResolver;
 import ai.moeru.airicraft.agent.tasks.CraftingGridKind;
 import ai.moeru.airicraft.agent.tasks.EntitySelectorResolver;
 import ai.moeru.airicraft.agent.tasks.InventoryItemCounter;
-import ai.moeru.airicraft.agent.tasks.InventoryResourceCounter;
 import ai.moeru.airicraft.agent.tasks.NearbyEntityService;
-import ai.moeru.airicraft.agent.tasks.TaskResourceKind;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
@@ -22,8 +20,6 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +37,6 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 	private static final String CRAFTING_TABLE_ITEM_ID = "minecraft:crafting_table";
 
 	private final Supplier<MinecraftClient> clientSupplier;
-	private final InventoryResourceCounter resourceCounter = new InventoryResourceCounter();
 	private final InventoryItemCounter itemCounter = new InventoryItemCounter();
 
 	public CurrentInventoryService(Supplier<MinecraftClient> clientSupplier) {
@@ -60,49 +55,32 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 			stacks.add(client.player.getInventory().getStack(slot));
 		}
 
-		EnumMap<TaskResourceKind, Integer> resourceCounts = new EnumMap<>(TaskResourceKind.class);
-		for (TaskResourceKind kind : TaskResourceKind.values()) {
-			int count = resourceCounter.count(stacks, kind);
-			if (count > 0) {
-				resourceCounts.put(kind, count);
-			}
-		}
-
 		String dimension = client.world.getRegistryKey().getValue().toString();
 		String position = client.player.getBlockPos().getX() + "," + client.player.getBlockPos().getY() + "," + client.player.getBlockPos().getZ();
 		String equippedItemId = Registries.ITEM.getId(client.player.getMainHandStack().getItem()).toString();
 		int selectedHotbarSlot = client.player.getInventory().getSelectedSlot();
-		List<Map<String, Object>> durability = new ArrayList<>();
+		List<String> durability = new ArrayList<>();
 		int freeStorageSlots = 0;
 		for (int slot = 0; slot < stacks.size(); slot++) {
 			ItemStack stack = stacks.get(slot);
 			if (slot < PlayerInventory.MAIN_SIZE && stack.isEmpty()) freeStorageSlots++;
 			if (!stack.isEmpty() && stack.isDamageable()) {
-				Map<String, Object> tool = new LinkedHashMap<>();
-				tool.put("inventorySlot", slot);
-				tool.put("itemId", Registries.ITEM.getId(stack.getItem()).toString());
-				tool.put("remaining", stack.getMaxDamage() - stack.getDamage());
-				tool.put("maximum", stack.getMaxDamage());
-				durability.add(tool);
+				durability.add(PlannerStateText.durability(slot, Registries.ITEM.getId(stack.getItem()).toString(),
+					stack.getMaxDamage() - stack.getDamage(), stack.getMaxDamage()));
 			}
 		}
 		Map<String, String> equipment = new LinkedHashMap<>();
 		for (EquipmentSlot slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.OFFHAND))
 			equipment.put(slot.getName(), Registries.ITEM.getId(client.player.getEquippedStack(slot).getItem()).toString());
 		return CompletableFuture.completedFuture(
-			"Tool result for inspect_inventory: "
-				+ "dimension=" + dimension
-				+ ", position=" + position
-				+ ", equippedItemId=" + equippedItemId
-				+ ", selectedHotbarSlot=" + selectedHotbarSlot
-				+ ", hotbarItems=" + hotbarItems(client.player.getInventory())
-				+ ", inventoryCounts=" + resourceCounts
-				+ ", itemCounts=" + sortedItemCounts(itemCounter.count(client.player.getInventory()))
-				+ ", freeStorageSlots=" + freeStorageSlots
-				+ ", equipment=" + equipment
-				+ ", durability=" + durability
-				+ ", vitals=" + Map.of("health", client.player.getHealth(), "maxHealth", client.player.getMaxHealth(),
-					"food", client.player.getHungerManager().getFoodLevel(), "saturation", client.player.getHungerManager().getSaturationLevel())
+			"At " + position + " in " + PlannerStateText.item(dimension) + ".\n"
+				+ PlannerStateText.inventory(itemCounter.count(client.player.getInventory())) + " " + freeStorageSlots + " free storage slots.\n"
+				+ PlannerStateText.hotbar(hotbarItems(client.player.getInventory()), selectedHotbarSlot) + "\n"
+				+ PlannerStateText.equipment(equippedItemId, equipment) + "\n"
+				+ (durability.isEmpty() ? "" : "Durability: " + String.join("; ", durability) + ".\n")
+				+ PlannerStateText.vitals(Map.of("health", client.player.getHealth(), "maxHealth", client.player.getMaxHealth(),
+					"food", client.player.getHungerManager().getFoodLevel(), "saturation", client.player.getHungerManager().getSaturationLevel(),
+					"air", client.player.getAir(), "maxAir", client.player.getMaxAir()))
 		);
 	}
 
@@ -190,19 +168,11 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 			.collect(Collectors.joining("; ", "[", "]"));
 	}
 
-	private static List<String> hotbarItems(PlayerInventory inventory) {
-		if (inventory == null) {
-			return List.of();
-		}
-		ArrayList<String> items = new ArrayList<>();
+	private static List<PlannerStateText.HotbarSlot> hotbarItems(PlayerInventory inventory) {
+		var items = new ArrayList<PlannerStateText.HotbarSlot>();
 		for (int slot = 0; slot < 9; slot++) {
 			ItemStack stack = inventory.getStack(slot);
-			if (stack == null || stack.isEmpty()) {
-				items.add(slot + "=empty");
-			}
-			else {
-				items.add(slot + "=" + Registries.ITEM.getId(stack.getItem()) + "x" + stack.getCount());
-			}
+			items.add(new PlannerStateText.HotbarSlot(slot, Registries.ITEM.getId(stack.getItem()).toString(), stack.getCount()));
 		}
 		return List.copyOf(items);
 	}
@@ -307,17 +277,4 @@ public final class CurrentInventoryService implements CurrentInventoryTool {
 		MISSING
 	}
 
-	private static Map<String, Integer> sortedItemCounts(Map<String, Integer> counts) {
-		if (counts == null || counts.isEmpty()) {
-			return Map.of();
-		}
-		return counts.entrySet().stream()
-			.sorted(Map.Entry.comparingByKey(Comparator.naturalOrder()))
-			.collect(Collectors.toMap(
-				Map.Entry::getKey,
-				Map.Entry::getValue,
-				(left, right) -> left,
-				LinkedHashMap::new
-			));
-	}
 }

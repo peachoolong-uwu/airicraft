@@ -687,7 +687,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				if (!stack.isEmpty()) inventory.merge(net.minecraft.registry.Registries.ITEM.getId(stack.getItem()).toString(), stack.getCount(), Integer::sum);
 			}
 			facts.put("inventory", inventory);
-			facts.put("vitals", Map.of("health", client.player.getHealth(), "food", client.player.getHungerManager().getFoodLevel(), "air", client.player.getAir()));
+			facts.put("vitals", Map.of("health", client.player.getHealth(), "maxHealth", client.player.getMaxHealth(),
+				"food", client.player.getHungerManager().getFoodLevel(), "air", client.player.getAir(), "maxAir", client.player.getMaxAir()));
 		}
 		String actuator = survivalReflexRuntime.snapshot().state() == SurvivalReflexState.ACTIVE ? "reflex"
 			: survivalReflexRuntime.snapshot().holdsNormalTasks() ? "safety_hold"
@@ -4983,11 +4984,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (!hasSnapshot) {
 			return "";
 		}
-		return " inventorySnapshot={itemCounts=" + itemCounts
-			+ ", selectedHotbarSlot=" + evidence.selectedHotbarSlot()
-			+ ", equippedItemId=" + (evidence.equippedItemId() == null ? "" : evidence.equippedItemId())
-			+ ", hotbarItems=" + hotbarItems
-			+ "}";
+		return " Inventory update: " + ai.moeru.airicraft.agent.llm.PlannerStateText.inventory(itemCounts) + " "
+			+ ai.moeru.airicraft.agent.llm.PlannerStateText.hotbar(ai.moeru.airicraft.agent.llm.PlannerStateText.hotbarEvidence(hotbarItems), evidence.selectedHotbarSlot()) + " "
+			+ ai.moeru.airicraft.agent.llm.PlannerStateText.mainHand(evidence.equippedItemId());
 	}
 
 	private static boolean inventoryMutatingStepKind(LedgerStepKind kind) {

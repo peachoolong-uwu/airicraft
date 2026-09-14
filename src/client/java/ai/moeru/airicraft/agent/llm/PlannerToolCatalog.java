@@ -95,8 +95,9 @@ public final class PlannerToolCatalog {
 				prop("z", integer("Optional target block z coordinate. Provide x, y, and z together.")),
 				prop("targetPlayer", optionalString("Optional loaded player name to look at before capture."))
 			), List.of()), PlannerToolCatalog::validateTakeALookArguments),
-		builtInTool(INSPECT_WORLD, true, tool(INSPECT_WORLD, "Inspect exact loaded world block state with fixed query modes.", properties(
+		builtInTool(INSPECT_WORLD, true, tool(INSPECT_WORLD, "Inspect loaded world blocks. Summaries group identical patches; unknown cells stay unknown. Use detail=blocks for individual records.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
+				prop("detail", enumString("inspect_area/placement sites: summary (default) or individual blocks.", List.of("summary", "blocks"))),
 				prop("feetY", Map.of("type", "number", "description", "check_position only: exact feet height for slabs/partial blocks, within one block of y. Defaults to y. check_interaction treats query center as target and returns local approach positions, reach and obstruction; neither mode guarantees routes.")),
 				prop("mode", enumString("World query mode.", List.of("inspect_area", "find_blocks", "find_placement_sites", "check_position", "check_interaction"))),
 				prop("scope", enumString("Query scope.", List.of("self", "center", "box"))),
@@ -883,6 +884,7 @@ public final class PlannerToolCatalog {
 	private static void validateInspectWorldArguments(JsonObject arguments) {
 		String mode = requireString(arguments, "mode");
 		String scope = requireString(arguments, "scope");
+		if (arguments.has("detail") && !List.of("summary", "blocks").contains(requireString(arguments, "detail"))) throw new JsonParseException("Unsupported detail");
 		if (!List.of("inspect_area", "find_blocks", "find_placement_sites", "check_position", "check_interaction").contains(mode)) {
 			throw new JsonParseException("Unsupported inspect_world mode: " + mode);
 		}

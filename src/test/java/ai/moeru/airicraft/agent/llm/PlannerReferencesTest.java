@@ -57,4 +57,14 @@ class PlannerReferencesTest {
 		assertEquals("literal " + ref, resolved.get("narration").getAsString());
 		assertEquals(HOLD, resolved.getAsJsonArray("uuids").get(0).getAsString());
 	}
+	@Test void sentencePunctuationDoesNotBecomePartOfAnIdentity() {
+		var references = new PlannerReferences();
+		String ref = references.present(WORK);
+		assertEquals("Work " + ref + ".", references.present("Work " + WORK + "."));
+		assertEquals("Work " + ref + ": next", references.present("Work " + WORK + ": next"));
+		String child = WORK + ":child-2";
+		assertEquals("Use " + references.present(child) + ".", references.present("Use " + child + "."));
+		assertEquals(WORK, references.resolveArguments(JsonParser.parseString("{\"workId\":\"" + ref + "\"}").getAsJsonObject()).get("workId").getAsString());
+	}
+
 }
