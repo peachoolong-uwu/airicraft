@@ -1,6 +1,6 @@
 # System 2 evidence, work, and decisions
 
-Status: accepted; implemented, automated validation passed, live rollout paused on provider HTTP403 (2026-09-14).
+Status: accepted; implemented, automated and assisted live contract validation completed (2026-09-14). See docs/system2-refactor-validation.md for the setup death, controlled-cheat conditions, and remaining planner/navigation limitations.
 
 ## Context
 
@@ -70,7 +70,7 @@ Work history retains128 terminal entries plus unresolved work; each decision inc
   forced-displacement reporting; failed predicates; bounded support/clearance/reach/LOS queries.
 - [x] Tool surface/prompts: unified lifecycle; free choice of action detail; fixed typed schemas;
   catalog-only discovery; preserve actual capabilities, evidence checks and user constraints.
-- [ ] Full build after each integrated subsystem; focused regressions; actual configured planner
+- [x] Full build after each integrated subsystem; focused regressions; actual configured planner
   resource gathering, shelter repair, chest/furnace interaction and reflex-interruption trials.
   Measure redundant reads, outcome latency, repeated failures and time to productive action.
 
