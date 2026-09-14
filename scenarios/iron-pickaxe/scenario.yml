@@ -14,7 +14,7 @@ prompt: >-
   after a task update or inventory check confirms the iron pickaxe is in
   your inventory.
 budget:
-  maxPlannerTurns: 40
+  maxPlannerTurns: 80
   maxElapsedTicks: 72000
   maxElapsedMillis: 0
   heartbeatIntervalTicks: 80
