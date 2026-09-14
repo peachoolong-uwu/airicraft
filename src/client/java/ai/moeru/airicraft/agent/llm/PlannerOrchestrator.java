@@ -217,7 +217,8 @@ public final class PlannerOrchestrator {
 
 	public PlannerConversationDebugSnapshot projectedConversationDebugSnapshot() {
 		var snapshot = conversationProjector.projectedSnapshot(turnJournal);
-		return plannerExecutor.streamPreview(sessionCoordinator.activeGeneration()).map(snapshot::withAppended).orElse(snapshot);
+		return plannerExecutor.streamPreview(sessionCoordinator.activeGeneration()).map(snapshot::withAppended).orElse(snapshot)
+			.presented(toolRegistry.references());
 	}
 
 	public PlannerConversationDebugSnapshot canonicalConversationDebugSnapshot() {

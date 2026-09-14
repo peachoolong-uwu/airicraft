@@ -54,6 +54,14 @@ public record PlannerConversationDebugSnapshot(
 		return new PlannerConversationDebugSnapshot(generation, phase, attempt, updated);
 	}
 
+	/** Use the model's shared reference table without changing the canonical journal. */
+	public PlannerConversationDebugSnapshot presented(PlannerReferences references) {
+		return new PlannerConversationDebugSnapshot(generation, phase, attempt, messages.stream().map(message ->
+			new PlannerConversationDebugMessage(message.role(), message.kind(),
+				references.present(PlannerInputText.message(message.role(), message.text())),
+				message.generation(), message.phase(), message.attempt(), message.hasImageAttachment())).toList());
+	}
+
 	private static String debugText(LlmChatMessage message) {
 		if (message == null) {
 			return "";

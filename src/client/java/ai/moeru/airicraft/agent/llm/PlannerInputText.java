@@ -13,8 +13,15 @@ public final class PlannerInputText {
 	/** The canonical history stays intact for cursors, replay and recorder dispatch metadata. */
 	public static String message(String role, String content) {
 		if (role.equals("tool")) return toolResult(content);
+		if (!role.equals("user")) return content;
+		String[] paragraphs = content.split("\n\n", -1);
+		for (int i = 0; i < paragraphs.length; i++) paragraphs[i] = decisionParagraph(paragraphs[i]);
+		return String.join("\n\n", paragraphs);
+	}
+
+	private static String decisionParagraph(String content) {
 		String prefix = "DECISION CONTEXT: ";
-		if (!role.equals("user") || !content.startsWith(prefix + "{")) return content;
+		if (!content.startsWith(prefix + "{")) return content;
 		try {
 			var object = JsonParser.parseString(content.substring(prefix.length())).getAsJsonObject();
 			return decision(object);

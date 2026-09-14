@@ -72,4 +72,34 @@ class PlannerInputTextTest {
 		assertEquals(1, prose.split("approaching target", -1).length - 1);
 	}
 
+	@Test void goalContinuationWrapperDoesNotHideItsDecisionContext() {
+		String context = "DECISION CONTEXT: {\"worldSessionId\":\"world\",\"tick\":9,\"serverTick\":7,\"decisionOwner\":\"controller\",\"actuatorOwner\":\"idle\",\"current\":{\"inventory\":{\"minecraft:dirt\":4}},\"afterEventSequence\":2,\"throughEventSequence\":3,\"events\":[]}";
+		String prefix = "Current planner goal (stored intent): preserve this exact constraint.\n\nGOAL CONTINUATION: continue.";
+		String wrapped = prefix + "\n\n" + context;
+		String prose = PlannerInputText.message("user", wrapped);
+		assertTrue(prose.startsWith(prefix + "\n\nDECISION CONTEXT:\n"));
+		assertTrue(prose.contains("Carrying 4 dirt."));
+		assertTrue(prose.contains("Evidence after 2 through 3."));
+		assertFalse(prose.contains("DECISION CONTEXT: {"));
+		assertEquals(prose, PlannerInputText.message("user", prose));
+		assertEquals(wrapped, PlannerInputText.message("assistant", wrapped));
+		assertEquals("Other text\n\nDECISION CONTEXT: {incomplete", PlannerInputText.message("user", "Other text\n\nDECISION CONTEXT: {incomplete"));
+	}
+
+	@Test void debugPanelSharesModelReferencesAndLeavesCanonicalMessagesIntact() {
+		String id = "JOB:job-11111111-2222-3333-4444-555555555555";
+		String nativeText = "Tool result for inspect_work: {\"workId\":\"" + id + "\",\"state\":\"RUNNING\"}";
+		var message = new PlannerConversationDebugMessage("tool", PlannerConversationDebugKind.TOOL_RESULT, nativeText, 3, "TOOL_EXECUTION", 1, false);
+		var canonical = new PlannerConversationDebugSnapshot(3, "TOOL_EXECUTION", 1, java.util.List.of(message));
+		var references = new PlannerReferences();
+		String modelRef = references.present(id);
+		var display = canonical.presented(references);
+		assertTrue(display.messages().getFirst().text().contains("Work " + modelRef));
+		assertFalse(display.messages().getFirst().text().contains(id));
+		assertEquals(display, canonical.presented(references));
+		assertEquals(nativeText, canonical.messages().getFirst().text());
+		assertEquals(3, display.generation());
+		assertEquals(message.kind(), display.messages().getFirst().kind());
+	}
+
 }
