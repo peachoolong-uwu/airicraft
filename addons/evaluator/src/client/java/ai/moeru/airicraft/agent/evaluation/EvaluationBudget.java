@@ -1,5 +1,6 @@
 package ai.moeru.airicraft.agent.evaluation;
 
+/** heartbeatIntervalTicks is retained only to read frozen legacy manifests; it is never scheduled. */
 public record EvaluationBudget(
 	int maxPlannerTurns,
 	long maxElapsedTicks,

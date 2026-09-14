@@ -38,6 +38,8 @@ Planner-facing block modification is guarded by the world-read ledger. `place_bl
 
 Evaluation scenarios in `scenarios/*/scenario.yml` can use deterministic checks. `inventory_contains` verifies an item count, `block_state` verifies one exact block position, and `block_count` verifies at least `count` matching blocks in either `scope: self` with `horizontalRadius`/`verticalRadius` or `scope: box` with `x1/y1/z1/x2/y2/z2`.
 
+Planner-driven evaluations seed the scenario prompt as one world-persisted native planner goal. The planner owns continuation, work waiting, and controller/thinker handoffs; the evaluator never sends heartbeat prompts. Legacy `heartbeatIntervalTicks` is ignored, including in frozen manifests. `maxPlannerTurns` counts gameplay model requests across both roles (including tool follow-ups, excluding transport retries and discarded requests), measured from scenario admission. Time budgets still apply while waiting or blocked. A terminal goal claim cannot substitute for deterministic physical checks; subjective outcomes need review. Budget exhaustion stops the run without declaring the gameplay objective completed. External-driver runs remain manually driven.
+
 Run scenarios through the batch harness. Parallel execution is opt-in with `--jobs`; the default remains one client:
 
 ```shell

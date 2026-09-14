@@ -1448,6 +1448,7 @@ class PlannerOrchestratorTest {
 		assertEquals("retried", result.response().replyText());
 		assertEquals(1L, result.generation());
 		assertEquals(2, result.attempt());
+		assertEquals(1, orchestrator.gameplayDecisionCount(), "Transport retry is not another gameplay decision");
 		orchestrator.onAcceptedReplyRecorded();
 		orchestrator.submit(requestAt(20, 2000, "Alice", "Use another approach"));
 		clock.advanceMillis(10_000);
@@ -2317,6 +2318,7 @@ class PlannerOrchestratorTest {
 
 		awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(1));
 		LlmConversation secondFollowUp = backend.conversation(2);
+		assertEquals(3, orchestrator.gameplayDecisionCount(), "Tool follow-ups consume gameplay decisions");
 		assertTrue(secondFollowUp.messages().stream()
 			.anyMatch(message -> "assistant".equals(message.role())
 				&& message.hasToolCalls()

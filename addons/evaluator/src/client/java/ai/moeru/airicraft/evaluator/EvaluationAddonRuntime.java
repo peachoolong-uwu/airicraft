@@ -377,6 +377,7 @@ public final class EvaluationAddonRuntime {
 		if (settings.includeWorldSnapshot()) {
 			evidence.put("worldEvidence", runtime.currentWorldEvidence());
 		}
+		evidence.put("plannerGoal", runtime.plannerGoalSnapshot().orElse(null));
 		evidence.put("lastChatText", runtime.lastChatText());
 		Map<String, Object> response = new LinkedHashMap<>();
 		response.put("available", true);
@@ -396,7 +397,7 @@ public final class EvaluationAddonRuntime {
 		payload.put("checkCount", value.checks().size());
 		payload.put("maxPlannerTurns", value.budget().maxPlannerTurns());
 		payload.put("maxElapsedTicks", value.budget().maxElapsedTicks());
-		payload.put("heartbeatIntervalTicks", value.budget().heartbeatIntervalTicks());
+		payload.put("controlMode", "native_planner_goal");
 		return payload;
 	}
 
@@ -451,10 +452,11 @@ public final class EvaluationAddonRuntime {
 		}
 
 		@Override
-		public Optional<String> declaredFailure() {
-			return runtime.codexDriverActive() || !runtime.isDegraded()
-				? Optional.empty()
-				: Optional.of("Planner entered degraded mode");
+		public long gameplayDecisionCount() { return runtime.plannerGameplayDecisionCount(); }
+
+		@Override
+		public Optional<ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Goal> plannerGoal() {
+			return runtime.plannerGoalSnapshot();
 		}
 
 		@Override
@@ -508,13 +510,8 @@ public final class EvaluationAddonRuntime {
 		}
 
 		@Override
-		public void emitInitialPrompt(String prompt) {
-			runtime.emitEvaluationChat(prompt);
-		}
-
-		@Override
-		public void emitHeartbeat(String message) {
-			runtime.emitEvaluationSystem(message);
+		public void startPlannerGoal(String objective) throws java.io.IOException {
+			runtime.startEvaluationGoal(objective);
 		}
 
 		private static BlockPos playerBlockPos() {

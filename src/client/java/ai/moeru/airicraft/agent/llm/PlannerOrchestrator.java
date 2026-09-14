@@ -31,6 +31,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class PlannerOrchestrator {
+	/** Lifetime gameplay requests, including tool follow-ups but excluding transport retries. */
+	public long gameplayDecisionCount() { return sessionCoordinator.gameplayDecisionCount(); }
 	private static final Gson GSON = new Gson();
 	private static final Pattern FAILED_TOOL_ARGUMENTS_PATTERN = Pattern.compile("Invalid ([a-z0-9_]+) tool arguments:");
 	private static final String VISUAL_TOOL_NAME = "take_a_look";

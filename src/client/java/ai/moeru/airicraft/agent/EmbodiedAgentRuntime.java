@@ -1380,6 +1380,16 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		behaviorTreeRuntime.stop(MinecraftClient.getInstance());
 	}
 
+	public void startEvaluationGoal(String objective) throws java.io.IOException {
+		dialogueRuntime.startEvaluationGoal(objective);
+	}
+
+	public Optional<ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Goal> plannerGoalSnapshot() {
+		return dialogueRuntime.plannerGoalSnapshot();
+	}
+
+	public long plannerGameplayDecisionCount() { return dialogueRuntime.gameplayDecisionCount(); }
+
 	public void emitEvaluationChat(String message) {
 		emitEvaluationTrigger(PlannerTriggerType.CHAT, "evaluation", message);
 	}

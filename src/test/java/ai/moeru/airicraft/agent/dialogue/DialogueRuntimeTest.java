@@ -100,14 +100,17 @@ class DialogueRuntimeTest {
 	@Test
 	void activePlannerGoalContinuesAfterPlainReplyAndStopsWhenFinished(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
 		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
-		var active = goal.set("Craft torches then scout a cave");
+
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, goal);
+		runtime.startEvaluationGoal("Craft torches then scout a cave");
+		var active = goal.snapshot();
+		assertTrue(java.nio.file.Files.exists(world.resolve("airicraft/planner-goal.json")));
 		SemanticEventBuffer events = new SemanticEventBuffer(32);
 		var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST,
 			true, true, "minecraft:overworld", true, 25565, 10);
 		backend.injectMockResponse(new PlannerResponse("I will inspect the cave next.", new PlannerIntent("none", null, null)));
-		runtime.onPlayerChat("Alice", "Craft torches then scout a cave", 10L, session, "Alice", Optional.empty(), events);
+		runtime.continuePlannerGoal(10L, true, session, "Alice", Optional.empty(), null, null, events);
 		awaitResponse(runtime, events, Duration.ofSeconds(1));
 		assertEquals(1, backend.conversationCount());
 		// An executor still owns the action: no self-polling model loop.
@@ -118,12 +121,43 @@ class DialogueRuntimeTest {
 		runtime.continuePlannerGoal(121, true, session, "Alice", Optional.empty(), null, null, events);
 		awaitResponse(runtime, events, Duration.ofSeconds(1));
 		assertEquals(2, backend.conversationCount());
+		assertEquals(2, runtime.gameplayDecisionCount());
 		assertTrue(backend.conversation(1).messages().stream().anyMatch(m -> m.content() != null && m.content().contains("GOAL CONTINUATION")));
 		goal.finish(active.id(), ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Status.GIVEN_UP, "Cave scouting needs unavailable evidence");
 		assertFalse(runtime.continuePlannerGoal(200, true, session, "Alice", Optional.empty(), null, null, events));
 		assertFalse(runtime.plannerDebugSnapshot().inFlight());
 		assertEquals(2, backend.conversationCount());
+		assertEquals(2, runtime.gameplayDecisionCount());
 		runtime.shutdown();
+	}
+
+	@Test
+	void evaluationGoalWaitsForWorkWithoutRepeatedRequests(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
+		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
+		var backend = new BlockingLlmBackend();
+		var runtime = newDialogueRuntime(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, goal);
+		try {
+			runtime.startEvaluationGoal("Obtain iron pickaxe");
+			var events = new SemanticEventBuffer(32);
+			var session = new SessionSnapshot(ai.moeru.airicraft.agent.session.SessionMode.SINGLEPLAYER_LAN_HOST,
+				true, true, "minecraft:overworld", true, 25565, 1);
+			var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(new ai.moeru.airicraft.agent.work.WorkHandle("JOB:iron"), "",
+				ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "Mine iron", "BREAK", true, 1, java.util.Map.of());
+			runtime.waitForWork(work);
+			for (int tick = 1; tick < 500; tick++) {
+				runtime.observeWork(List.of(work));
+				runtime.continuePlannerGoal(tick, true, session, null, Optional.empty(), null, null, events);
+			}
+			assertEquals(0, backend.conversationCount());
+			assertEquals(0, runtime.gameplayDecisionCount());
+			runtime.observeWork(List.of(new ai.moeru.airicraft.agent.work.WorkSnapshot(work.handle(), "",
+				ai.moeru.airicraft.agent.work.WorkSnapshot.State.SUCCEEDED, "Mine iron", "DONE", true, 500, java.util.Map.of())));
+			backend.injectMockResponse(new PlannerResponse("Time to smelt.", new PlannerIntent("none", null, null)));
+			runtime.continuePlannerGoal(501, true, session, null, Optional.empty(), null, null, events);
+			awaitResponse(runtime, events, Duration.ofSeconds(1));
+			assertEquals(1, backend.conversationCount());
+			assertTrue(goal.active());
+		} finally { runtime.shutdown(); }
 	}
 
 	@Test

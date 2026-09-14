@@ -55,6 +55,8 @@ dependencies {
 	testImplementation "org.junit.jupiter:junit-jupiter"
 	testImplementation rootProject.sourceSets.main.output
 	testImplementation rootProject.sourceSets.client.output
+	// Runtime fixtures instantiate the root client, including its Baritone tool schemas.
+	testRuntimeOnly files(rootProject.sourceSets.client.runtimeClasspath)
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 

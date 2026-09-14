@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.evaluation;
 
 import org.junit.jupiter.api.Test;
+import ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -13,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScenarioEvaluationRunnerTest {
 	@Test
-	void emitsInitialPromptAndHeartbeatUntilCheckPasses() {
+	void seedsGoalOnceAndNeverNudgesWaitingPlanner() {
 		ScenarioEvaluationRunner runner = new ScenarioEvaluationRunner();
 		FakeContext context = new FakeContext();
 		EvaluationScenario scenario = scenario(List.of(new EvaluationCheck("inventory_contains", Map.of(
@@ -23,12 +24,13 @@ class ScenarioEvaluationRunnerTest {
 
 		runner.start(scenario, 0, 0);
 		runner.onTick(context);
-		assertEquals(List.of("initial:@agent smelt iron"), context.triggers);
+		assertEquals(List.of("goal:@agent smelt iron"), context.triggers);
 		assertEquals(EvaluationStatus.RUNNING, runner.report(context.tick).status());
 
 		context.tick = 5;
 		runner.onTick(context);
-		assertEquals("heartbeat:EVALUATION HEARTBEAT: Continue working on scenario smelting-basic. Stop only when the expected outcome is reached, the task is impossible, or you need to report a blocking failure.", context.triggers.get(1));
+		assertEquals(List.of("goal:@agent smelt iron"), context.triggers);
+		assertEquals(0, runner.report(context.tick).plannerTurns());
 
 		context.inventoryCount = 1;
 		context.tick = 6;
@@ -59,7 +61,7 @@ class ScenarioEvaluationRunnerTest {
 		runner.onTick(context);
 
 		assertEquals(EvaluationStatus.RUNNING, runner.report(context.tick).status());
-		assertEquals(List.of("initial:@agent smelt iron"), context.triggers);
+		assertEquals(List.of("goal:@agent smelt iron"), context.triggers);
 	}
 
 	@Test
@@ -165,8 +167,14 @@ class ScenarioEvaluationRunnerTest {
 			"count", 1
 		))), new EvaluationBudget(1, 200, 0, 5));
 
+		context.decisions = 50; // Previous scenarios do not consume this budget.
 		runner.start(scenario, 0, 0);
 		runner.onTick(context);
+		context.decisions = 51;
+		context.plannerInFlight = true;
+		runner.onTick(context);
+		assertEquals(EvaluationStatus.RUNNING, runner.report(0).status());
+		context.plannerInFlight = false;
 		runner.onTick(context);
 
 		EvaluationReport report = runner.report(context.tick);
@@ -242,6 +250,8 @@ class ScenarioEvaluationRunnerTest {
 
 		runner.start(scenario, 0, 0);
 		runner.onTick(context);
+		context.decisions = 1;
+		runner.onTick(context);
 
 		EvaluationReport report = runner.report(context.tick);
 		assertEquals(EvaluationStatus.FAILED, report.status());
@@ -283,6 +293,8 @@ class ScenarioEvaluationRunnerTest {
 
 		runner.start(scenario, 0, 0);
 		runner.onTick(context);
+		context.decisions = 1;
+		runner.onTick(context);
 		runner.onTick(context);
 
 		EvaluationReport report = runner.report(context.tick);
@@ -307,6 +319,35 @@ class ScenarioEvaluationRunnerTest {
 		);
 	}
 
+	@Test
+	void goalClaimsNeverSubstituteForPhysicalChecks() {
+		for (var status : List.of(PlannerGoalStore.Status.SUCCEEDED, PlannerGoalStore.Status.GIVEN_UP)) {
+			var runner = new ScenarioEvaluationRunner();
+			var context = new FakeContext();
+			runner.start(scenario(List.of(new EvaluationCheck("inventory_contains", Map.of("itemId", "minecraft:iron_ingot", "count", 1))), new EvaluationBudget(4, 200, 0, 5)), 0, 0);
+			runner.onTick(context);
+			context.goal = Optional.of(new PlannerGoalStore.Goal("goal-1", "Smelt iron", status, "Finished"));
+			runner.onTick(context);
+			assertEquals(EvaluationStatus.FAILED, runner.report(0).status());
+		}
+	}
+
+	@Test
+	void blockedGoalWaitsWithoutNudgesUntilElapsedBudget() {
+		var runner = new ScenarioEvaluationRunner();
+		var context = new FakeContext();
+		runner.start(scenario(List.of(), new EvaluationBudget(4, 200, 0, 5)), 0, 0);
+		runner.onTick(context);
+		context.goal = Optional.of(new PlannerGoalStore.Goal("goal-1", "Smelt iron", PlannerGoalStore.Status.BLOCKED, "", "", "",
+			new PlannerGoalStore.Blocker("No fuel", "inventory empty", "Fuel arrives", List.of("inventory.changed")), Map.of()));
+		for (int tick = 1; tick < 200; tick++) { context.tick = tick; runner.onTick(context); }
+		assertEquals(EvaluationStatus.RUNNING, runner.report(199).status());
+		assertEquals(1, context.triggers.size());
+		context.tick = 200; runner.onTick(context);
+		assertEquals(EvaluationStatus.NEEDS_REVIEW, runner.report(200).status());
+		assertEquals(PlannerGoalStore.Status.BLOCKED, context.goal.get().status());
+	}
+
 	private static final class FakeContext implements ScenarioEvaluationRunner.Context {
 		private long tick;
 		private int inventoryCount;
@@ -319,7 +360,8 @@ class ScenarioEvaluationRunnerTest {
 		private int playerBlockZ;
 		private final Map<String, String> blocks = new HashMap<>();
 		private final Map<String, Map<String, String>> blockProperties = new HashMap<>();
-		private Optional<String> declaredFailure = Optional.empty();
+		private long decisions;
+		private Optional<PlannerGoalStore.Goal> goal = Optional.empty();
 		private String taskExecutionState = "IDLE";
 		private final ArrayList<String> triggers = new ArrayList<>();
 
@@ -364,9 +406,10 @@ class ScenarioEvaluationRunnerTest {
 		}
 
 		@Override
-		public Optional<String> declaredFailure() {
-			return declaredFailure;
-		}
+		public long gameplayDecisionCount() { return decisions; }
+
+		@Override
+		public Optional<PlannerGoalStore.Goal> plannerGoal() { return goal; }
 
 		@Override
 		public int inventoryCount(String itemId) {
@@ -419,13 +462,9 @@ class ScenarioEvaluationRunnerTest {
 		}
 
 		@Override
-		public void emitInitialPrompt(String prompt) {
-			triggers.add("initial:" + prompt);
+		public void startPlannerGoal(String prompt) {
+			triggers.add("goal:" + prompt);
 		}
 
-		@Override
-		public void emitHeartbeat(String message) {
-			triggers.add("heartbeat:" + message);
-		}
 	}
 }

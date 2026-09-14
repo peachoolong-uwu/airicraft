@@ -92,6 +92,20 @@ public final class DialogueRuntime {
 
 	public String decisionOwner() { return delegation != null && delegation.active() ? "thinking" : "controller"; }
 
+	/** Seed scenario intent once; ordinary goal scheduling owns every subsequent decision. */
+	public void startEvaluationGoal(String objective) throws java.io.IOException {
+		plannerGoal.set(objective);
+		nextGoalContinuationTick = 0;
+	}
+
+	public java.util.Optional<ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Goal> plannerGoalSnapshot() {
+		return java.util.Optional.ofNullable(plannerGoal == null ? null : plannerGoal.snapshot());
+	}
+
+	public long gameplayDecisionCount() {
+		return planners().stream().mapToLong(PlannerOrchestrator::gameplayDecisionCount).sum();
+	}
+
 	public Object currentPlannerObjective() {
 		return plannerGoal == null || plannerGoal.snapshot() == null ? Map.of() : plannerGoal.snapshot();
 	}

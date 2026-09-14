@@ -2797,7 +2797,7 @@ public final class AiricraftCliMain {
 				scenarios,
 				verbose,
 				List.of("id", "name", "frozen", "promptConfigured", "checkCount"),
-				List.of("minecraftVersion", "airicraftVersion", "worldArchive", "maxPlannerTurns", "maxElapsedTicks", "heartbeatIntervalTicks")
+				List.of("minecraftVersion", "airicraftVersion", "worldArchive", "maxPlannerTurns", "maxElapsedTicks", "controlMode")
 			));
 			if (verbose && payload.containsKey("report")) {
 				view.put("report", payload.get("report"));

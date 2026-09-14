@@ -32,6 +32,9 @@ public final class PlannerSessionCoordinator {
 
 	public void shareGenerationSequence(java.util.concurrent.atomic.AtomicLong sequence) { sharedGenerations = sequence; }
 	private long allocateGeneration() { return sharedGenerations == null ? nextGeneration++ : sharedGenerations.getAndIncrement(); }
+	private long gameplayDecisionCount;
+	public long gameplayDecisionCount() { return gameplayDecisionCount; }
+
 	private long supersededCount;
 	private long providerRetryNotBeforeMillis;
 
@@ -165,6 +168,7 @@ public final class PlannerSessionCoordinator {
 			) {
 				activeSession.clearRetry();
 				activeSession.beginAttempt();
+				if (activeSession.attemptCount() == 1) gameplayDecisionCount++;
 				submissionObserver.onSubmitted(
 					activeSession.generation(),
 					activeSession.attemptCount(),
@@ -291,6 +295,7 @@ public final class PlannerSessionCoordinator {
 			return;
 		}
 		session.beginAttempt();
+		gameplayDecisionCount++;
 		submissionObserver.onSubmitted(
 			session.generation(),
 			session.attemptCount(),

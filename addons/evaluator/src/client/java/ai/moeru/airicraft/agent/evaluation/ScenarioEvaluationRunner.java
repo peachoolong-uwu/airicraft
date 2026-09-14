@@ -1,5 +1,6 @@
 package ai.moeru.airicraft.agent.evaluation;
 
+import ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,7 +15,7 @@ public final class ScenarioEvaluationRunner {
 	private long startTick;
 	private long startMillis;
 	private long finishTick = Long.MIN_VALUE;
-	private long lastTriggerTick;
+	private long startDecisionCount;
 	private int plannerTurns;
 	private List<EvaluationCheckResult> latestCheckResults = List.of();
 	private boolean evidenceReviewRequired;
@@ -26,7 +27,7 @@ public final class ScenarioEvaluationRunner {
 		this.startTick = tick;
 		this.startMillis = nowMs;
 		this.finishTick = Long.MIN_VALUE;
-		this.lastTriggerTick = Long.MIN_VALUE;
+		this.startDecisionCount = 0;
 		this.plannerTurns = 0;
 		this.latestCheckResults = List.of();
 		this.evidenceReviewRequired = !scenario.hasDeterministicChecks();
@@ -48,11 +49,6 @@ public final class ScenarioEvaluationRunner {
 			finish(EvaluationStatus.FAILED, "Planner LLM is not configured", true, context.tick());
 			return;
 		}
-		Optional<String> declaredFailure = context.declaredFailure();
-		if (declaredFailure.isPresent()) {
-			finish(EvaluationStatus.FAILED, declaredFailure.get(), true, context.tick());
-			return;
-		}
 
 		if (status == EvaluationStatus.PENDING_WORLD) {
 			status = EvaluationStatus.RUNNING;
@@ -60,17 +56,33 @@ public final class ScenarioEvaluationRunner {
 				message = "Evaluation running under external driver";
 			}
 			else {
-				message = "Evaluation running";
-				context.emitInitialPrompt(scenario.prompt());
-				plannerTurns++;
+				message = "Evaluation running under native planner goal";
+				startDecisionCount = context.gameplayDecisionCount();
+				try {
+					context.startPlannerGoal(scenario.prompt());
+				} catch (java.io.IOException | RuntimeException exception) {
+					finish(EvaluationStatus.FAILED, "Could not start planner goal: " + exception.getMessage(), true, context.tick());
+					return;
+				}
 			}
-			lastTriggerTick = context.tick();
 		}
 
+		if (!context.externalDriverActive()) plannerTurns = Math.toIntExact(context.gameplayDecisionCount() - startDecisionCount);
 		latestCheckResults = evaluateChecks(context);
 		if (checksPassed(latestCheckResults) && scenario.hasDeterministicChecks()) {
 			finish(EvaluationStatus.PASSED, "Expected outcome reached", false, context.tick());
 			return;
+		}
+
+		if (!context.externalDriverActive()) {
+			var goal = context.plannerGoal();
+			if (goal.isPresent() && (goal.get().status() == PlannerGoalStore.Status.SUCCEEDED
+				|| goal.get().status() == PlannerGoalStore.Status.GIVEN_UP)) {
+				finish(scenario.hasDeterministicChecks() ? EvaluationStatus.FAILED : EvaluationStatus.NEEDS_REVIEW,
+					"Planner goal " + goal.get().status() + ": " + goal.get().outcome()
+						+ "; expected outcome not verified", true, context.tick());
+				return;
+			}
 		}
 
 		if (budgetExhausted(context)) {
@@ -88,13 +100,6 @@ public final class ScenarioEvaluationRunner {
 			return;
 		}
 
-		if (!context.externalDriverActive()
-			&& !context.plannerInFlight()
-			&& context.tick() - lastTriggerTick >= scenario.budget().heartbeatIntervalTicks()) {
-			context.emitHeartbeat(heartbeatMessage());
-			plannerTurns++;
-			lastTriggerTick = context.tick();
-		}
 	}
 
 	public EvaluationReport report(long currentTick) {
@@ -120,7 +125,7 @@ public final class ScenarioEvaluationRunner {
 		message = null;
 		startTick = 0L;
 		startMillis = 0L;
-		lastTriggerTick = Long.MIN_VALUE;
+		startDecisionCount = 0;
 		finishTick = Long.MIN_VALUE;
 		plannerTurns = 0;
 		latestCheckResults = List.of();
@@ -235,7 +240,7 @@ public final class ScenarioEvaluationRunner {
 	}
 
 	private boolean budgetExhausted(Context context) {
-		if (plannerTurns >= scenario.budget().maxPlannerTurns()) {
+		if (plannerTurns >= scenario.budget().maxPlannerTurns() && !context.plannerInFlight()) {
 			return true;
 		}
 		if (context.tick() - startTick >= scenario.budget().maxElapsedTicks()) {
@@ -258,11 +263,6 @@ public final class ScenarioEvaluationRunner {
 		message = nextMessage;
 		evidenceReviewRequired = reviewRequired;
 		finishTick = tick;
-	}
-
-	private String heartbeatMessage() {
-		return "EVALUATION HEARTBEAT: Continue working on scenario " + scenario.id()
-			+ ". Stop only when the expected outcome is reached, the task is impossible, or you need to report a blocking failure.";
 	}
 
 	private static BlockCountQuery blockCountQuery(Context context, EvaluationCheck check) {
@@ -359,11 +359,9 @@ public final class ScenarioEvaluationRunner {
 		if (scenario != null) {
 			diagnostics.put("maxPlannerTurns", scenario.budget().maxPlannerTurns());
 			diagnostics.put("maxElapsedTicks", scenario.budget().maxElapsedTicks());
-			diagnostics.put("heartbeatIntervalTicks", scenario.budget().heartbeatIntervalTicks());
+			diagnostics.put("controlMode", "native_planner_goal");
+			diagnostics.put("plannerTurnUnit", "gameplay_model_requests_excluding_transport_retries");
 			diagnostics.put("deterministicChecks", scenario.hasDeterministicChecks());
-		}
-		if (lastTriggerTick != Long.MIN_VALUE) {
-			diagnostics.put("lastTriggerTick", lastTriggerTick);
 		}
 		return diagnostics;
 	}
@@ -385,7 +383,9 @@ public final class ScenarioEvaluationRunner {
 
 		boolean plannerInFlight();
 
-		Optional<String> declaredFailure();
+		long gameplayDecisionCount();
+
+		Optional<PlannerGoalStore.Goal> plannerGoal();
 
 		int inventoryCount(String itemId);
 
@@ -407,9 +407,7 @@ public final class ScenarioEvaluationRunner {
 
 		String taskExecutionState();
 
-		void emitInitialPrompt(String prompt);
-
-		void emitHeartbeat(String message);
+		void startPlannerGoal(String objective) throws java.io.IOException;
 	}
 
 	private record BlockCountQuery(
