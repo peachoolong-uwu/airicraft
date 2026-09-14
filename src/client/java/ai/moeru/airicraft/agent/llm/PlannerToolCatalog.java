@@ -379,12 +379,12 @@ public final class PlannerToolCatalog {
 			prop("maxThreatDistance", integer("Maximum eligible mob distance in blocks, 1..32; default 16.")),
 			prop("requireLineOfSight", bool("Ignore mobs out of line of sight when true; default true."))
 		), List.of()), PlannerToolCatalog::validateConfigureReflexArguments),
-		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic torch placement while mining or navigating. Enabled by default for dark underground work (darkness, light 0, spacing 6); can be disabled explicitly. Keeps offhand equipment such as a shield, temporarily uses a carried torch and restores the held item. Does not interrupt combat, item use or active block breaking. Confirmed placements are batched into the next planner window.", properties(
+		builtInTool(CONFIGURE_LIGHTING, false, tool(CONFIGURE_LIGHTING, "Configure automatic torch placement while mining, navigating, or idle after standing still for five seconds. Uses the average over only air cells in a centered 5x5 horizontal square at foot level; occupied cells do not count. Any sky-visible cell in that square prevents placement. Enabled by default underground when average combined light is strictly below 4 (spacing 6); can be disabled explicitly. Keeps offhand equipment such as a shield, temporarily uses a carried torch and restores the held item. Does not interrupt combat, item use or active block breaking. Confirmed placements are batched into the next planner window.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
 				prop("enabled", bool("Whether automatic torch placement is enabled.")),
-				prop("mode", enumString("Lighting rule. darkness uses combined light; spawn_proof uses block light.", List.of("darkness", "spawn_proof"))),
-				prop("maxLightLevel", integer("Place when the selected light value is at or below this threshold, from 0 to 15.")),
-				prop("requireUnderground", bool("Whether sky-visible positions must be excluded.")),
+				prop("mode", enumString("Lighting rule. darkness averages combined light; spawn_proof averages block light.", List.of("darkness", "spawn_proof"))),
+				prop("maxLightLevel", integer("Place when the selected 5x5 foot-level average is strictly below this threshold, from 0 to 15; default 4.")),
+				prop("requireUnderground", bool("Compatibility field; always applied as true. Any sky-visible cell in the 5x5 foot-level sample prevents automatic placement.")),
 				prop("minSpacingBlocks", integer("Minimum search radius around the player without an existing torch, from 1 to 16."))
 			), List.of("enabled", "mode", "maxLightLevel", "requireUnderground", "minSpacingBlocks")), PlannerToolCatalog::validateConfigureLightingArguments)
 	);

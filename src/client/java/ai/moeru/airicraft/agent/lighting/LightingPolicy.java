@@ -11,6 +11,9 @@ public record LightingPolicy(
 	long revision
 ) {
 	public LightingPolicy {
+		// Retain the configuration field for callers, but automatic lighting
+		// always excludes a sampling area with any sky access.
+		requireUnderground = true;
 		if (mode == null) {
 			throw new IllegalArgumentException("mode is required");
 		}
@@ -23,11 +26,11 @@ public record LightingPolicy(
 	}
 
 	public static LightingPolicy defaults() {
-		return new LightingPolicy(true, Mode.DARKNESS, 0, true, 6, 0L);
+		return new LightingPolicy(true, Mode.DARKNESS, 4, true, 6, 0L);
 	}
 
 	public static LightingPolicy disabled() {
-		return new LightingPolicy(false, Mode.DARKNESS, 0, true, 6, 0L);
+		return new LightingPolicy(false, Mode.DARKNESS, 4, true, 6, 0L);
 	}
 
 	public enum Mode {
