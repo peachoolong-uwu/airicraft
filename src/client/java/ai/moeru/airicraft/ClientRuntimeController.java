@@ -482,6 +482,7 @@ public final class ClientRuntimeController {
 			payload.put("codexExecutable", agentConfig.llm().codexAppServer().executable());
 			payload.put("codexModel", agentConfig.llm().codexAppServer().model());
 			payload.put("codexReasoningEffort", agentConfig.llm().codexAppServer().reasoningEffort());
+			payload.put("codexServiceTier", agentConfig.llm().codexAppServer().serviceTier());
 			payload.put("codexStartupTimeoutMillis", agentConfig.llm().codexAppServer().startupTimeoutMillis());
 			payload.put("codexTurnTimeoutMillis", agentConfig.llm().codexAppServer().turnTimeoutMillis());
 			return payload;

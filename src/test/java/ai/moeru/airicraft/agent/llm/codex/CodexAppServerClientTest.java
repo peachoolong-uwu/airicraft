@@ -161,6 +161,9 @@ class CodexAppServerClientTest {
 						default -> "";
 					};
 					append(log, method + suffix);
+					if (params.has("serviceTier")) {
+						append(log, method + " serviceTier " + params.get("serviceTier").getAsString());
+					}
 					if ("initialize".equals(method) && params.has("capabilities")) {
 						append(log, "initialize experimentalApi "
 							+ params.getAsJsonObject("capabilities").get("experimentalApi").getAsBoolean());

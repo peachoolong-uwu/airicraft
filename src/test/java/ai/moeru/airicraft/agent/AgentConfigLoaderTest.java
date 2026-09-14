@@ -64,6 +64,19 @@ class AgentConfigLoaderTest {
 		assertEquals("codex", llm.codexAppServer().executable());
 		assertEquals("", llm.codexAppServer().reasoningEffort());
 		assertFalse(llm.backendManagedHistory());
+		assertEquals("", llm.codexAppServer().serviceTier());
+	}
+
+	@Test
+	void readsOptionalCodexServiceTier() {
+		for (String tier : java.util.List.of("", "fast", "priority")) {
+			var parsed = AgentConfigLoader.fromMapStrict(Map.of(
+				"codexAppServer", Map.of("serviceTier", " " + tier + " ")
+			), AgentConfig.defaults());
+			assertEquals(tier, parsed.llm().codexAppServer().serviceTier());
+		}
+		assertThrows(IllegalArgumentException.class, () -> AgentConfigLoader.fromMapStrict(
+			Map.of("codexAppServer", Map.of("serviceTier", java.util.List.of("fast"))), AgentConfig.defaults()));
 	}
 
 	@Test

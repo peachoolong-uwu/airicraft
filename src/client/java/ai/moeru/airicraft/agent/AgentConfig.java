@@ -515,6 +515,7 @@ public record AgentConfig(
 		String executable,
 		String model,
 		String reasoningEffort,
+		String serviceTier,
 		int startupTimeoutMillis,
 		int turnTimeoutMillis
 	) {
@@ -522,12 +523,13 @@ public record AgentConfig(
 			executable = executable == null ? "" : executable.trim();
 			model = model == null ? "" : model.trim();
 			reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
+			serviceTier = serviceTier == null ? "" : serviceTier.trim();
 			startupTimeoutMillis = Math.max(1, startupTimeoutMillis);
 			turnTimeoutMillis = Math.max(1, turnTimeoutMillis);
 		}
 
 		public static CodexAppServerConfig defaults() {
-			return new CodexAppServerConfig("codex", "", "", 10_000, 120_000);
+			return new CodexAppServerConfig("codex", "", "", "", 10_000, 120_000);
 		}
 
 		public boolean isConfigured() {

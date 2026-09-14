@@ -88,6 +88,7 @@ public final class AgentConfigLoader {
 			readString(codexRoot, "executable", defaults.llm().codexAppServer().executable(), strict),
 			readString(codexRoot, "model", defaults.llm().codexAppServer().model(), strict),
 			readString(codexRoot, "reasoningEffort", defaults.llm().codexAppServer().reasoningEffort(), strict),
+			readString(codexRoot, "serviceTier", defaults.llm().codexAppServer().serviceTier(), strict),
 			readInt(codexRoot, "startupTimeoutMillis", defaults.llm().codexAppServer().startupTimeoutMillis()),
 			readInt(codexRoot, "turnTimeoutMillis", defaults.llm().codexAppServer().turnTimeoutMillis())
 		);
@@ -224,6 +225,7 @@ public final class AgentConfigLoader {
 			"executable", defaults.llm().codexAppServer().executable(),
 			"model", defaults.llm().codexAppServer().model(),
 			"reasoningEffort", defaults.llm().codexAppServer().reasoningEffort(),
+			"serviceTier", defaults.llm().codexAppServer().serviceTier(),
 			"startupTimeoutMillis", defaults.llm().codexAppServer().startupTimeoutMillis(),
 			"turnTimeoutMillis", defaults.llm().codexAppServer().turnTimeoutMillis()
 		));
