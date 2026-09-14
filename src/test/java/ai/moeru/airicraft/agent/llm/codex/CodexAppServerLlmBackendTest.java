@@ -189,6 +189,33 @@ class CodexAppServerLlmBackendTest {
 		return backend(log, PlannerToolRegistry.empty());
 	}
 
+	@Test
+	void forwardsConfiguredServiceTierAndOmitsInheritedDefault() throws Exception {
+		for (String tier : List.of("", "fast", "priority")) {
+			Path log = tempDir.resolve("tier-" + tier + ".log");
+			var backend = new CodexAppServerLlmBackend(
+				withCodexCommand("fake", 5_000, tier), NoopObservability.INSTANCE,
+				PlannerToolRegistry.empty(), () -> CodexAppServerClientTest.fakeClient(log));
+			try {
+				backend.generate(request(1L, "first"));
+				backend.acceptGeneration(1L);
+				backend.generate(request(2L, "follow-up"));
+				backend.acceptGeneration(2L);
+			}
+			finally {
+				backend.shutdownBackend();
+			}
+			String wireLog = Files.readString(log);
+			if (tier.isEmpty()) {
+				assertFalse(wireLog.contains("serviceTier"));
+			}
+			else {
+				assertEquals(1L, wireLog.lines().filter(line -> line.equals("thread/start serviceTier " + tier)).count());
+				assertEquals(2L, wireLog.lines().filter(line -> line.equals("turn/start serviceTier " + tier)).count());
+			}
+		}
+	}
+
 	private CodexAppServerLlmBackend backend(Path log, PlannerToolRegistry registry) {
 		return new CodexAppServerLlmBackend(
 			codexConfig(),
@@ -228,6 +255,10 @@ class CodexAppServerLlmBackendTest {
 	}
 
 	private static AgentConfig.LlmConfig withCodexCommand(String executable, int turnTimeoutMillis) {
+		return withCodexCommand(executable, turnTimeoutMillis, "");
+	}
+
+	private static AgentConfig.LlmConfig withCodexCommand(String executable, int turnTimeoutMillis, String serviceTier) {
 		AgentConfig.LlmConfig defaults = AgentConfig.LlmConfig.defaults();
 		return new AgentConfig.LlmConfig(
 			defaults.providerBaseUrl(),
@@ -249,7 +280,7 @@ class CodexAppServerLlmBackendTest {
 			true,
 			defaults.plannerUseJsonObjectResponseFormat(),
 			AgentConfig.PlannerBackend.CODEX_APP_SERVER,
-			new AgentConfig.CodexAppServerConfig(executable, "", "high", 10_000, turnTimeoutMillis)
+			new AgentConfig.CodexAppServerConfig(executable, "", "high", serviceTier, 10_000, turnTimeoutMillis)
 		);
 	}
 

@@ -10,6 +10,10 @@ codexAppServer:
   # Examples: low, medium, high, xhigh. Accepted values are model-specific.
   # Empty uses the local Codex default.
   reasoningEffort: ""
+  # Set to "fast" to request Codex Fast mode (higher credit consumption).
+  # Empty inherits the local Codex default. Other tiers depend on the model/account.
+  # After changing this setting, run /airicraft reload to start a fresh planner session.
+  serviceTier: ""
   startupTimeoutMillis: 10000
   turnTimeoutMillis: 120000
 
