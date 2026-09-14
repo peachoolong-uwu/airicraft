@@ -1,3 +1,8 @@
+buildscript {
+	repositories { mavenCentral() }
+	dependencies { classpath "org.yaml:snakeyaml:2.4" }
+}
+
 plugins {
 	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
 }
@@ -83,7 +88,6 @@ tasks.named("test") {
 }
 
 def sharedDevRunDir = rootProject.layout.projectDirectory.dir("run")
-def journeyMapCompatProject = rootProject.findProject(":compat:journeymap")
 def evaluatorRunDir = providers.gradleProperty("airicraft.evaluator.runDir")
 	.orElse(sharedDevRunDir.asFile.absolutePath)
 def evaluatorJdwpEnabled = providers.gradleProperty("airicraft.evaluator.jdwp.enabled")
@@ -92,6 +96,25 @@ def evaluatorRuntimePrepared = providers.gradleProperty("airicraft.evaluator.run
 	.orElse("false")
 def evaluatorRecorderJar = providers.gradleProperty("airicraft.evaluator.recorderJar")
 def evaluatorScenariosDir = rootProject.layout.projectDirectory.dir("scenarios")
+def scenarioManifest = providers.gradleProperty("airicraft.evaluator.scenarioManifest")
+	.orElse(providers.environmentVariable("AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST"))
+def requiredMods = []
+if (scenarioManifest.isPresent()) {
+	def manifest = rootProject.file(scenarioManifest.get())
+	if (!manifest.isFile()) {
+		throw new GradleException("Scenario manifest does not exist: ${manifest}")
+	}
+	def yaml = new org.yaml.snakeyaml.Yaml(new org.yaml.snakeyaml.constructor.SafeConstructor(new org.yaml.snakeyaml.LoaderOptions()))
+	def scenario = manifest.withReader("UTF-8") { yaml.load(it) }
+	if (!(scenario instanceof Map)) {
+		throw new GradleException("Scenario manifest must be a mapping: ${manifest}")
+	}
+	requiredMods = scenario.containsKey("requiredMods") ? scenario.requiredMods : []
+	if (!(requiredMods instanceof List) || requiredMods.any { !(it instanceof String) || !(it in ["journeymap", "roughlyenoughitems"]) }) {
+		throw new GradleException("requiredMods must be a list of supported mod IDs: journeymap, roughlyenoughitems")
+	}
+	requiredMods = requiredMods.unique()
+}
 
 if (evaluatorRuntimePrepared.get().toBoolean()) {
 	tasks.named("remapJar") {
@@ -132,6 +155,21 @@ tasks.register("runClientEvaluator", net.fabricmc.loom.task.prod.ClientProductio
 		"libs/baritone-unoptimized-fabric-1.15.0.jar",
 		"libs/nether-pathfinder-1.4.1.jar"
 	))
+	requiredMods.each { modId ->
+		def compatName = modId == "journeymap" ? "journeymap" : "rei"
+		def compatProject = rootProject.findProject(":compat:${compatName}")
+		if (compatProject == null) {
+			throw new GradleException("Required mod ${modId} is disabled; enable airicraft.includeCompat")
+		}
+		mods.from(compatProject.tasks.named("remapJar").flatMap { it.archiveFile })
+		// JourneyMap's smoke configuration also contains REI; select only JourneyMap.
+		if (modId == "journeymap") {
+			mods.from(compatProject.configurations.journeyMapCompatMods.filter { it.name.startsWith("journeymap-") })
+		}
+		else {
+			mods.from(compatProject.configurations.reiCompatMods)
+		}
+	}
 	configureEvaluatorRecordingProfile(delegate)
 	classpath.from(configurations.evaluatorRuntimeLibraries)
 	configureEvaluatorProcess(delegate)
@@ -140,38 +178,9 @@ tasks.register("runClientEvaluator", net.fabricmc.loom.task.prod.ClientProductio
 	}
 }
 
-if (journeyMapCompatProject != null) {
-	def journeyMapCompatCacheDir = rootProject.layout.projectDirectory.dir(".airicraft-compat/integration")
-	def journeyMapCompatModsDir = journeyMapCompatCacheDir.dir("mods")
-	def journeyMapCompatLibrariesDir = journeyMapCompatCacheDir.dir("libraries")
-
-	tasks.register("runClientCompatEvaluator", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
-		group = "airicraft evaluation"
-		description = "Runs a production-style Fabric client with Airicraft, the evaluator addon, and evaluator-stable compatibility smoke mods."
-		dependsOn rootProject.tasks.named("prepareMinecraftRunOptions")
-		if (!evaluatorRuntimePrepared.get().toBoolean()) {
-			dependsOn tasks.named("remapJar")
-			dependsOn journeyMapCompatProject.tasks.named("syncJourneyMapCompatMods")
-			dependsOn journeyMapCompatProject.tasks.named("syncJourneyMapCompatLibraries")
-		}
-		outputs.upToDateWhen { false }
-
-		mods.from(rootProject.fileTree(dir: journeyMapCompatModsDir.asFile, exclude: [
-			"airicraft-journeymap-compat-*.jar",
-			"journeymap-*.jar"
-		]))
-		if (evaluatorRuntimePrepared.get().toBoolean()) {
-			mods.from(tasks.named("remapJar").get().archiveFile.get().asFile)
-		}
-		else {
-			mods.from(tasks.named("remapJar").flatMap { it.archiveFile })
-		}
-		configureEvaluatorRecordingProfile(delegate)
-		classpath.from(configurations.evaluatorRuntimeLibraries)
-		classpath.from(journeyMapCompatLibrariesDir)
-		configureEvaluatorProcess(delegate)
-		javaLauncher = javaToolchains.launcherFor {
-			languageVersion = JavaLanguageVersion.of(21)
-		}
-	}
+// Retained as a command alias; scenario manifests own the optional mod set.
+tasks.register("runClientCompatEvaluator") {
+	group = "airicraft evaluation"
+	description = "Runs the evaluator with only the scenario's declared required mods."
+	dependsOn tasks.named("runClientEvaluator")
 }

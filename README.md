@@ -36,6 +36,14 @@ Planner-facing block modification is guarded by the world-read ledger. `place_bl
 
 ### Evaluation scenario checks
 
+Scenario evaluations load only the optional integrations declared by the scenario manifest:
+
+```yaml
+requiredMods: [journeymap, roughlyenoughitems]
+```
+
+Use either supported Fabric mod ID, both, or `[]`. Omitting `requiredMods` means no optional integrations. Dependencies (such as REI's Architectury and Cloth Config) are included automatically. Unknown IDs or malformed declarations fail before launch. The evaluation harness passes each worker its own manifest; the discovery client has no optional integrations. Manual launches use `AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST=/absolute/path/scenario.yml scripts/eval run` (also supported by `scripts/codex-driver-evaluator`), or pass `-Pairicraft.evaluator.scenarioManifest=/absolute/path/scenario.yml` to Gradle. Restart with the appropriate manifest before switching to a scenario requiring a different mod set. The recording profile is configured separately from `requiredMods`.
+
 Evaluation scenarios in `scenarios/*/scenario.yml` can use deterministic checks. `inventory_contains` verifies an item count, `block_state` verifies one exact block position, and `block_count` verifies at least `count` matching blocks in either `scope: self` with `horizontalRadius`/`verticalRadius` or `scope: box` with `x1/y1/z1/x2/y2/z2`.
 
 Planner-driven evaluations seed the scenario prompt as one world-persisted native planner goal. The planner owns continuation, work waiting, and controller/thinker handoffs; the evaluator never sends heartbeat prompts. Legacy `heartbeatIntervalTicks` is ignored, including in frozen manifests. `maxPlannerTurns` counts gameplay model requests across both roles (including tool follow-ups, excluding transport retries and discarded requests), measured from scenario admission. Time budgets still apply while waiting or blocked. A terminal goal claim cannot substitute for deterministic physical checks; subjective outcomes need review. Budget exhaustion stops the run without declaring the gameplay objective completed. External-driver runs remain manually driven.
@@ -81,7 +89,7 @@ scenarios/unpack-worlds farm_easy --force
 
 ### Normal dev client
 
-Use this for Airicraft-only development. It runs the Fabric dev client with HotSwap and opens JDWP on `127.0.0.1:5005`.
+Normal development runs include all supported integrations, use the production-style Fabric client with HotSwap, and open JDWP on `127.0.0.1:5005`.
 
 ```shell
 source .envrc && ./gradlew runClient
@@ -424,9 +432,9 @@ The window size multiplied by the entity limit cannot exceed 100000. A trace can
 
 ### Compatibility client
 
-Use this for optional third-party mod integration testing. It launches a production-style Fabric client with the remapped Airicraft jar.
+Normal `./gradlew runClient` launches include all supported integrations through the production-style Fabric client with the remapped Airicraft jar. `scripts/codex-driver` and `scripts/arthas kickstart` inherit this default. For an explicit bare development-client test, use `./gradlew runClient -Pairicraft.includeCompat=false`.
 
-The client includes JourneyMap, REI, Fabric API, Architectury, Cloth Config, and local runtime mods. HotSwap uses JDWP on `127.0.0.1:5007`.
+The client includes JourneyMap, REI, Fabric API, Architectury, Cloth Config, and local runtime mods. Normal `runClient` uses JDWP on `127.0.0.1:5005`; `scripts/compat run` uses `127.0.0.1:5007`.
 
 The helper keeps downloaded/runtime jars out of the repository in ignored `.airicraft-compat/`, and uses the shared dev game directory `run/`. That means normal `runClient` and compatibility runs read the same Airicraft config:
 

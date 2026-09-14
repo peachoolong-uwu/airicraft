@@ -25,7 +25,12 @@ def devPlayerName = providers.gradleProperty("airicraft.devPlayerName").orElse("
 def codexDriverEnabled = providers.gradleProperty("airicraft.codexDriver").orElse("false")
 def arthasVersion = providers.gradleProperty("airicraft.arthas.version").orElse("4.1.8")
 def arthasBootUrl = providers.gradleProperty("airicraft.arthas.bootUrl").orElse("https://arthas.aliyun.com/arthas-boot.jar")
-def arthasSelect = providers.gradleProperty("airicraft.arthas.select").orElse("net.fabricmc.devlaunchinjector.Main")
+def arthasSelect = providers.gradleProperty("airicraft.arthas.select").filter { !it.isBlank() }
+	.orElse(providers.provider {
+		findProject(":compat:journeymap") != null
+			? "net.fabricmc.loader.impl.launch.knot.KnotClient"
+			: "net.fabricmc.devlaunchinjector.Main"
+	})
 def arthasPid = providers.gradleProperty("airicraft.arthas.pid").orElse("")
 def arthasHttpPort = providers.gradleProperty("airicraft.arthas.httpPort").orElse("8563")
 def arthasTelnetPort = providers.gradleProperty("airicraft.arthas.telnetPort").orElse("3658")
@@ -252,9 +257,12 @@ tasks.register("hotswapMain", JavaExec) {
 			.sort { left, right -> left.absolutePath <=> right.absolutePath }
 		def uploaderArgs = [
 			"--state", hotswapStateFile.get().asFile.absolutePath,
-			"--production-root", hotswapProductionClassesDir.get().asFile.absolutePath,
-			"--dev-port", runClientJdwpPort.get()
+			"--production-root", hotswapProductionClassesDir.get().asFile.absolutePath
 		]
+		uploaderArgs.addAll([
+			findProject(":compat:journeymap") != null ? "--production-port" : "--dev-port",
+			runClientJdwpPort.get()
+		])
 		devClassRoots.each {
 			uploaderArgs.add("--dev-root")
 			uploaderArgs.add(it.absolutePath)
@@ -280,7 +288,21 @@ tasks.named("runClient").configure {
 allprojects {
 	apply plugin: 'java'
 
+	if (project != rootProject) {
+		// Gradle's unqualified `runClient` selects matching subproject tasks too.
+		// Addons cannot run alone; only the root profile should launch a client.
+		tasks.matching { it.name == "runClient" }.configureEach {
+			enabled = false
+			setDependsOn([])
+		}
+	}
+
 	tasks.withType(net.fabricmc.loom.task.prod.ClientProductionRunTask).configureEach {
+		// Loom projects share the asset cache. Unqualified launch commands may
+		// select several download tasks, all of which must finish before launch.
+		mustRunAfter(rootProject.allprojects.collect { owner ->
+			owner.tasks.matching { it.name == "downloadAssets" }
+		})
 		def taskHotswapConfig = hotswapConfigFile(path)
 		productionHotswapConfigs.add(taskHotswapConfig)
 		dependsOn rootProject.tasks.named("prepareHotswapProductionConfigs")
@@ -480,7 +502,7 @@ gradle.projectsEvaluated {
 		if (evaluatorProject.tasks.findByName("runClientCompatEvaluator") != null) {
 			tasks.register("runClientCompatEvaluator") {
 				group = "airicraft evaluation"
-				description = "Runs a production-style Fabric client with Airicraft, the evaluator addon, and all compatibility smoke mods."
+				description = "Runs the evaluator with only the scenario manifest required mods."
 				dependsOn evaluatorProject.tasks.named("runClientCompatEvaluator")
 			}
 		}
@@ -504,6 +526,13 @@ gradle.projectsEvaluated {
 			group = "airicraft compatibility"
 			description = "Runs a debug production-style Fabric client with all compatibility smoke mods."
 			dependsOn journeyMapCompatProject.tasks.named("runClientJourneyMapCompat")
+		}
+
+		// Optional mod jars use intermediary mappings, so normal launches must use
+		// the production client too. Keep Loom's dev launch for includeCompat=false.
+		tasks.named("runClient").configure {
+			enabled = false
+			setDependsOn([tasks.named("runClientCompat")])
 		}
 	}
 }

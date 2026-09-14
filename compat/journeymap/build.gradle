@@ -177,5 +177,8 @@ tasks.register("runClientJourneyMapCompat", net.fabricmc.loom.task.prod.ClientPr
 	javaLauncher = javaToolchains.launcherFor {
 		languageVersion = JavaLanguageVersion.of(21)
 	}
-	jvmArgs.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5007")
+	def normalLaunch = gradle.startParameter.taskNames.any { it == "runClient" || it == ":runClient" }
+	def debugPort = providers.gradleProperty("airicraft.jdwp.port").orElse(normalLaunch ? "5005" : "5007").get()
+	def debugSuspend = providers.gradleProperty("airicraft.jdwp.suspend").orElse("n").get()
+	jvmArgs.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=${debugSuspend},address=127.0.0.1:${debugPort}")
 }

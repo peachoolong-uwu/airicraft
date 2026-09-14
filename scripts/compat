@@ -20,7 +20,7 @@ gradle_base=(
 
 case "$command" in
   setup | sync)
-    "${gradle_base[@]}" :prepareHotswapRuntime :syncHotswapMainClasses :syncCompatMods :syncCompatLibraries "$@"
+    "${gradle_base[@]}" :syncHotswapMainClasses :syncCompatMods :syncCompatLibraries "$@"
     ;;
   run)
     "${gradle_base[@]}" :runClientCompat "$@"

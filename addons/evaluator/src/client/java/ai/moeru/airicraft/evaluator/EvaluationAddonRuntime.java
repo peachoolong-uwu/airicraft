@@ -151,6 +151,13 @@ public final class EvaluationAddonRuntime {
 			if (nextScenario.prompt() == null || nextScenario.prompt().isBlank()) {
 				throw new BridgeUnavailableException("invalid_scenario", "Scenario prompt is empty: " + nextScenario.id());
 			}
+			var loadedIntegrations = EvaluationScenario.SUPPORTED_MODS.stream()
+				.filter(FabricLoader.getInstance()::isModLoaded).toList();
+			if (!new java.util.HashSet<>(loadedIntegrations).equals(new java.util.HashSet<>(nextScenario.requiredMods()))) {
+				throw new BridgeUnavailableException("scenario_mod_mismatch",
+					"Scenario requires " + nextScenario.requiredMods() + " but loaded integrations are " + loadedIntegrations
+						+ "; relaunch with AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST=" + nextScenario.configPath());
+			}
 			context.onClientThread(this::reserveRunStart);
 			startReserved = true;
 			var restoredWorld = fixtures.restoreScenarioWorld(nextScenario);
@@ -391,6 +398,7 @@ public final class EvaluationAddonRuntime {
 		payload.put("name", value.name());
 		payload.put("minecraftVersion", value.minecraftVersion());
 		payload.put("airicraftVersion", value.airicraftVersion());
+		payload.put("requiredMods", value.requiredMods());
 		payload.put("worldArchive", value.worldArchive());
 		payload.put("frozen", value.frozen());
 		payload.put("promptConfigured", value.prompt() != null && !value.prompt().isBlank());
