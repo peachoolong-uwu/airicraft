@@ -79,6 +79,33 @@ By default this installs every frozen `scenarios/*/world.zip` archive into `run/
 scenarios/unpack-worlds farm_easy --force
 ```
 
+### Headless virtual display
+
+`scripts/headless` runs any client command on a virtual X display (Xvfb) so the
+client works on a headless host. Game render capture is unaffected: screenshot
+and frame capture read the game framebuffer, not the screen.
+
+```shell
+scripts/headless run      # dev client (./gradlew runClient)
+scripts/headless eval     # evaluator compat client
+scripts/headless compat   # compatibility client
+scripts/headless -- <any command>
+```
+
+Each invocation picks a free display starting at `:90` and tears Xvfb down when
+the command exits, so parallel evaluation workers each get their own display.
+Override with `AIRICRAFT_HEADLESS_DISPLAY` (a display number, or `auto`) and
+`AIRICRAFT_HEADLESS_SCREEN` (default `1920x1080x24`). If `DISPLAY` is already
+set, the command runs on it unchanged.
+
+The batch harness wraps every worker client automatically with `--headless`:
+
+```shell
+scripts/run-evaluation-scenarios --scenario pickup --jobs 2 --headless ...
+```
+
+Requires `xvfb` (`apt-get install xvfb`).
+
 ### Normal dev client
 
 Use this for Airicraft-only development. It runs the Fabric dev client with HotSwap and opens JDWP on `127.0.0.1:5005`.

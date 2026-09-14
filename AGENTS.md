@@ -31,6 +31,11 @@
   - Parallel clients use separate game directories and bridge files.
   - Passed worker directories are deleted. Failed, review, and interrupted directories remain under `run/evaluator-workers/`.
   - Batch clients disable JDWP. Manual evaluator launches keep JDWP on `127.0.0.1:5008`.
+- Headless virtual display:
+  - Use `scripts/headless <run|eval|compat|-- command>` to run any client on an auto-picked Xvfb display (Linux).
+  - Frame/screenshot capture reads the game framebuffer, so it works under Xvfb unchanged.
+  - `scripts/run-evaluation-scenarios --headless` gives each parallel worker its own display.
+  - Override display/screen with `AIRICRAFT_HEADLESS_DISPLAY` / `AIRICRAFT_HEADLESS_SCREEN`.
 - Arthas CLI live-debug:
   - Cold-start path: `scripts/arthas kickstart` starts `runClient`, waits for the bridge, joins the first saved world, opens LAN, and attaches Arthas for later probes. It is cold-only and fails fast if a client is already running.
   - Manual start: `./gradlew runClient`

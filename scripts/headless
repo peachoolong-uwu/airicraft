@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+if [[ -f .envrc ]]; then
+	# shellcheck disable=SC1091
+	source .envrc
+fi
+
+usage() {
+	cat <<'USAGE'
+usage: scripts/headless [run|eval|compat|<command...>]
+
+Runs a Minecraft client on a virtual X display (Xvfb) so it works on a
+headless host. Frame and screenshot capture still works: the mod reads the
+game framebuffer, not the screen.
+
+  run      ./gradlew runClient (dev client)
+  eval     scripts/eval run (evaluator + compat client)
+  compat   scripts/compat run (compatibility client)
+  other    any other arguments run verbatim, e.g.
+           scripts/headless scripts/run-evaluation-scenarios --scenario pickup --no-recorder
+
+Environment:
+  AIRICRAFT_HEADLESS_DISPLAY   X display number to use; "auto" (default) picks
+                               the first free display starting at 90.
+  AIRICRAFT_HEADLESS_SCREEN    Xvfb screen spec (default 1920x1080x24).
+USAGE
+}
+
+require_xvfb() {
+	if ! command -v Xvfb >/dev/null 2>&1; then
+		printf 'error: Xvfb is not installed (Debian/Ubuntu: apt-get install xvfb)\n' >&2
+		exit 2
+	fi
+}
+
+display_free() {
+	local number="$1"
+	[[ ! -e "/tmp/.X${number}-lock" && ! -S "/tmp/.X11-unix/X${number}" ]]
+}
+
+pick_display() {
+	local requested="${AIRICRAFT_HEADLESS_DISPLAY:-auto}"
+	if [[ "$requested" != auto ]]; then
+		if ! [[ "$requested" =~ ^[0-9]+$ ]]; then
+			printf 'error: AIRICRAFT_HEADLESS_DISPLAY must be a display number or "auto"\n' >&2
+			exit 2
+		fi
+		printf '%s\n' "$requested"
+		return
+	fi
+	local number
+	for number in $(seq 90 189); do
+		if display_free "$number"; then
+			printf '%s\n' "$number"
+			return
+		fi
+	done
+	printf 'error: no free X display between :90 and :189\n' >&2
+	exit 1
+}
+
+wait_for_display() {
+	local number="$1"
+	local attempt
+	for attempt in $(seq 1 50); do
+		if command -v xdpyinfo >/dev/null 2>&1; then
+			if xdpyinfo -display ":${number}" >/dev/null 2>&1; then
+				return 0
+			fi
+		elif [[ -S "/tmp/.X11-unix/X${number}" ]]; then
+			return 0
+		fi
+		if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+			break
+		fi
+		sleep 0.1
+	done
+	printf 'error: Xvfb did not come up on display :%s\n' "$number" >&2
+	return 1
+}
+
+if [[ $# -eq 0 ]]; then
+	usage >&2
+	exit 2
+fi
+
+case "${1:-}" in
+	-h | --help | help)
+		usage
+		exit 0
+		;;
+	run)
+		shift
+		set -- ./gradlew runClient "$@"
+		;;
+	eval)
+		shift
+		set -- scripts/eval run "$@"
+		;;
+	compat)
+		shift
+		set -- scripts/compat run "$@"
+		;;
+	--)
+		shift
+		;;
+esac
+
+if [[ $# -eq 0 ]]; then
+	usage >&2
+	exit 2
+fi
+
+if [[ -n "${DISPLAY:-}" && -z "${AIRICRAFT_HEADLESS_DISPLAY:-}" ]]; then
+	printf 'note: DISPLAY is already set to %s; running command on it\n' "$DISPLAY" >&2
+	exec "$@"
+fi
+
+require_xvfb
+
+display_number="$(pick_display)"
+screen="${AIRICRAFT_HEADLESS_SCREEN:-1920x1080x24}"
+
+XVFB_PID=""
+cleanup() {
+	if [[ -n "$XVFB_PID" ]]; then
+		kill "$XVFB_PID" 2>/dev/null || true
+		wait "$XVFB_PID" 2>/dev/null || true
+	fi
+}
+trap cleanup EXIT INT TERM
+
+Xvfb ":${display_number}" -screen 0 "$screen" &
+XVFB_PID=$!
+
+wait_for_display "$display_number"
+printf 'headless: virtual display :%s (screen %s, Xvfb pid %s)\n' "$display_number" "$screen" "$XVFB_PID" >&2
+
+DISPLAY=":${display_number}" "$@"

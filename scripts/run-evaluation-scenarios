@@ -115,6 +115,10 @@ def default_client_command(repo_root: Path) -> str:
     return "scripts/eval run --no-daemon"
 
 
+def headless_client_command(command: str) -> str:
+    return f"scripts/headless -- {command}"
+
+
 def read_bridge_state(path: Path) -> BridgeState | None:
     if not path.exists():
         return None
@@ -1269,6 +1273,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--client-stop-timeout-seconds", type=float, default=45.0, help="Seconds to wait after SIGINT before SIGTERM.")
     parser.add_argument("--jobs", type=positive_int, default=1, help="Maximum concurrent scenario clients. Defaults to 1.")
     parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Launch each client on its own Xvfb virtual display via scripts/headless.",
+    )
+    parser.add_argument(
         "--stop-client-after-scenario",
         action="store_true",
         help="Stop the scenario Minecraft client after each scenario. By default the final scenario client is left running.",
@@ -1305,6 +1314,8 @@ def main(argv: list[str]) -> int:
 
     repo_root = repo_root_from_script()
     client_command = args.client_command or default_client_command(repo_root)
+    if args.headless:
+        client_command = headless_client_command(client_command)
     output_root = Path(args.output_root)
     if not output_root.is_absolute():
         output_root = repo_root / output_root
@@ -1319,6 +1330,7 @@ def main(argv: list[str]) -> int:
         "startedAt": utc_now_iso(),
         "repoRoot": str(repo_root),
         "clientCommand": client_command,
+        "headless": bool(args.headless),
         "gitCommit": git_value(repo_root, ["rev-parse", "HEAD"]),
         "gitDirty": bool(git_value(repo_root, ["status", "--short"])),
         "scenarioFilters": args.scenario_filters or [],

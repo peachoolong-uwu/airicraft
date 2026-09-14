@@ -158,6 +158,14 @@ class RecorderOptionTest(unittest.TestCase):
         with self.assertRaisesRegex(runner.RunnerError, "--no-recorder.*--recorder-jar"):
             runner.resolve_recorder_options("command-profile.jar", True, {})
 
+    def test_headless_wraps_the_client_command(self) -> None:
+        self.assertFalse(runner.parse_args([]).headless)
+        self.assertTrue(runner.parse_args(["--headless"]).headless)
+        self.assertEqual(
+            "scripts/headless -- scripts/eval run --no-daemon",
+            runner.headless_client_command(runner.default_client_command(Path("/repo"))),
+        )
+
 
 class RunnerFilesystemTest(unittest.TestCase):
     def setUp(self) -> None:
