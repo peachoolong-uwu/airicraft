@@ -25,16 +25,28 @@ public record PlannerDecisionContext(
 	}
 
 	public LlmChatMessage message(long sinceSequence) {
-		List<SemanticEvent> events = observations.events().stream()
-			.filter(event -> event.seqNo() > sinceSequence && relevant(event.type())).toList();
+		return message(sinceSequence, false);
+	}
+
+	public LlmChatMessage message(long sinceSequence, boolean refresh) {
+		var events = observations.events().stream()
+			.filter(event -> event.seqNo() > sinceSequence && relevant(event.type()))
+			.map(event -> Map.of("seqNo", event.seqNo(), "tick", event.tick(), "type", event.type(), "payload",
+				event.type().equals("work.changed") ? ai.moeru.airicraft.agent.work.WorkSnapshot.summarize(event.payload()) : event.payload())).toList();
 		boolean gap = observations.oldestSeqNo() > Math.max(1, sinceSequence + 1);
+		var facts = new java.util.LinkedHashMap<>(current);
+		if (current.get("work") instanceof List<?> work) {
+			facts.put("work", work.stream().map(value -> (Map<?, ?>) value)
+				.filter(value -> refresh || gap || sinceSequence == 0 || !List.of("SUCCEEDED", "FAILED", "CANCELLED").contains(String.valueOf(value.get("state"))))
+				.map(ai.moeru.airicraft.agent.work.WorkSnapshot::summarize).toList());
+		}
 		var payload = new java.util.LinkedHashMap<String, Object>();
 		payload.put("worldSessionId", worldSessionId);
 		payload.put("tick", tick);
 		payload.put("serverTick", serverTick);
 		payload.put("decisionOwner", decisionOwner);
 		payload.put("actuatorOwner", actuatorOwner);
-		payload.put("current", current);
+		payload.put("current", facts);
 		payload.put("afterEventSequence", sinceSequence);
 		payload.put("throughEventSequence", observations.latestSeqNo());
 		if (gap) payload.put("missingEventRange", Map.of("from", sinceSequence + 1, "to", observations.oldestSeqNo() - 1));

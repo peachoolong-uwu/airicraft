@@ -257,7 +257,7 @@ public final class OpenAiCompatibleChatClient {
 			payload.put("tools", toolRegistry.openAiTools());
 			payload.put("tool_choice", "auto");
 		}
-		payload.put("messages", canonicalRequestMessages(conversation));
+		payload.put("messages", toolRegistry.references().presentMessages(canonicalRequestMessages(conversation)));
 		return payload;
 	}
 

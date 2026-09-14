@@ -50,6 +50,22 @@ public final class BaritonePathfindSettings {
 	}
 
 	public static Map<String, Object> plannerSettingsSchema() {
+		return Map.of("type", "object", "minProperties", 1,
+			"description", "Setting name to value. Use inspect_pathfind(query) to find names, types and descriptions; inspect_pathfind(names) reads current values. All non-Java settings remain supported.",
+			"additionalProperties", Map.of("anyOf", List.of(Map.of("type", "boolean"), Map.of("type", "number"), Map.of("type", "string"))));
+	}
+
+	/** Full documentation is queried, never included in the fixed planner prefix. */
+	public static Map<String, Object> describeSettings(String query) {
+		var catalog = settingsCatalog();
+		String term = query.toLowerCase(Locale.ROOT);
+		var matches = catalog.entrySet().stream().filter(entry -> (entry.getKey() + " " + entry.getValue()).toLowerCase(Locale.ROOT).contains(term)).toList();
+		var selected = new LinkedHashMap<String, Object>();
+		matches.stream().limit(16).forEach(entry -> selected.put(entry.getKey(), entry.getValue()));
+		return Map.of("settings", selected, "matched", matches.size(), "truncated", matches.size() > 16);
+	}
+
+	private static Map<String, Object> settingsCatalog() {
 		LinkedHashMap<String, Object> properties = new LinkedHashMap<>();
 		try {
 			Settings settings = BaritoneAPI.getSettings();
@@ -68,12 +84,7 @@ public final class BaritonePathfindSettings {
 				properties.put(field.getName(), fallbackSchemaFor(field));
 			}
 		}
-		return Map.of(
-			"type", "object",
-			"description", "Baritone settings to change atomically. Every non-Java-only Baritone setting is available. Omit settings that should stay unchanged.",
-			"properties", properties,
-			"additionalProperties", false
-		);
+		return properties;
 	}
 
 	private static Map<String, Object> fallbackSchemaFor(Field field) {

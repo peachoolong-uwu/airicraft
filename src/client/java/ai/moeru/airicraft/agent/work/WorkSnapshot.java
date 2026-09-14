@@ -24,4 +24,22 @@ public record WorkSnapshot(WorkHandle handle, String parentWorkId, State state, 
 			"controls", state.terminal() ? List.of("inspect") : !parentWorkId.isBlank() ? List.of("inspect", "wait") : state == State.PAUSED
 				? List.of("inspect", "cancel", "resume", "wait") : List.of("inspect", "cancel", "wait"));
 	}
+
+	/** Small planner projection; inspect_work retains the complete request and evidence. */
+	public Map<String, Object> summary() { return summarize(payload()); }
+
+	public static Map<String, Object> summarize(Map<?, ?> payload) {
+		var result = new java.util.LinkedHashMap<String, Object>();
+		for (String key : List.of("workId", "parentWorkId", "state", "label", "phase", "updatedTick")) {
+			Object value = payload.get(key);
+			if (value != null && !value.toString().isBlank()) result.put(key, value);
+		}
+		if (payload.get("details") instanceof Map<?, ?> details) {
+			for (String key : List.of("holdId", "failure", "blockedReason", "message", "physicalEffect", "reason", "collected")) {
+				Object value = details.get(key);
+				if (value != null && !value.toString().isBlank()) result.put(key, value);
+			}
+		}
+		return result;
+	}
 }

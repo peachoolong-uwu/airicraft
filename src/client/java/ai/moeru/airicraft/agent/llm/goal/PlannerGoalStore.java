@@ -12,6 +12,7 @@ import java.util.function.Supplier;
 /** World-owned intent. Observations and work outcomes are not planning notes. */
 public final class PlannerGoalStore {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final Gson CONTEXT_JSON = new GsonBuilder().disableHtmlEscaping().create();
 	private final Supplier<Path> worldDirectory;
 	private Path loadedWorld;
 	private volatile Goal goal;
@@ -45,7 +46,7 @@ public final class PlannerGoalStore {
 	public boolean relevantToBlock(String eventType) {
 		return blocked() && goal.blocker().reconsiderEvents().contains(eventType);
 	}
-	public String context() { return error != null ? error : goal == null ? "No planner goal." : GSON.toJson(goal); }
+	public String context() { return error != null ? error : goal == null ? "No planner goal." : CONTEXT_JSON.toJson(goal); }
 	public Goal set(String objective) throws IOException { return set(objective, "", ""); }
 	public Goal set(String objective, String constraints, String criteria) throws IOException {
 		requireWorld();

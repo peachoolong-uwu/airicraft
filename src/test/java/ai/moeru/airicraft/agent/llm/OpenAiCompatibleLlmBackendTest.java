@@ -26,6 +26,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
+	@Test void sendsShortWorkReferenceAndRestoresItForNativeExecution() throws Exception {
+		String nativeId = "JOB:job-11111111-2222-3333-4444-555555555555";
+		var registry = PlannerToolRegistry.of(new ai.moeru.airicraft.agent.work.WorkToolProvider(call -> java.util.concurrent.CompletableFuture.completedFuture("ok")));
+		registry.freezeToolPrefix();
+		String reference = registry.references().present(nativeId);
+		var body = new AtomicReference<String>();
+		String arguments = "{\"workId\":\"" + reference + "\",\"reason\":\"new approach\"}";
+		try (TestServer server = TestServer.start(body, toolCallResponse("call_1", "cancel_work", arguments.replace("\"", "\\\"")))) {
+			var backend = new OpenAiCompatibleLlmBackend(config(server.port(), false), registry);
+			var result = backend.generate(LlmConversation.of(List.of(LlmChatMessage.user("Current work: " + nativeId, LlmMessageKind.NOTICE))));
+			assertFalse(body.get().contains(nativeId));
+			assertTrue(body.get().contains(reference));
+			assertEquals(nativeId, result.payload().toolCall().arguments().get("workId").getAsString());
+		}
+	}
 	@Test void rateLimitCarriesTheServerDelayWhileOtherProviderErrorsStayTerminal() throws Exception {
 		for (int status : new int[]{429, 401}) {
 			var server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);

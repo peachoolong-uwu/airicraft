@@ -17,6 +17,9 @@ public final class PlannerToolRegistry {
 	private final PlannerToolSurface toolSurface = new PlannerToolSurface();
 	private List<Map<String, Object>> fixedTools;
 	private String fixedInstructions;
+	private PlannerReferences references = new PlannerReferences();
+	public PlannerReferences references() { return references; }
+	public void shareReferences(PlannerToolRegistry other) { references = other.references; }
 
 	/** Freeze the advertised schema for one model session; action gates still apply. */
 	public void freezeToolPrefix() {

@@ -2381,7 +2381,6 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		return result.thenApply(text -> {
 			refreshWorkHistory();
 			var receipt = new LinkedHashMap<String, Object>();
-			receipt.put("tool", call.name());
 			boolean rejected = text.startsWith("TOOL_ERROR:") || text.startsWith("TOOL_UNAVAILABLE:");
 			boolean immediate = List.of("equip_item", "configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy", "close_container", "transfer_container").contains(call.name());
 			boolean eating = call.name().equals("eat_food") && playerItemUseController.eating();
@@ -2389,9 +2388,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			receipt.put("accepted", accepted);
 			if (admitted.isPresent()) {
 				var work = workHistory.find(admitted.get().handle()).orElseThrow();
-				receipt.put("work", work.payload());
-				receipt.put("workId", work.handle().id());
-				receipt.put("state", work.state().name());
+				receipt.putAll(work.summary());
 			} else if (accepted) {
 				var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION,
 					java.util.UUID.randomUUID().toString());
@@ -2400,12 +2397,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					call.name(), eating ? "EATING" : "RETURNED", eating, tickCount,
 					Map.of("result", text, "afterEventSequence", eventBuffer.latestSeqNo()));
 				recordWork(work);
-				receipt.put("work", work.payload());
-				receipt.put("workId", work.handle().id());
-				receipt.put("state", work.state().name());
+				receipt.putAll(work.summary());
 			}
-			receipt.put("result", text);
-			return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(receipt);
+			String prefix = "Tool result for " + call.name() + ": ";
+			receipt.put("result", text.startsWith(prefix) ? text.substring(prefix.length()) : text);
+			return prefix + new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(receipt);
 		});
 	}
 
@@ -2414,7 +2410,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		provider.validateArguments(call.name(), call.arguments());
 		refreshWorkHistory();
 		if (call.name().equals("list_work")) return "Tool result for list_work: "
-			+ new com.google.gson.Gson().toJson(workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::payload).toList());
+			+ new com.google.gson.Gson().toJson(workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::summary).toList());
 		var requested = call.arguments().has("workId")
 			? workHistory.find(new ai.moeru.airicraft.agent.work.WorkHandle(call.arguments().get("workId").getAsString())) : workHistory.current();
 		if (requested.isEmpty()) return call.arguments().has("workId") ? "TOOL_ERROR: work_not_found"
@@ -2458,7 +2454,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			default -> throw new IllegalArgumentException("unknown_work_tool");
 		}
 		refreshWorkHistory();
-		var result = new LinkedHashMap<>(workHistory.find(handle).orElseThrow().payload());
+		var result = new LinkedHashMap<>(call.name().equals("inspect_work") ? workHistory.find(handle).orElseThrow().payload()
+			: workHistory.find(handle).orElseThrow().summary());
 		if (!call.name().equals("inspect_work")) result.put("accepted", true);
 		return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(result);
 	}

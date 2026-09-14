@@ -228,6 +228,7 @@ public final class PlannerShellFactory {
 				() -> "", dialogue::delegationWorkIdle));
 			var thinkingRegistry = PlannerToolRegistry.of(thinkingProviders.toArray(ai.moeru.airicraft.agent.llm.PlannerToolProvider[]::new));
 			thinkingRegistry.freezeToolPrefix();
+			thinkingRegistry.shareReferences(toolRegistry);
 			var thinkingProfile = config.llm().thinkingPlanner();
 			var thinkingConfig = config.llm().forRole(thinkingProfile.model().isBlank() ? config.llm().model() : thinkingProfile.model(), thinkingProfile.reasoningEffort());
 			var thinkingCalls = plannerCallJournal.forkRole("thinking", thinkingConfig.plannerBackend().wireValue(), plannerModelName(thinkingConfig), thinkingRegistry::openAiTools);

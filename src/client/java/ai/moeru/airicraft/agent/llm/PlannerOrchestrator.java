@@ -256,6 +256,7 @@ public final class PlannerOrchestrator {
 	private java.util.function.BooleanSupplier decisionAuthority = () -> true;
 	public void configureDecisionAuthority(java.util.function.BooleanSupplier authority) { decisionAuthority = authority; }
 	private long incorporatedDecisionEventSequence;
+	private boolean decisionRefreshPending = true;
 
 	/** The supplier reads game state synchronously on this orchestrator's owning client thread. */
 	public void configureDecisionContext(java.util.function.Supplier<PlannerDecisionContext> source) {
@@ -274,7 +275,8 @@ public final class PlannerOrchestrator {
 			decisionWorldSessionId = context.worldSessionId();
 			incorporatedDecisionEventSequence = 0;
 		}
-		LlmConversation updated = conversation.withAppended(context.message(incorporatedDecisionEventSequence));
+		LlmConversation updated = conversation.withAppended(context.message(incorporatedDecisionEventSequence, decisionRefreshPending));
+		decisionRefreshPending = false;
 		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
 		contextAggregator.retainConversation(updated);
 		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
@@ -1409,6 +1411,7 @@ public final class PlannerOrchestrator {
 		if (compactionResult.succeeded()) {
 			contextAggregator.recordObservedUsage(compactionResult.usage());
 			contextAggregator.applyCheckpoint(compactionResult.checkpoint());
+			decisionRefreshPending = true;
 			return;
 		}
 		Airicraft.LOGGER.warn("Planner compaction failed message={}", summarizeForLog(compactionResult.failureMessage()));

@@ -8,12 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BaritonePathfindSettingsTest {
 	@Test
 	void exposesAllNonJavaOnlySettingsWithoutBootstrappingMinecraft() {
-		var settings = BaritonePathfindSettings.plannerSettingsSchema();
+		var settings = BaritonePathfindSettings.describeSettings("allow");
 		@SuppressWarnings("unchecked")
-		var properties = (java.util.Map<String, Object>) settings.get("properties");
+		var properties = (java.util.Map<String, Object>) BaritonePathfindSettings.describeSettings("allowDownward").get("settings");
 
 		assertTrue(properties.containsKey("allowDownward"));
-		assertTrue(properties.containsKey("allowParkour"));
+		assertTrue(((java.util.Map<?, ?>) BaritonePathfindSettings.describeSettings("allowParkour").get("settings")).containsKey("allowParkour"));
+		assertTrue(((java.util.Map<?, ?>) settings.get("settings")).size() <= 16);
+		assertTrue(new com.google.gson.Gson().toJson(BaritonePathfindSettings.plannerSettingsSchema()).length() < 1000);
+		assertTrue(BaritonePathfindSettings.plannerSettingsSchema().containsKey("additionalProperties"));
 	}
 
 	@Test

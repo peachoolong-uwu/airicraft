@@ -183,12 +183,10 @@ class PlannerToolCallInterfaceTest {
 		JsonArray tools = JsonParser.parseString(gson().toJson(PlannerToolCatalog.openAiTools())).getAsJsonArray();
 		JsonObject parameters = toolSchema(tools, "configure_pathfind");
 		JsonObject settings = parameters.getAsJsonObject("properties").getAsJsonObject("settings");
-		JsonObject settingProperties = settings.getAsJsonObject("properties");
-
 		assertTrue(toolNames(tools).contains("configure_pathfind"));
-		assertTrue(settingProperties.has("allowDownward"));
-		assertTrue(settingProperties.has("allowParkour"));
-		assertTrue(settingProperties.getAsJsonObject("allowDownward").get("description").getAsString().contains("staircases"));
+		assertFalse(settings.has("properties"), "Setting catalog must be queried, not repeated in every request");
+		assertEquals(3, settings.getAsJsonObject("additionalProperties").getAsJsonArray("anyOf").size());
+		assertTrue(ai.moeru.airicraft.agent.baritone.BaritonePathfindSettings.describeSettings("allowDownward").toString().contains("staircases"));
 		assertEquals("configure_pathfind", PlannerToolCatalog.parseToolCall(toolCall("configure_pathfind", """
 			{"settings":{"allowDownward":true,"allowParkour":false}}
 			""")).name());

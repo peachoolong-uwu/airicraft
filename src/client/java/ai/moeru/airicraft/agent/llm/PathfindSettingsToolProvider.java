@@ -21,18 +21,28 @@ public final class PathfindSettingsToolProvider implements PlannerToolProvider {
 	@Override public String id() { return "pathfind_settings"; }
 	@Override public boolean handles(String name) { return "inspect_pathfind".equals(normalizeName(name)); }
 	@Override public List<Map<String, Object>> openAiTools() {
-		return List.of(toolForProvider("inspect_pathfind", "Read current Baritone settings without changing them. Defaults to movement/terrain safety settings; request up to 32 setting names for other values.",
+		return List.of(toolForProvider("inspect_pathfind", "Read current settings by names (up to 32), or search documentation by query (up to 16 matches). Omit both for movement safety values.",
 			propertiesForProvider(propForProvider("names", Map.of("type", "array", "items", Map.of("type", "string"),
-				"minItems", 1, "maxItems", 32))), List.of()));
+				"minItems", 1, "maxItems", 32)), propForProvider("query", stringForProvider("Setting name or description fragment, e.g. parkour or fall."))), List.of()));
 	}
 	@Override public String promptInstructions() {
 		return "Use inspect_pathfind for actual current values before changing movement constraints and after interruptions. Tool schemas contain defaults, not live state. Save prior values and restore them when leaving a constrained exploration intent.";
 	}
-	@Override public void validateArguments(String name, JsonObject args) { names(args); }
+	@Override public void validateArguments(String name, JsonObject args) {
+		for (String key : args.keySet()) if (!List.of("names", "query").contains(key)) throw new JsonParseException("unknown argument: " + key);
+		if (args.has("query")) {
+			if (args.has("names") || !args.get("query").isJsonPrimitive() || !args.getAsJsonPrimitive("query").isString()
+				|| args.get("query").getAsString().isBlank()) throw new JsonParseException("supply query or names");
+		} else names(args);
+	}
 	@Override public CompletableFuture<String> execute(PlannerToolCall call) {
 		var result = new CompletableFuture<String>();
 		MinecraftClient.getInstance().execute(() -> {
-			try { result.complete("Tool result for inspect_pathfind: " + new Gson().toJson(BaritonePathfindSettings.inspect(names(call.arguments())))); }
+			try {
+				validateArguments(call.name(), call.arguments());
+				result.complete("Tool result for inspect_pathfind: " + new Gson().toJson(call.arguments().has("query")
+					? BaritonePathfindSettings.describeSettings(call.arguments().get("query").getAsString()) : BaritonePathfindSettings.inspect(names(call.arguments()))));
+			}
 			catch (RuntimeException exception) { result.complete("TOOL_ERROR: inspect_pathfind " + exception.getMessage()); }
 		});
 		return result;

@@ -51,7 +51,15 @@ recording and explicit overflow gaps; do not introduce unbounded event sourcing.
 | Survival reflex | Temporary actuator ownership; does not own or silence System2 decisions. |
 | Per-role orchestrator | Fresh decision boundary, incorporated cursor, frozen transport attempts, stale response rejection and fixed schema prefix. |
 
-Work history retains128 terminal entries plus unresolved work; each decision includes unresolved work and the latest8 terminal projections. Shared semantic evidence is bounded512events, with explicit gaps. Goal notes are bounded16names and replaced goals32entries. The recorder remains a separate12000server-tick/64MiB diagnostic window.
+Work history retains128 terminal entries plus unresolved work. Ordinary decisions include concise unresolved work and newly incorporated outcome events; initial context, compaction and event gaps also refresh the latest8 terminal summaries. inspect_work retains full request/evidence detail. Shared semantic evidence is bounded512events, with explicit gaps. Goal notes are bounded16names and replaced goals32entries. The recorder remains a separate12000server-tick/64MiB diagnostic window.
+
+### Compact planner presentation (2026-09-14)
+
+The OpenAI-compatible request boundary presents UUID-bearing native identities as short opaque references such as @r12. Controller, thinker and compactor share one reference table while keeping separate histories/cache prefixes. Tool ID arguments resolve before existing parsing, ownership and exact work/hold validation. Native executor IDs, persisted goals, recorder events and protocol tool-call/result pairing remain unchanged. Known references in planning-note fields are restored before persistence. User narration is not rewritten on input.
+
+The table retains8192 mappings. Evicted/unknown references fail closed and require fresh inspection; numbers are never reassigned within the client process. They are session presentation, not durable world IDs. Existing response freshness checks and native work validation still gate actuation. Request text encoding does not alter images or role schema prefixes.
+
+configure_pathfind keeps atomic native validation and all non-Java settings, but advertises a compact name-to-typed-value map. inspect_pathfind(query) supplies up to16 matching setting descriptions/types/defaults; inspect_pathfind(names) reads values. Full settings documentation is no longer repeated in every model request. Action receipts have one flat work summary, list/wait/cancel/resume return summaries, and inspect_work returns detail. Goal context uses compact JSON; its persisted document remains readable.
 
 ## Implementation and acceptance checklist
 

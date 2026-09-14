@@ -124,7 +124,8 @@ class EmbodiedAgentRuntimeTest {
 				JsonParser.parseString("{\"x\":12,\"y\":64,\"z\":8,\"exactY\":true}").getAsJsonObject(), null, null)).join();
 			var json = JsonParser.parseString(receipt.substring(receipt.indexOf('{'))).getAsJsonObject();
 			assertTrue(json.get("accepted").getAsBoolean(), receipt);
-			String workId = json.getAsJsonObject("work").get("workId").getAsString();
+			String workId = json.get("workId").getAsString();
+			assertFalse(json.has("work"), "Receipt must not duplicate its work projection");
 			assertTrue(workId.startsWith("JOB:"), receipt);
 			runtime.onClientTick(null);
 			var request = executor.lastActiveTask.orElseThrow();
@@ -2324,7 +2325,7 @@ class EmbodiedAgentRuntimeTest {
 				var receipt = JsonParser.parseString(future.join().substring(future.join().indexOf('{'))).getAsJsonObject();
 				assertEquals(state == TaskExecutionState.COMPLETED ? "SUCCEEDED" : "FAILED", receipt.get("state").getAsString());
 				assertTrue(receipt.get("accepted").getAsBoolean());
-				assertEquals(state.name(), receipt.getAsJsonObject("work").get("phase").getAsString());
+				assertEquals(state.name(), receipt.get("phase").getAsString());
 			} finally { runtime.shutdown(); }
 		}
 	}

@@ -7,6 +7,25 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PlannerDecisionContextTest {
+	@Test void sendsTerminalOutcomeOnceAndRefreshesAfterCompactionWithoutLosingHoldOrFailure() {
+		var events = new SemanticEventBuffer(8);
+		var failed = new ai.moeru.airicraft.agent.work.WorkSnapshot(new ai.moeru.airicraft.agent.work.WorkHandle("JOB:old"), "",
+			ai.moeru.airicraft.agent.work.WorkSnapshot.State.FAILED, "mine", "FAILED", false, 1,
+			Map.of("request", Map.of("large", "request details"), "failure", "no_path"));
+		var paused = new ai.moeru.airicraft.agent.work.WorkSnapshot(new ai.moeru.airicraft.agent.work.WorkHandle("JOB:active"), "",
+			ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED, "mine", "PAUSED", true, 2, Map.of("holdId", "hold1"));
+		events.append(1, "work.changed", failed.payload());
+		var context = new PlannerDecisionContext("world", 2, 2, "controller", "reflex", Map.of("work", java.util.List.of(failed.payload(), paused.payload())), events.query(null));
+		String first = context.message(0).content();
+		assertTrue(first.contains("no_path"));
+		assertFalse(first.contains("request details"));
+		String next = context.message(1).content();
+		assertFalse(next.contains("JOB:old"));
+		assertTrue(next.contains("hold1"));
+		assertTrue(context.message(1, true).content().contains("JOB:old"));
+		assertEquals(2, ((java.util.List<?>) context.current().get("work")).size());
+		assertTrue(events.query(null).events().getFirst().payload().containsKey("details"));
+	}
 	@Test void overflowReportsMissingRangeAlongsideCurrentFactsAndRetainedOutcomes() {
 		var events = new SemanticEventBuffer(2);
 		events.append(1, "task.started", Map.of("workId", "old"));
