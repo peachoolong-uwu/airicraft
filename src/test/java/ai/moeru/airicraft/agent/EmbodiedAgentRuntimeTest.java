@@ -1570,7 +1570,7 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
-	void finishEvaluationSuppressesAutonomousPlannerTriggersUntilNextEvaluationStarts() {
+	void evaluationPreparationKeepsAutonomousTriggersSuppressedUntilGoalAdmission() {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 
 		runtime.finishEvaluation();
@@ -1601,7 +1601,7 @@ class EmbodiedAgentRuntimeTest {
 		assertEquals(PlannerTriggerType.CHAT, explicitChat.type());
 
 		runtime.prepareForEvaluation();
-		PlannerTrigger resumed = runtime.createPlannerTriggerForTests(new SemanticEvent(
+		PlannerTrigger beforeGoalAdmission = runtime.createPlannerTriggerForTests(new SemanticEvent(
 			3L,
 			22L,
 			1002L,
@@ -1614,7 +1614,7 @@ class EmbodiedAgentRuntimeTest {
 			)
 		), new EventRoutingProfile("smelting.output_ready", true, PlannerTriggerType.SYSTEM, true));
 
-		assertEquals(PlannerTriggerType.SYSTEM, resumed.type());
+		assertNull(beforeGoalAdmission, "Preparation must not let the planner run before the scenario goal exists");
 	}
 
 	@Test

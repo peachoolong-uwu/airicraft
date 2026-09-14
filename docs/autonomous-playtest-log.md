@@ -1435,3 +1435,10 @@ Focused suites and full ./gradlew -Pairicraft.includeEvaluator=true build passed
 ### D151 — Direct mining looks at its actual target (2026-09-14)
 
 Acquisition and precise break_blocks now use the shared CameraController before starting or advancing block damage. Acquisition aims at the raycast hit point (including leaves cleared ahead of a resource), rather than the resource behind it; precise block breaking aims at the block center. Reusing the shared controller also clears pending look interpolation. Target selection, support safety, pathfinding and mining budgets are unchanged. This addresses the paused live incident in D149; full build with evaluator passed (/tmp/mining-aim-build.log). Existing camera/executor tests passed; direct client wiring still requires the following live run, not a synthetic rotation-only test.
+
+
+### D152 — Goal admission must precede the first eval decision (2026-09-14)
+
+First native-goal trial on dde1b21d, eval-output/20260914-134607-383777-62187, revealed an admission race. Its first recorded request said No planner goal; the planner used take_a_look before the evaluator seeded the frozen scenario constraints. prepareForEvaluation had enabled autonomous system/idle triggers during world loading. Paused at client920, exported423observations with no truncation (startup-incident.jsonl, startup-pause.txt, startup.png), then intentionally interrupted the run. It is diagnostic evidence, not acceptance. The harness labels the interruption Interrupted by user; Codex stopped it after the observed defect.
+
+Preparation now clears preceding dialogue/feed state and keeps existing evaluator suppression enabled until startEvaluationGoal successfully persists the scenario objective. The initial decision therefore comes through native goal continuation. The admission regression asserts preparation cannot release autonomous triggers. No scenario prompt or no-vision restriction changed.

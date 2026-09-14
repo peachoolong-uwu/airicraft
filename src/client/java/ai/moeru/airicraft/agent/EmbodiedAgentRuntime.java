@@ -1353,9 +1353,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public void prepareForEvaluation() {
+		dialogueRuntime.clear();
+		eventPipeline.clearPlannerFeed();
 		plannerCallJournal.clear();
 		proactiveSocialModeOverride = null;
-		evaluationPlannerSuppressed = false;
+		// World loading may emit system/idle triggers before the evaluator seeds its goal.
+		evaluationPlannerSuppressed = true;
 		clearNearbyBlockSnapshot();
 		prepareClientForEvaluation();
 	}
@@ -1382,6 +1385,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	public void startEvaluationGoal(String objective) throws java.io.IOException {
 		dialogueRuntime.startEvaluationGoal(objective);
+		evaluationPlannerSuppressed = false;
 	}
 
 	public Optional<ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore.Goal> plannerGoalSnapshot() {
