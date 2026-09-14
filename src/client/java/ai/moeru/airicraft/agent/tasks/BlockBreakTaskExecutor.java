@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.tasks;
 
 import ai.moeru.airicraft.agent.goals.GoalPosition;
+import ai.moeru.airicraft.agent.control.CameraController;
 import ai.moeru.airicraft.agent.session.SessionSnapshot;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.FluidBlock;
@@ -23,6 +24,7 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 	private static final Direction BREAK_FACE = Direction.UP;
 
 	private final Supplier<MinecraftClient> clientSupplier;
+	private final CameraController cameraController;
 
 	private WorldTaskRequest appliedTask;
 	private boolean terminalEventEmitted;
@@ -33,11 +35,16 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 	private boolean breakingActive;
 	private long targetStartTick = -1L;
 
-	public BlockBreakTaskExecutor() {
-		this(MinecraftClient::getInstance);
+	public BlockBreakTaskExecutor(CameraController cameraController) {
+		this(MinecraftClient::getInstance, cameraController);
 	}
 
 	BlockBreakTaskExecutor(Supplier<MinecraftClient> clientSupplier) {
+		this(clientSupplier, new CameraController());
+	}
+
+	private BlockBreakTaskExecutor(Supplier<MinecraftClient> clientSupplier, CameraController cameraController) {
+		this.cameraController = Objects.requireNonNull(cameraController);
 		this.clientSupplier = Objects.requireNonNull(clientSupplier, "clientSupplier");
 	}
 
@@ -102,6 +109,7 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 		if (!withinInteractionRange(player, Vec3d.ofCenter(pos))) {
 			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_out_of_range targetPos=" + compactPos(pos)));
 		}
+		cameraController.lookAtNow(client, Vec3d.ofCenter(pos));
 		long tick = sessionSnapshot == null ? 0L : sessionSnapshot.tickCount();
 		if (!breakingActive) {
 			BaritoneTaskExecutor.MiningToolPreflight.Result toolSelection =

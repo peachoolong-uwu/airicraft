@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.tasks;
 
 import ai.moeru.airicraft.agent.goals.AcquisitionConstraints;
+import ai.moeru.airicraft.agent.control.CameraController;
 import ai.moeru.airicraft.agent.memory.WorldPlacePreservation;
 import ai.moeru.airicraft.agent.goals.GoalMineSpec;
 import ai.moeru.airicraft.agent.goals.GoalPosition;
@@ -30,6 +31,8 @@ import static ai.moeru.airicraft.agent.tasks.TargetAcquisitionTaskExecutor.*;
 
 /** Samples loaded client facts and performs exact interactions on the client tick. */
 final class MinecraftAcquisitionEnvironment implements Environment {
+	private final CameraController cameraController;
+	MinecraftAcquisitionEnvironment(CameraController cameraController) { this.cameraController = cameraController; }
 	private BlockPos breaking;
 	private MinecraftClient client() { return MinecraftClient.getInstance(); }
 	@Override public GoalPosition position() {
@@ -223,6 +226,8 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		BlockHitResult hit = interactionPath(client.player.getEyePos(), block(target.position()));
 		if (hit == null || WorldPlacePreservation.contains(client.world, hit.getBlockPos())) return BreakResult.FAILED;
 		BlockPos pos = hit.getBlockPos();
+		// Aim at the actual hit, which may be leaves being cleared in front of the resource.
+		cameraController.lookAtNow(client, hit.getPos());
 		if (!pos.equals(breaking)) {
 			cancelBreaking();
 			var result = BaritoneTaskExecutor.MiningToolPreflight.ensureSelected(client, client.player,

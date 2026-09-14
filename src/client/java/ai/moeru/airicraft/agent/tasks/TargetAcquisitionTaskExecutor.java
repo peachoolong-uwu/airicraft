@@ -32,8 +32,8 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 	private String lastRejection;
 	private TaskExecutionSnapshot snapshot = TaskExecutionSnapshot.idle();
 
-	public TargetAcquisitionTaskExecutor(BaritoneFacade navigation) {
-		this(navigation, new MinecraftAcquisitionEnvironment());
+	public TargetAcquisitionTaskExecutor(BaritoneFacade navigation, ai.moeru.airicraft.agent.control.CameraController cameraController) {
+		this(navigation, new MinecraftAcquisitionEnvironment(cameraController));
 	}
 
 	TargetAcquisitionTaskExecutor(BaritoneFacade navigation, Environment environment) {
