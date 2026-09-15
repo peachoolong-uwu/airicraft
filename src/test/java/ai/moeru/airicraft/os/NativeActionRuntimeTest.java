@@ -14,6 +14,67 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NativeActionRuntimeTest {
 	@Test
+	void rejectedRequestsCannotEvictAnActiveOrJustCompletedOperation() {
+		var world = new ChestWorld();
+		var runtime = new NativeActionRuntime(world, () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var args = new JsonObject();
+		args.addProperty("quantity", 1);
+		var active = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", args);
+		runtime.submit(active);
+		for (int sequence = 2; sequence <= 260; sequence++) {
+			var rejected = NativeActionRuntime.Request.create(lease, sequence, observation.captureId(), "transfer_container", args);
+			assertEquals("player_owned", runtime.submit(rejected).reason());
+		}
+		assertEquals(false, runtime.inspect(active.id()).released());
+		runtime.tick(); runtime.tick();
+		assertTrue(runtime.inspect(active.id()).released());
+		var oldest = new NativeActionRuntime.Id(lease.epoch(), lease.generation(), 2);
+		assertEquals("outcome_unknown", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.inspect(oldest)).code());
+	}
+
+	@Test
+	void aRejectedAdmissionRemainsQueryableAfterItsResponseIsLost() {
+		var clock = new AtomicLong();
+		var runtime = new NativeActionRuntime(new ChestWorld(), clock::get);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var args = new JsonObject();
+		args.addProperty("quantity", 6);
+		var request = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", args);
+		clock.set(2_000_000_000L);
+		try { runtime.submit(request); } catch (NativeActionRuntime.Rejected lostReply) { /* Simulate losing the admission response. */ }
+		var rejected = runtime.inspect(request.id());
+		assertEquals(NativeActionRuntime.State.FAILED, rejected.state());
+		assertEquals("admission_rejected", rejected.phase());
+		assertEquals("observation_stale", rejected.reason());
+		assertTrue(rejected.released());
+		assertEquals(true, rejected.effects().get("accountingComplete"));
+		assertEquals(rejected, runtime.submit(request));
+		assertEquals(null, runtime.authority().active());
+		assertEquals(0, runtime.observe().facts().get("carriedWheat").getAsInt());
+		runtime.submit(NativeActionRuntime.Request.create(lease, 2, runtime.observe().captureId(), "transfer_container", args));
+		runtime.tick(); runtime.tick();
+		assertEquals(6, runtime.observe().facts().get("carriedWheat").getAsInt());
+	}
+
+	@Test
+	void expiredAuthorityStillIdentifiesTheGenerationOfItsAdmissionHighWaterMark() {
+		var clock = new AtomicLong();
+		var runtime = new NativeActionRuntime(new ChestWorld(), clock::get);
+		var lease = runtime.acquire("host-before-crash", runtime.observe().epoch());
+		clock.set(6_000_000_000L);
+		var authority = runtime.authority();
+		assertEquals(null, authority.lease());
+		assertEquals(lease.generation(), authority.generation());
+		assertEquals(0, authority.admissionSequence());
+		var next = runtime.acquire("replacement-host", authority.epoch());
+		assertEquals(next.generation(), runtime.authority().generation());
+		assertEquals(lease.generation() + 1, next.generation());
+	}
+
+	@Test
 	void aLifecycleCallbackFencesQueuedEffectsBeforeTheNextClientTick() {
 		var world = new ChestWorld();
 		world.deferEffects = true;
@@ -175,7 +236,7 @@ class NativeActionRuntimeTest {
 		assertEquals(0, runtime.observe().facts().get("carriedWheat").getAsInt());
 		var replacement = runtime.acquire("host-b", newWorld.epoch());
 		var staleBasis = NativeActionRuntime.Request.create(replacement, 1, observation.captureId(), "transfer_container", arguments);
-		assertEquals("observation_unknown", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(staleBasis)).code());
+		assertEquals("observation_unknown", runtime.submit(staleBasis).reason());
 	}
 
 	@Test
@@ -188,7 +249,7 @@ class NativeActionRuntimeTest {
 		arguments.addProperty("quantity", 6);
 		var request = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", arguments);
 		clock.set(2_000_000_000L);
-		assertEquals("observation_stale", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(request)).code());
+		assertEquals("observation_stale", runtime.submit(request).reason());
 		assertEquals(0, runtime.observe().facts().get("carriedWheat").getAsInt());
 	}
 
@@ -203,7 +264,7 @@ class NativeActionRuntimeTest {
 		runtime.tick();
 		runtime.tick();
 		var stale = NativeActionRuntime.Request.create(lease, 2, observation.captureId(), "transfer_container", arguments);
-		assertEquals("observation_stale", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(stale)).code());
+		assertEquals("observation_stale", runtime.submit(stale).reason());
 		var fresh = NativeActionRuntime.Request.create(lease, 3, runtime.observe().captureId(), "transfer_container", arguments);
 		runtime.submit(fresh);
 		runtime.tick();

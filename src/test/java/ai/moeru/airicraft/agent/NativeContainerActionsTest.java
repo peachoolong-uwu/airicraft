@@ -68,7 +68,7 @@ class NativeContainerActionsTest {
 		var args = transfer(1);
 		args.addProperty("itemId", "minecraft:bundle");
 		var request = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", args);
-		assertEquals("unsupported_transfer_item", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(request)).code());
+		assertEquals("unsupported_transfer_item", runtime.submit(request).reason());
 		assertNull(runtime.authority().active());
 		assertEquals(observation.facts(), runtime.observe().facts());
 	}
@@ -166,13 +166,13 @@ class NativeContainerActionsTest {
 		var args = transfer(6);
 		args.getAsJsonObject("allowance").addProperty("sourceItems", 2);
 		var request = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", args);
-		assertEquals("allowance_exceeded", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(request)).code());
+		assertEquals("allowance_exceeded", runtime.submit(request).reason());
 		args = transfer(6);
 		args.getAsJsonObject("allowance").addProperty("destinationItems", 2);
 		var capacityRequest = NativeActionRuntime.Request.create(lease, 2, observation.captureId(), "transfer_container", args);
-		assertEquals("allowance_exceeded", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(capacityRequest)).code());
+		assertEquals("allowance_exceeded", runtime.submit(capacityRequest).reason());
 		var oversized = NativeActionRuntime.Request.create(lease, 3, observation.captureId(), "transfer_container", transfer(65));
-		assertEquals("invalid_transfer_request", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(oversized)).code());
+		assertEquals("invalid_transfer_request", runtime.submit(oversized).reason());
 		assertEquals(observation.facts(), runtime.observe().facts());
 	}
 
@@ -291,7 +291,7 @@ class NativeContainerActionsTest {
 			var observation = runtime.observe();
 			var lease = runtime.acquire("host-a", observation.epoch());
 			var request = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", args);
-			assertEquals("invalid_transfer_request", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(request)).code());
+			assertEquals("invalid_transfer_request", runtime.submit(request).reason());
 			assertNull(runtime.authority().active());
 			assertEquals(observation.facts(), runtime.observe().facts());
 		}

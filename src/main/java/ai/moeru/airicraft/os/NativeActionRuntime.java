@@ -92,21 +92,47 @@ public final class NativeActionRuntime {
 		if (request.id().sequence() < 1) throw new Rejected("invalid_sequence");
 		if (request.id().sequence() <= admissionSequence) throw new Rejected("outcome_unknown");
 		admissionSequence = request.id().sequence();
-		requireAvailablePlayer();
-		if (active != null) throw new Rejected("player_owned");
-		if (!port.operations().contains(request.operation())) throw new Rejected("operation_not_granted");
-		Observation basis = observations.get(request.captureId());
-		if (basis == null) throw new Rejected("observation_unknown");
-		if (basis.effectRevision() != effectRevision || nanoTime.getAsLong() - basis.capturedAtNanos() >= 2_000_000_000L)
-			throw new Rejected("observation_stale");
 		var permit = new EffectPermit(nanoTime);
-		Operation operation = port.prepare(request.operation(), request.arguments(), basis.facts(), permit);
+		Operation operation;
+		try {
+			requireAvailablePlayer();
+			if (active != null) throw new Rejected("player_owned");
+			if (!port.operations().contains(request.operation())) throw new Rejected("operation_not_granted");
+			Observation basis = observations.get(request.captureId());
+			if (basis == null) throw new Rejected("observation_unknown");
+			if (basis.effectRevision() != effectRevision || nanoTime.getAsLong() - basis.capturedAtNanos() >= 2_000_000_000L)
+				throw new Rejected("observation_stale");
+			operation = port.prepare(request.operation(), request.arguments(), basis.facts(), permit);
+		} catch (Rejected rejected) {
+			return retainRejection(request, rejected.code(), permit);
+		} catch (IllegalArgumentException | IllegalStateException invalid) {
+			return retainRejection(request, "invalid_request", permit);
+		}
 		var receipt = new Receipt(request.id(), State.ACCEPTED, false, "accepted", "",
 			new Basis(1, request.operation(), request.captureId(), request.payloadHash()), Map.of());
 		active = new Entry(request.payloadHash(), operation, receipt, permit);
 		requests.put(request.id(), active);
 		recordEvent("receipt", "", lease, receipt);
 		return receipt;
+	}
+
+	/** Consuming an admission sequence must leave a queryable disposition, even when preparation rejects it. */
+	private Receipt retainRejection(Request request, String reason, EffectPermit permit) {
+		var receipt = new Receipt(request.id(), State.FAILED, true, "admission_rejected", reason,
+			new Basis(1, request.operation(), request.captureId(), request.payloadHash()),
+			Map.of("admitted", false, "accountingComplete", true,
+				"releaseEvidence", Map.of("verified", true, "source", "admission_not_started")));
+		requests.put(request.id(), new Entry(request.payloadHash(), null, receipt, permit));
+		recordEvent("receipt", reason, lease, receipt);
+		trimReceipts();
+		return receipt;
+	}
+
+	private void trimReceipts() {
+		var iterator = requests.entrySet().iterator();
+		while (requests.size() > RETAINED_RECEIPTS + (active == null ? 0 : 1) && iterator.hasNext()) {
+			if (iterator.next().getValue() != active) iterator.remove();
+		}
 	}
 
 	public void release(Lease expected) {
@@ -128,7 +154,7 @@ public final class NativeActionRuntime {
 
 	public Authority authority() {
 		expireLease();
-		return new Authority(sessionId, epoch, lease, active == null ? null : active.receipt, admissionSequence);
+		return new Authority(sessionId, epoch, leaseGeneration, lease, active == null ? null : active.receipt, admissionSequence);
 	}
 
 	public Receipt inspect(Id id) {
@@ -195,8 +221,11 @@ public final class NativeActionRuntime {
 		if (progress.released()) {
 			active.permit.update(Permission.OBSERVE, lastHeartbeat);
 			active.operation = null;
+			// Retention is ordered by settlement; a long-lived active request may predate rejected requests.
+			requests.remove(active.receipt.id());
+			requests.put(active.receipt.id(), active);
 			active = null;
-			while (requests.size() > RETAINED_RECEIPTS) requests.remove(requests.keySet().iterator().next());
+			trimReceipts();
 		}
 	}
 
@@ -280,7 +309,7 @@ public final class NativeActionRuntime {
 	public enum State { ACCEPTED, RUNNING, RECONCILING, SUCCEEDED, FAILED, CANCELLED }
 	public record World(String worldId, String dimension, String loadId, boolean alive, boolean controllerBusy, boolean reflexActive) {}
 	public record Lease(String epoch, long generation, String hostId) {}
-	public record Authority(String sessionId, String epoch, Lease lease, Receipt active, long admissionSequence) {}
+	public record Authority(String sessionId, String epoch, long generation, Lease lease, Receipt active, long admissionSequence) {}
 	public record Id(String epoch, long generation, long sequence) {}
 	public record Event(long seqNo, String epoch, String capturedAtNanos, String type, String reason, Lease lease, Receipt receipt) {}
 	public record History(long oldestSeqNo, long latestSeqNo, long nextSeqNo, boolean gap, List<Event> events) {}
