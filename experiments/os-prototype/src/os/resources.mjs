@@ -130,17 +130,16 @@ export class ResourceService {
     }
     this.poll();
     const committed = new Map();
-    for (const record of this.#deliveries.values()) {
-      const delivery = this.#ledger.delivery(record.id);
-      if (record.reason || delivery.state !== 'pending') continue;
-      const key = JSON.stringify([record.consumer, delivery.spec.resource]);
+    for (const delivery of this.#ledger.pendingDeliveries()) {
+      if (delivery.epoch !== this.#ledger.epoch) continue;
+      const key = JSON.stringify([delivery.spec.consumer, delivery.spec.resource]);
       const methods = routes && Object.hasOwn(routes, delivery.spec.resource) ? routes[delivery.spec.resource] : [];
       const applicable = routes === null || delivery.spec.methods.some(method => methods.includes(method));
       committed.set(key, (committed.get(key) ?? 0) + (applicable ? delivery.outstanding : delivery.allocated));
     }
     return { deliveries: this.pending(), targets: this.shortages().map(target => ({ ...target,
       quantity: target.missing === null ? null : Math.max(0, target.missing - (committed.get(JSON.stringify([target.consumer, target.resource])) ?? 0))
-    })) };
+    })), targetSlots: this.#ledger.availableDeliverySlots };
   }
   state() { return { targets: this.#targets.size, deliveries: this.#deliveries.size, ownerCursors: this.#history.size }; }
   #authorize(owner, resource) {

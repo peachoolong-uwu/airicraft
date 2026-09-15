@@ -1,6 +1,7 @@
 import { copyMessage } from './value.mjs';
 import { contentDigest } from './content.mjs';
 import { supplyOperations } from './supplies.mjs';
+import { executionPolicy } from './execution-policy.mjs';
 
 const name = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -28,13 +29,15 @@ export class SupplyPlanner {
     this.#routes = Object.fromEntries([...routes].map(([resource, methods]) => [resource, [...methods]]));
     this.#resources = resources; this.#rules = copied; this.#epoch = epoch;
   }
+  get maximumOffers() { return Object.keys(this.#rules).length * executionPolicy.roots; }
+  get operations() { return [...new Set(Object.values(this.#rules).map(rule => rule.operation))]; }
   offers() {
     const needs = this.#resources.procurement(this.#routes), offers = [];
     const rows = [...needs.deliveries.map(value => ({ ...value, kind: 'delivery' })),
       ...needs.targets.map(value => ({ ...value, kind: 'target' }))];
     for (const [id, rule] of Object.entries(this.#rules)) {
       const eligible = rows.filter(need => need.epoch === this.#epoch && need.owner !== null && need.quantity > 0 &&
-        need.resource === rule.resource && need.methods.includes(rule.operation));
+        need.resource === rule.resource && need.methods.includes(rule.operation) && (need.kind !== 'target' || needs.targetSlots > 0));
       const consumers = [...new Set(eligible.map(need => need.consumer))];
       // Every eligible consumer can anchor a bounded batch; an earlier large demand cannot hide another root.
       for (const anchor of consumers) {
@@ -45,6 +48,7 @@ export class SupplyPlanner {
         for (const need of ordered) {
           if (offer.quantity === rule.maximum) break;
           if (need.kind === 'delivery' && offer.deliveries.length === 32) continue;
+          if (need.kind === 'target' && offer.targets.length === needs.targetSlots) continue;
           const quantity = Math.min(need.quantity, rule.maximum - offer.quantity);
           offer.owner ??= need.owner;
           if (!offer.owners.includes(need.owner)) offer.owners.push(need.owner);

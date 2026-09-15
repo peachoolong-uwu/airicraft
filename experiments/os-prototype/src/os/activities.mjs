@@ -8,6 +8,7 @@ export class ActivityCoordinator {
   #ledger;
   #effects;
   #operations;
+  #supplies;
   #active = null;
   #sequence = 0;
   #busy = false;
@@ -15,9 +16,10 @@ export class ActivityCoordinator {
   #last = null;
   #trace;
 
-  constructor({ invocations, ledger, effects, operations, trace }) {
+  constructor({ invocations, ledger, effects, operations, supplies, trace }) {
     this.#invocations = invocations; this.#ledger = ledger; this.#effects = effects;
     this.#operations = supplyOperations(operations);
+    this.#supplies = supplies;
     this.#trace = trace;
     trace?.onFailure(error => this.#drain(error));
   }
@@ -41,6 +43,13 @@ export class ActivityCoordinator {
     if (this.#busy || this.#active || this.#invocations.activity()) throw Error('player_owned');
     if (!request || !Array.isArray(request.deliveries ?? []) || (request.deliveries?.length ?? 0) > 32) throw Error('invalid_activity');
     if (request.workId !== undefined && (typeof request.workId !== 'string' || !request.workId.length || request.workId.length > 256)) throw Error('invalid_activity');
+    let proposal = null;
+    if (request.supplyOfferId !== undefined) {
+      if (!this.#supplies || typeof request.supplyOfferId !== 'string' || Object.keys(request).some(key => !['supplyOfferId', 'workId'].includes(key)))
+        throw Error('invalid_supply_activity');
+      proposal = this.#supplies.resolve(request.supplyOfferId);
+      request = { ...request, owner: proposal.owner, operation: proposal.operation, arguments: proposal.arguments, deliveries: proposal.deliveries };
+    }
     const operation = this.#operations.get(request.operation);
     if (!operation) throw Error('operation_unknown');
     this.#busy = true;
@@ -57,10 +66,25 @@ export class ActivityCoordinator {
           if (this.#ledger.delivery(delivery.id).spec.consumer !== subscriber.consumer) throw Error('demand_owner_mismatch');
         }
         this.#ledger.observe(prepared.observation);
+        if (proposal) {
+          // Selection is only a hint. Recompute the exact same batch against this fresh native inventory.
+          this.#supplies.resolve(proposal.id);
+          if (prepared.destination !== proposal.resource || prepared.quantity !== proposal.quantity || frame.epoch !== proposal.epoch)
+            throw Error('supply_output_mismatch');
+          for (const subscriber of proposal.owners) this.#invocations.authorize(subscriber, operation.grant);
+        }
         const sequence = ++this.#sequence, id = `activity:${sequence}`;
-        this.#ledger.reserve(id, owner.consumer, prepared.bundle, prepared.observation.revision);
-        let supplyId = null;
+        const targetDeliveryIds = [];
+        let supplyId = null, reserved = false;
         try {
+          for (const target of proposal?.targets ?? []) {
+            const delivery = this.#ledger.createDelivery({ consumer: target.consumer, resource: proposal.resource,
+              quantity: target.quantity, methods: [request.operation] });
+            targetDeliveryIds.push(delivery.id);
+            deliveries.push({ id: delivery.id, owner: target.owner, quantity: target.quantity });
+          }
+          this.#ledger.reserve(id, owner.consumer, prepared.bundle, prepared.observation.revision);
+          reserved = true;
           if (deliveries.length) {
             this.#ledger.beginSupply(sequence, { epoch: frame.epoch, resource: prepared.destination, method: request.operation,
               expected: prepared.quantity, deliveries: deliveries.map(({ id, quantity }) => ({ id, quantity })) });
@@ -69,15 +93,17 @@ export class ActivityCoordinator {
           this.#invocations.trackActivity(id, [...new Set([request.owner, ...deliveries.map(delivery => delivery.owner)])]);
         } catch (error) {
           if (supplyId !== null) { this.#ledger.settleSupply(supplyId, { released: true, accountingComplete: true }); this.#ledger.closeSupply(supplyId); }
-          this.#ledger.settle(id, { released: true, accountingComplete: true, consumed: {} });
+          if (reserved) this.#ledger.settle(id, { released: true, accountingComplete: true, consumed: {} });
+          for (const deliveryId of targetDeliveryIds) { this.#ledger.cancelDelivery(deliveryId); this.#ledger.closeDelivery(deliveryId); }
           throw error;
         }
-        this.#active = { id, prepared, operation, supplyId, deliveries, cancelRequested: false };
+        this.#active = { id, prepared, operation, supplyId, deliveries, targetDeliveryIds, cancelRequested: false };
+        const supplyProvenance = proposal ? { supplyOfferId: proposal.id, targetDeliveryIds } : {};
         attempt.admitted = true;
         this.#trace?.record('activity.admitted', { id, owner: request.owner, definition: owner.definition, consumer: owner.consumer,
-          observation: prepared.observation, bundle: prepared.bundle, deliveries, supplyId, ...(request.workId ? { workId: request.workId } : {}) });
+          observation: prepared.observation, bundle: prepared.bundle, deliveries, supplyId, ...supplyProvenance, ...(request.workId ? { workId: request.workId } : {}) });
         return { definition: owner.definition, invocation: request.owner, operation: operation.nativeOperation, arguments: prepared.arguments,
-          provenance: { activityId: id, consumer: owner.consumer, bundle: prepared.bundle, deliveries, ...(request.workId ? { workId: request.workId } : {}) } };
+          provenance: { activityId: id, consumer: owner.consumer, bundle: prepared.bundle, deliveries, ...supplyProvenance, ...(request.workId ? { workId: request.workId } : {}) } };
       });
       return this.#account(receipt);
     } catch (error) {
@@ -121,7 +147,7 @@ export class ActivityCoordinator {
       if (existing.owner !== request.owner || existing.quantity !== request.quantity) throw Error('delivery_join_conflict');
       return demand;
     }
-    if (this.#active.deliveries.length >= 32) throw Error('activity_subscriber_capacity');
+    if (this.#active.deliveries.length - this.#active.targetDeliveryIds.length >= 32) throw Error('activity_subscriber_capacity');
     this.#trace?.record('activity.delivery_joining', { ...request, consumer: subscriber.consumer });
     // All checks and both mutations are synchronous: an owner cannot close between them.
     this.#ledger.joinSupply(this.#active.supplyId, request.deliveryId, request.quantity);
@@ -182,6 +208,7 @@ export class ActivityCoordinator {
       this.#ledger.settleSupply(this.#active.supplyId, evidence);
       this.#ledger.closeSupply(this.#active.supplyId);
     }
+    for (const deliveryId of this.#active.targetDeliveryIds) { this.#ledger.cancelDelivery(deliveryId); this.#ledger.closeDelivery(deliveryId); }
     this.#invocations.settleActivity(id, evidence);
     this.#active = null;
   }

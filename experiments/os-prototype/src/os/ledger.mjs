@@ -1,10 +1,12 @@
 import { copyMessage } from './value.mjs';
+import { executionPolicy } from './execution-policy.mjs';
 
 const identity = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const amount = (value, minimum = 0) => Number.isSafeInteger(value) && value >= minimum && value <= 2_147_483_647;
 const amountMap = (value, minimum = 0, unknown = false) => value && typeof value === 'object' && !Array.isArray(value) &&
   Object.keys(value).length <= 256 && Object.entries(value).every(([key, quantity]) => identity(key) && ((unknown && quantity === null) || amount(quantity, minimum)));
 const count = (values, key) => Object.hasOwn(values, key) ? values[key] : 0;
+const supplyAllocations = executionPolicy.offers + executionPolicy.roots;
 
 /** One stock/claim ledger. Resource keys include location and component identity. */
 export class ResourceLedger {
@@ -19,6 +21,7 @@ export class ResourceLedger {
 
   get epoch() { return this.#frame?.epoch ?? null; }
   get needsObservation() { return this.#needsObservation; }
+  get availableDeliverySlots() { return 256 - this.#deliveries.size; }
 
   observe(frame) {
     frame = copyMessage(frame);
@@ -164,6 +167,8 @@ export class ResourceLedger {
     const outstanding = demand.state === 'pending' ? demand.spec.quantity - demand.credited : 0, allocated = this.#allocated(id);
     return copyMessage({ ...demand, outstanding, allocated, unallocated: Math.max(0, outstanding - allocated) });
   }
+  /** Trusted bounded view includes internal per-attempt target shares as well as guest deliveries. */
+  pendingDeliveries() { return [...this.#deliveries.values()].filter(demand => demand.state === 'pending').map(demand => this.delivery(demand.id)); }
   cancelDelivery(id) {
     const demand = this.#delivery(id);
     demand.withdrawn = true;
@@ -190,7 +195,7 @@ export class ResourceLedger {
   beginSupply(id, spec) {
     spec = copyMessage(spec);
     if (!Number.isSafeInteger(id) || id < 1 || !spec || !identity(spec.epoch) || !identity(spec.resource) || !identity(spec.method) ||
-        !amount(spec.expected, 1) || spec.expected > 64 || !Array.isArray(spec.deliveries) || !spec.deliveries.length || spec.deliveries.length > 32 ||
+        !amount(spec.expected, 1) || spec.expected > 64 || !Array.isArray(spec.deliveries) || !spec.deliveries.length || spec.deliveries.length > supplyAllocations ||
         new Set(spec.deliveries.map(entry => entry?.id)).size !== spec.deliveries.length ||
         Object.keys(spec).some(key => !['epoch', 'resource', 'method', 'expected', 'deliveries'].includes(key))) throw Error('invalid_supply');
     const existing = this.#supplies.get(id);
@@ -229,6 +234,7 @@ export class ResourceLedger {
       return { credits: [] };
     }
     if (evidence.accountingComplete !== true) return { credits: [], unresolved: true };
+    if (evidence.quantity > supply.produced) this.#needsObservation = true;
     supply.effectId = evidence.effectId;
     supply.produced = evidence.quantity;
     return { credits: this.#distribute(supply) };
@@ -263,6 +269,7 @@ export class ResourceLedger {
     const demand = this.#delivery(demandId);
     if (!amount(quantity, 1)) throw Error('invalid_demand_allocation');
     if (supply.state !== 'running') throw Error('supply_stopping');
+    if (supply.allocations.length >= supplyAllocations) throw Error('supply_capacity_unavailable');
     if (supply.spec.epoch !== this.#frame?.epoch || demand.epoch !== supply.spec.epoch || demand.state !== 'pending' || demand.withdrawn ||
         demand.spec.resource !== supply.spec.resource || !demand.spec.methods.includes(supply.spec.method)) throw Error('supply_inapplicable');
     if (supply.allocations.some(allocation => allocation.demandId === demandId)) throw Error('demand_already_joined');

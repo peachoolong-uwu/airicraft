@@ -6,11 +6,13 @@ import { executionPolicy } from './execution-policy.mjs';
 
 const name = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+export const workPolicy = Object.freeze({ version: 'os-work-v1', supplyRetryMillis: 5000 });
 const admissionRejections = new Set(['operation_not_granted', 'invocation_closing', 'invocation_unknown', 'stale_observation',
   'resource_reconciling', 'resource_unavailable', 'asset_unavailable', 'capacity_unavailable', 'target_unavailable',
-  'container_changed', 'invalid_transfer', 'unsupported_transfer_item', 'ambiguous_item_components']);
+  'container_changed', 'invalid_transfer', 'unsupported_transfer_item', 'ambiguous_item_components', 'supply_offer_stale',
+  'demand_unknown', 'demand_capacity', 'supply_capacity', 'supply_capacity_unavailable', 'supply_inapplicable']);
 
-/** Owned finite work waits. Only the coordinator may turn a selected offer into physical admission. */
+/** Owned work and supply scheduling. Only the coordinator may turn a selected offer into physical admission. */
 export class WorkService {
   #invocations;
   #activities;
@@ -19,7 +21,11 @@ export class WorkService {
   #now;
   #epoch;
   #trace;
+  #supplies;
+  #maximumWork;
   #requests = new Map();
+  #supplyRequests = new Map();
+  #supplyDeferrals = new Map();
   #history = new Map();
   #roots = new Set();
   #sequence = 0;
@@ -29,7 +35,7 @@ export class WorkService {
   #capture = null;
   #invalidatedThrough = 0;
 
-  constructor({ invocations, activities, operations, rules, epoch, now = () => performance.now(), trace }) {
+  constructor({ invocations, activities, operations, rules, supplies, epoch, now = () => performance.now(), trace }) {
     const catalog = supplyOperations(operations), copied = copyMessage(rules);
     if (!object(copied) || Object.keys(copied).length > 32) throw Error('invalid_work_rules');
     this.#rules = new Map();
@@ -41,6 +47,11 @@ export class WorkService {
           Object.keys(rule).some(key => !['priority', 'kind', 'context'].includes(key))) throw Error('invalid_work_rules');
       this.#rules.set(operation, { ...rule, grant: native.grant });
     }
+    if (supplies && (!Number.isSafeInteger(supplies.maximumOffers) || supplies.maximumOffers < 0 ||
+        supplies.maximumOffers > executionPolicy.roots * 32 || supplies.operations.some(operation => !this.#rules.has(operation))))
+      throw Error('invalid_work_supply_rules');
+    this.#supplies = supplies;
+    this.#maximumWork = executionPolicy.invocations * executionPolicy.offers - (supplies?.maximumOffers ?? 0);
     this.#invocations = invocations; this.#activities = activities; this.#epoch = epoch; this.#now = now; this.#trace = trace;
     this.#policy = new SchedulingPolicy({ epoch });
   }
@@ -59,7 +70,7 @@ export class WorkService {
       return existing.id;
     }
     if (sequence <= (this.#history.get(owner) ?? 0)) throw Error('work_retired');
-    if (this.#requests.size >= executionPolicy.invocations * executionPolicy.offers) throw Error('work_capacity');
+    if (this.#requests.size >= this.#maximumWork) throw Error('work_capacity');
     if ([...this.#requests.values()].filter(record => record.owner === owner).length >= executionPolicy.offers) throw Error('invocation_work_capacity');
     if (this.#sequence === Number.MAX_SAFE_INTEGER) throw Error('work_id_exhausted');
     const id = `work:${++this.#sequence}`;
@@ -88,25 +99,41 @@ export class WorkService {
     return true;
   }
   pending() {
-    this.poll();
-    return [...this.#requests.values()].filter(record => record.phase === 'queued').map(record =>
-      ({ id: record.id, owner: record.owner, consumer: record.consumer, request: copyMessage(record.request) }));
+    this.poll(); this.#refreshSupplies();
+    return this.#records().filter(record => record.phase === 'queued').map(record =>
+      ({ id: record.id, owner: record.owner, consumer: record.consumer, request: copyMessage(record.request),
+        ...(record.supply ? { supply: copyMessage(record.supply), deferred: this.#deferral(record) ? { ...this.#deferral(record) } : null } : {}) }));
   }
   take(owner, id) {
-    const record = this.#get(id);
-    if (record.owner !== owner) throw Error('work_unknown');
+    const record = this.#requests.get(id);
+    if (!record || record.owner !== owner) throw Error('work_unknown');
     this.#invocations.authorize(owner, record.rule.grant);
     if (record.phase !== 'finished') return { status: 'pending' };
     this.#requests.delete(id);
     return structuredClone(record.result);
   }
+  join(value) {
+    if (this.#fault) throw Error('work_service_failed');
+    const request = copyMessage(value), record = this.#active && this.#get(this.#active);
+    if (!record || !request || request.activityId !== record.activityId) throw Error('activity_unknown');
+    const delivery = this.#activities.join(request), consumer = delivery.spec.consumer;
+    if (!record.servedRoots.has(consumer)) {
+      this.#policy.served({ ...record.selection, roots: [consumer] });
+      record.servedRoots.add(consumer);
+      this.#trace?.record('work.join_served', { id: record.id, activityId: record.activityId, consumer, deliveryId: delivery.id });
+    }
+    return delivery;
+  }
   poll() {
     for (const record of this.#requests.values()) if (!this.#running(record.owner) && !['admitting', 'active'].includes(record.phase)) this.#requests.delete(record.id);
+    for (const record of this.#supplyRequests.values()) if (record.phase === 'finished' ||
+      (record.phase === 'queued' && record.supply.owners.some(owner => !this.#running(owner)))) this.#supplyRequests.delete(record.id);
     for (const owner of this.#history.keys()) if (!this.#running(owner) && ![...this.#requests.values()].some(record => record.owner === owner)) this.#history.delete(owner);
     for (const root of this.#roots) {
       try { if (this.#invocations.execution(root).phase === 'terminal') this.#roots.delete(root); }
       catch (error) { if (error.message !== 'invocation_unknown') throw error; this.#roots.delete(root); }
     }
+    for (const [key, deferred] of this.#supplyDeferrals) if (!this.#roots.has(deferred.consumer) || this.#now() >= deferred.retryAt) this.#supplyDeferrals.delete(key);
   }
   tick({ authority = 'unknown' } = {}) {
     this.poll();
@@ -124,7 +151,8 @@ export class WorkService {
       const record = this.#get(decision.offerId);
       this.#trace?.record('work.selected', { decision, owner: record.owner, basis: record.assessment });
       record.phase = 'admitting'; record.selection = copyMessage(decision);
-      this.#launch(record, () => this.#activities.admit({ owner: record.owner, operation: record.request.operation, arguments: record.request.arguments, workId: record.id }), true);
+      this.#launch(record, () => this.#activities.admit(record.supply ? { supplyOfferId: record.id, workId: record.id }
+        : { owner: record.owner, operation: record.request.operation, arguments: record.request.arguments, workId: record.id }), true);
     }
     return decision;
   }
@@ -134,11 +162,17 @@ export class WorkService {
     this.#policy.advance(interval);
   }
   state() {
-    return { requests: this.#requests.size, active: this.#active, busy: this.#job !== null, fault: this.#fault, scheduling: this.#policy.state() };
+    return { requests: this.#requests.size, supplyRequests: this.#supplyRequests.size, maximumWork: this.#maximumWork,
+      supplyDeferrals: [...this.#supplyDeferrals.values()].map(value => ({ ...value })),
+      active: this.#active, busy: this.#job !== null, fault: this.#fault, scheduling: this.#policy.state() };
   }
   #launch(record, operation, admitting) {
     this.#job = Promise.resolve().then(operation).then(result => {
-      if (admitting && !result.receipt.disposition && result.receipt.phase !== 'admission_rejected') this.#policy.served(record.selection);
+      record.activityId = result.activityId;
+      if (admitting && !result.receipt.disposition && result.receipt.phase !== 'admission_rejected') {
+        this.#policy.served(record.selection);
+        record.servedRoots = new Set(record.selection.roots);
+      }
       if (result.evidence.released !== true || result.evidence.accountingComplete !== true) {
         record.phase = 'active'; this.#active = record.id; return;
       }
@@ -148,12 +182,15 @@ export class WorkService {
         ...(rejected ? { reason: name(result.receipt.reason) ? result.receipt.reason : result.receipt.disposition ?? 'admission_rejected' } : {}) };
       record.phase = 'finished'; this.#active = null;
       // An effect changes the feasibility basis even when its final material result is failure.
-      this.#invalidatedThrough = this.#capture?.sequence ?? 0;
-      for (const queued of this.#requests.values()) queued.assessment = null;
+      this.#invalidate();
       this.#trace?.record('work.finished', record.result, { cleanup: true });
+      if (record.supply && (status !== 'success' || (result.evidence.produced?.[record.supply.resource] ?? 0) < record.supply.quantity))
+        this.#defer(record, record.result.reason ?? status);
     }).catch(error => {
       const reason = String(error?.message ?? 'work_failed').slice(0, 256), active = this.#invocations.activity();
-      if (active && [...active.subscribers, ...active.cleanupOwners].includes(record.owner)) {
+      const owners = record.supply?.owners ?? [record.owner];
+      // Shared subscribers can outlive the proposer, including a later join after the admission reply.
+      if (active && (active.id === record.activityId || [...active.subscribers, ...active.cleanupOwners].some(owner => owners.includes(owner)))) {
         record.phase = 'active'; this.#active = record.id; this.#fault = reason;
       } else {
         record.phase = 'finished'; this.#active = null;
@@ -161,18 +198,48 @@ export class WorkService {
         if (!admissionRejections.has(reason)) this.#fault = reason;
       }
       if (this.#fault && this.#running(record.owner)) this.#invocations.failed(record.owner, reason);
+      if (record.supply) this.#defer(record, reason);
       this.#trace?.record('work.rejected', { id: record.id, reason, fault: this.#fault }, { cleanup: true });
     }).finally(() => { this.#job = null; this.poll(); });
   }
   #updateSchedule() {
+    this.#refreshSupplies();
     const now = this.#now();
-    this.#policy.update({ roots: [...this.#roots], offers: [...this.#requests.values()].filter(record => record.phase === 'queued').map(record => {
+    this.#policy.update({ roots: [...this.#roots], offers: this.#records().filter(record => record.phase === 'queued').map(record => {
       const seen = record.assessment, current = seen && now >= seen.receivedAt && seen.ageUpperBoundMillis + now - seen.receivedAt < 2000;
-      return { id: record.id, roots: [record.consumer], kind: record.rule.kind, priority: record.rule.priority, context: null,
-        readiness: current ? seen.readiness : 'unknown' };
+      return { id: record.id, roots: record.supply?.consumers ?? [record.consumer], kind: record.rule.kind,
+        priority: Math.max(record.rule.priority, record.supply?.priority ?? 0), context: null,
+        readiness: this.#deferral(record) ? 'blocked' : current ? seen.readiness : 'unknown' };
     }) });
   }
-  #get(id) { const record = this.#requests.get(id); if (!record) throw Error('work_unknown'); return record; }
+  #refreshSupplies() {
+    if (!this.#supplies) return;
+    const offers = this.#supplies.offers(), current = new Set(offers.map(offer => offer.id));
+    for (const [id, record] of this.#supplyRequests) if (record.phase === 'queued' && !current.has(id)) this.#supplyRequests.delete(id);
+    for (const supply of offers) {
+      if (this.#supplyRequests.has(supply.id)) continue;
+      this.#trace?.record('supply.proposed', supply);
+      this.#supplyRequests.set(supply.id, { id: supply.id, owner: supply.owner, consumer: supply.anchor, supply,
+        request: { operation: supply.operation, arguments: supply.arguments, context: null }, rule: this.#rules.get(supply.operation), phase: 'queued', assessment: null });
+      for (const root of supply.consumers) this.#roots.add(root);
+    }
+  }
+  #invalidate() {
+    this.#invalidatedThrough = this.#capture?.sequence ?? 0;
+    for (const queued of this.#records()) queued.assessment = null;
+  }
+  #defer(record, reason) {
+    this.#invalidate();
+    // Changed demand/ownership needs a fresh selection, rather than a source-availability retry timer.
+    if (['supply_offer_stale', 'invocation_closing', 'invocation_unknown', 'demand_unknown'].includes(reason)) return;
+    const deferred = { consumer: record.supply.anchor, rule: record.supply.rule, reason, retryAt: this.#now() + workPolicy.supplyRetryMillis };
+    this.#supplyDeferrals.set(this.#supplyKey(record), deferred);
+    this.#trace?.record('supply.deferred', { id: record.id, ...deferred }, { cleanup: true });
+  }
+  #supplyKey(record) { return JSON.stringify([record.supply.rule, record.supply.anchor]); }
+  #deferral(record) { return record.supply ? this.#supplyDeferrals.get(this.#supplyKey(record)) : null; }
+  #records() { return [...this.#requests.values(), ...this.#supplyRequests.values()]; }
+  #get(id) { const record = this.#requests.get(id) ?? this.#supplyRequests.get(id); if (!record) throw Error('work_unknown'); return record; }
   #running(id) {
     try { return this.#invocations.execution(id).phase === 'running'; }
     catch (error) { if (error.message !== 'invocation_unknown') throw error; return false; }

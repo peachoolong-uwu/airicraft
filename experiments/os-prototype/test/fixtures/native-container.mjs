@@ -5,6 +5,7 @@ export class NativeContainer {
   submissions = 0;
   cancellations = 0;
   quantity = 4;
+  playerQuantity = 0;
   capture = 0;
   beforeReply = async () => {};
   async call(name, args = {}) {
@@ -12,7 +13,7 @@ export class NativeContainer {
     if (name === 'os_observe') result.frame = { epoch: 'world', captureId: `capture-${++this.capture}`, world: { worldId: 'fixture', dimension: 'overworld', alive: true },
       facts: { supportedItems: [this.itemId], window: { open: true, windowId: 'home-window', syncId: 1, cursor: { count: 0 }, slots: [
         { id: 0, container: true, itemId: this.itemId, variant: '', count: this.quantity, maxCount: 64 },
-        { id: 1, container: false, itemId: '', variant: '', count: 0, maxCount: 64 }
+        { id: 1, container: false, itemId: this.playerQuantity ? this.itemId : '', variant: '', count: this.playerQuantity, maxCount: 64 }
       ] } } };
     else if (name === 'os_lease') {
       if (args.action === 'acquire') this.lease = { epoch: 'world', generation: 1, hostId: args.hostId };

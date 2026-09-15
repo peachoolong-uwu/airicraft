@@ -18,8 +18,9 @@ import { EffectBroker } from '../src/os/effects.mjs';
 import { EffectJournal } from '../src/os/journal.mjs';
 import { NativeContainer } from './fixtures/native-container.mjs';
 import { WorkService } from '../src/os/work.mjs';
+import { SupplyPlanner } from '../src/os/supply-planner.mjs';
 
-async function fixture(run, { workEnabled = false } = {}) {
+async function fixture(run, { workEnabled = false, suppliesEnabled = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-loop-'));
   const library = await DefinitionLibrary.open(directory), invocations = new InvocationBroker(), runners = new RunnerPool({ invocations });
   const grants = ['observe:wheat', 'observe:sheep', 'resource:wheat', 'container:home'];
@@ -31,13 +32,15 @@ async function fixture(run, { workEnabled = false } = {}) {
   const resources = new ResourceService({ invocations, ledger, operations,
     resources: { wheat: { key: resourceKey, grant: 'resource:wheat', methods: ['chest'], priority: 12 } } });
   let work, workNative, workJournal, workEffects;
-  if (workEnabled) {
+  if (workEnabled || suppliesEnabled) {
     workNative = new NativeContainer({ itemId: 'minecraft:wheat' });
     workJournal = await EffectJournal.open(join(directory, 'work-effects.sqlite'));
     workEffects = new EffectBroker({ native: workNative, journal: workJournal, expectedWorld: 'fixture' });
     await workEffects.start();
-    work = new WorkService({ invocations, operations, epoch: 'world', now: () => 0,
-      activities: new ActivityCoordinator({ invocations, ledger, effects: workEffects, operations }),
+    const supplies = suppliesEnabled ? new SupplyPlanner({ resources, operations, epoch: 'world',
+      rules: { wheat: { resource: resourceKey, operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat' }, maximum: 64 } } }) : undefined;
+    work = new WorkService({ invocations, operations, supplies, epoch: 'world', now: () => 0,
+      activities: new ActivityCoordinator({ invocations, ledger, effects: workEffects, operations, supplies }),
       rules: { chest: { priority: 12, kind: 'land', context: null } } });
   }
   const loop = new GeneratorLoop({ installations: host, invocations, runners, waits, resources, work });
@@ -251,6 +254,31 @@ test('an observation query without scopes is a typed argument rejection', async 
 
 const supplySource = 'function* main(os) { yield os.target("wheat",2); return yield os.demand("wheat",2,["chest"]); }';
 
+test('sandboxed demands are supplied automatically while an unrelated root completes and one subscriber cancels', async () => fixture(async ({ definition, install, until, invocations, resources, ledger, loop, work, workNative }) => {
+  const source = await definition(supplySource), a = await install(source), b = await install(source);
+  const other = await install(await definition('function* main() { return "independent"; }'));
+  await until(() => resources.pending().length === 2 && invocations.inspect(other.rootId).outcome);
+  const demands = resources.pending(), aId = demands.find(item => item.owner === a.rootId).id, bId = demands.find(item => item.owner === b.rootId).id;
+  assert.equal(invocations.inspect(other.rootId).outcome.value, 'independent');
+  const pending = work.pending();
+  assert.equal(pending.length, 2);
+  for (const item of pending) work.publish(item.id, { epoch: 'world', captureId: 'automatic-supply', captureSequence: 1, readiness: 'ready', ageUpperBoundMillis: 0 });
+  await until(() => invocations.activity());
+  loop.cancel(a.rootId);
+  await until(() => ledger.delivery(aId).withdrawn && workNative.submissions === 1 && !work.state().busy);
+  assert.equal(workNative.cancellations, 0);
+  workNative.progress(4, 4, false);
+  await until(() => ledger.delivery(bId).credited === 2);
+  assert.equal(invocations.inspect(b.rootId).outcome, null);
+  workNative.progress(4, 4, true);
+  await until(() => invocations.inspect(b.rootId).outcome && invocations.inspect(a.rootId).outcome);
+  assert.equal(invocations.inspect(a.rootId).outcome.status, 'cancelled');
+  assert.equal(invocations.inspect(b.rootId).outcome.value.status, 'fulfilled');
+  assert.equal(invocations.inspect(b.rootId).outcome.value.credited, 2);
+  assert.equal(workNative.submissions, 1);
+  assert.equal(resources.state().deliveries, 0);
+}, { suppliesEnabled: true }));
+
 test('resource-loop demands from independent VMs share one journalled transfer and wait for release', async () => fixture(async ({ definition, install, until, invocations, resources, ledger, operations, directory }) => {
   const native = new NativeContainer({ itemId: 'minecraft:wheat' }), journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
   const effects = new EffectBroker({ native, journal, expectedWorld: 'fixture' });
@@ -261,7 +289,11 @@ test('resource-loop demands from independent VMs share one journalled transfer a
     const other = await install(await definition('function* main() { return "independent"; }'));
     await until(() => resources.pending().length === 2 && invocations.inspect(other.rootId).outcome);
     assert.equal(invocations.activity(), null);
-    const deliveries = resources.pending().map(item => ({ id: item.id, owner: item.owner, quantity: item.quantity }));
+    const pending = resources.pending();
+    const deliveries = [a, b].map(({ rootId }) => {
+      const { id, owner, quantity } = pending.find(item => item.owner === rootId);
+      return { id, owner, quantity };
+    });
     await activities.admit({ owner: a.rootId, operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat', quantity: 4 }, deliveries });
     native.progress(4, 4, false); await activities.poll();
     assert.equal(resources.take(a.rootId, deliveries[0].id).status, 'pending');
@@ -284,7 +316,11 @@ test('resource-loop cancellation keeps a shared transfer for its remaining VM an
     const activities = new ActivityCoordinator({ invocations, ledger, effects, operations });
     const source = await definition(supplySource), a = await install(source), b = await install(source);
     await until(() => resources.pending().length === 2);
-    const deliveries = resources.pending().map(item => ({ id: item.id, owner: item.owner, quantity: item.quantity }));
+    const pending = resources.pending();
+    const deliveries = [a, b].map(({ rootId }) => {
+      const { id, owner, quantity } = pending.find(item => item.owner === rootId);
+      return { id, owner, quantity };
+    });
     await activities.admit({ owner: a.rootId, operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat', quantity: 4 }, deliveries });
     native.progress(4, 1, false); await activities.poll();
     loop.cancel(a.rootId); await activities.poll();
