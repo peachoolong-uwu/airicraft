@@ -302,6 +302,7 @@ public final class ClientRuntimeController {
 	}
 
 	public synchronized ReloadResult reload() {
+		currentAgentRuntime().requireOrdinaryControl();
 		AiricraftConfig nextConfig;
 		AgentConfig nextAgentConfig;
 		IdleIdeasConfig nextIdleIdeasConfig;

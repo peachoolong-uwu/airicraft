@@ -266,6 +266,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final EmbodiedPlannerActionToolExecutor plannerActionToolExecutor;
 	private final MinecraftBlockAcquisitionKnowledgeService blockAcquisitionKnowledgeService = new MinecraftBlockAcquisitionKnowledgeService();
 	private final boolean codexDriverActive;
+	private final NativeDriverService nativeDriver;
 
 	private boolean initialized;
 	private volatile long tickCount;
@@ -356,6 +357,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		this.plannerJournal = plannerShell.plannerJournal();
 		this.plannerCallJournal = plannerShell.plannerCallJournal();
 		this.debugRecorder.recordDialogueState(this.dialogueRuntime.snapshot());
+		this.nativeDriver = codexDriverActive ? new NativeDriverService(
+			new ai.moeru.airicraft.os.NativeActionRuntime(new NativeContainerActions(new MinecraftContainerAccess(
+				() -> activeTaskInProgress() || actionGraphCoordinator.hasNonterminal() || playerItemUseController.eating()
+					|| !worldTaskExecutor.released() || survivalReflexRuntime.snapshot().holdsNormalTasks(),
+				() -> survivalReflexRuntime.snapshot().ownsActuation(), effectiveCameraController, baritoneFacade), System::nanoTime), System::nanoTime),
+			System::nanoTime, () -> tickCount, EmbodiedAgentRuntime::integratedServerTick) : null;
 	}
 
 	static EmbodiedAgentRuntime createForTests(WorldTaskExecutor worldTaskExecutor) {
@@ -402,6 +409,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public void onWorldLeave() {
+		if (nativeDriver != null) nativeDriver.interrupt("world_left");
 		sessionRuntime.onWorldLeave(tickCount, eventBuffer);
 		sessionSnapshot = sessionRuntime.snapshot();
 		autoLanOpenState.clear();
@@ -473,6 +481,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			physicalObserver().reset();
 		}
 		if (sessionSnapshot.requiresRespawn()) {
+			if (nativeDriver != null) nativeDriver.tick();
 			physicalObserver().reset();
 			behaviorTreeRuntime.tick(
 				client,
@@ -498,6 +507,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			Map.of("itemId", result.itemId(), "reason", result.reason())
 		));
 		tickSurvivalReflex(client);
+		if (nativeDriver != null) nativeDriver.tick();
 		drainEventPipeline();
 
 		nearbyPlayerTracker.poll(client, tickCount, eventBuffer);
@@ -542,6 +552,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return;
 		}
 
+		if (nativeDriver != null && nativeDriver.ownsPlayer()) {
+			lastKnownPlayerHealth = currentPlayerHealth(client);
+			return;
+		}
 		TaskSnapshot previousTaskSnapshot = taskSnapshot;
 		tickActionGraph(worldEvidence, true);
 		activeJobRuntime.tick(
@@ -740,6 +754,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void releaseNormalActuatorsForReflex(MinecraftClient client) {
+		if (nativeDriver != null) nativeDriver.interrupt("reflex_takeover");
 		worldTaskExecutor.onWorldLeave();
 		behaviorTreeRuntime.stop(client);
 		followCapability.clear();
@@ -815,6 +830,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			cancelActionsForPlayerDeath(client);
 			deathBoundaryApplied = true;
 		}
+		if (nativeDriver != null && nativeDriver.activated()) return;
 
 		if (
 			client == null
@@ -908,6 +924,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public void shutdown() {
+		if (nativeDriver != null) nativeDriver.interrupt("runtime_shutdown");
 		initialized = false;
 		tickCount = 0L;
 		worldLoadTick = -1L;
@@ -1212,14 +1229,23 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	public List<Map<String, Object>> codexDriverTools() {
 		requireCodexDriverActive();
-		return dialogueRuntime.allAvailableTools();
+		var tools = new ArrayList<>(dialogueRuntime.allAvailableTools());
+		tools.addAll(NativeDriverService.tools());
+		return List.copyOf(tools);
 	}
 
 	public CompletableFuture<ExternalPlannerToolResult> executeCodexDriverTool(String name, JsonObject arguments) {
 		requireCodexDriverActive();
 		String callId = UUID.randomUUID().toString();
-		debugRecorder.recordExternalTool(tickCount, callId, name, "requested", arguments == null ? Map.of() : arguments.deepCopy());
 		try {
+			if (NativeDriverService.handles(name)) NativeDriverService.validateEnvelope(arguments);
+			debugRecorder.recordExternalTool(tickCount, callId, name, "requested", arguments == null ? Map.of() : arguments.deepCopy());
+			if (NativeDriverService.handles(name)) {
+				var result = nativeDriver.execute(name, arguments);
+				debugRecorder.recordExternalTool(tickCount, callId, name, "completed", result);
+				return CompletableFuture.completedFuture(new ExternalPlannerToolResult(name, result.toString(), null));
+			}
+			requireOrdinaryToolControl(name);
 			return dialogueRuntime.executeExternalTool(name, arguments).whenComplete((result, error) ->
 				debugRecorder.recordExternalTool(tickCount, callId, name, error == null ? "completed" : "failed",
 					error == null ? result.text() : String.valueOf(error.getMessage())));
@@ -1791,6 +1817,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public TaskSnapshot cancelTask(String reason) {
+		if (nativeDriver != null) nativeDriver.interrupt("operator_stop");
 		if (actionGraphCoordinator.hasNonterminal()) {
 			actionGraphCoordinator.cancelAll(reason == null || reason.isBlank() ? "cancelled" : reason, tickCount);
 			pendingActionGraphTerminalEvent = null;
@@ -2295,6 +2322,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	@Override
 	public CompletableFuture<String> execute(PlannerToolCall toolCall) {
+		if (toolCall != null) requireOrdinaryToolControl(toolCall.name());
 		return plannerActionToolExecutor.execute(toolCall);
 	}
 
@@ -2478,6 +2506,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void requireLivingPlayerForAction() {
+		requireOrdinaryControl();
 		if (sessionSnapshot.requiresRespawn()) {
 			throw new BridgeUnavailableException(
 				"player_dead",
@@ -3157,7 +3186,17 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private void beforePlannerToolExecution(PlannerToolCall toolCall) {
+		if (toolCall != null) requireOrdinaryToolControl(toolCall.name());
 		worldReadLedger.advanceToolCall();
+	}
+
+	public void requireOrdinaryControl() {
+		if (nativeDriver != null && nativeDriver.ownsPlayer())
+			throw new BridgeUnavailableException("os_player_owned", "The OS lease or unfinished native cleanup still owns the player");
+	}
+
+	private void requireOrdinaryToolControl(String name) {
+		if (nativeDriver != null && !nativeDriver.allowsOrdinaryTool(name)) requireOrdinaryControl();
 	}
 
 	private String guardedModificationNeedsInspect(String toolName, List<BlockPos> targets) {

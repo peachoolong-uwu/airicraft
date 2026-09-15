@@ -341,7 +341,10 @@ public final class ModBridgeServer {
 			}
 
 			try {
-				return onClientThread(() -> playerViewService.lookAt(request.x(), request.y(), request.z(), request.durationTicks()));
+				return onClientThread(() -> {
+					agentRuntime().requireOrdinaryControl();
+					return playerViewService.lookAt(request.x(), request.y(), request.z(), request.durationTicks());
+				});
 			}
 			catch (PlayerViewService.PlayerViewException exception) {
 				throw new BridgeUnavailableException(exception.code(), exception.getMessage());
