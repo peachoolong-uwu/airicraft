@@ -65,16 +65,20 @@ export class InstallationHost {
     return { installationId: record.id, digest: record.digest, rootId: record.rootId, inputDigest: record.inputDigest ?? null,
       phase: record.phase, invocation: record.rootId ? this.#invocations.inspect(record.rootId) : null };
   }
+  describe(id, alias = null) {
+    const { digest, definition } = alias === null ? this.#lookup(id) : this.#dependency(id, alias);
+    return { digest, kind: definition.kind, mode: definition.mode ?? null };
+  }
   async spawn(parentId, alias, input, options = {}) {
-    const { record, definition: parent } = this.#lookup(parentId);
-    if (typeof alias !== 'string' || !Object.hasOwn(parent.dependencies, alias)) throw Error('dependency_not_declared');
-    const digest = parent.dependencies[alias], definition = record.closure.get(digest).definition;
+    const { digest, definition } = this.#dependency(parentId, alias);
     if (definition.kind !== 'behavior') throw Error('dependency_requires_worker_service');
     options = copyMessage(options);
-    if (Object.keys(options).some(key => !['grants', 'failurePolicy'].includes(key))) throw Error('invalid_spawn_options');
+    if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !['grants', 'failurePolicy'].includes(key)) ||
+        Object.hasOwn(options, 'failurePolicy') && !['cancel_siblings', 'collect_all'].includes(options.failurePolicy)) throw Error('invalid_spawn_options');
     input = compileContract(definition.inputContract)(input);
     const grants = copyMessage(options.grants ?? definition.capabilities);
-    if (!Array.isArray(grants) || grants.some(grant => !definition.capabilities.includes(grant))) throw Error('capability_escalation');
+    if (!Array.isArray(grants) || grants.length > 64) throw Error('invalid_spawn_options');
+    if (grants.some(grant => !definition.capabilities.includes(grant))) throw Error('capability_escalation');
     for (const grant of definition.capabilities) if (!grants.includes(grant)) throw Error('capability_missing');
     for (const grant of grants) this.#invocations.authorize(parentId, grant);
     const handle = this.#invocations.spawn(parentId, { definition: digest, grants, outputContract: definition.outputContract,
@@ -206,6 +210,12 @@ export class InstallationHost {
     const owner = this.#invocations.execution(id), record = this.#get(this.#roots.get(owner.rootId));
     this.#check(record, 'installed');
     if (owner.phase !== 'running') throw Error('invocation_closing');
-    return { record, definition: record.closure.get(owner.definition).definition };
+    return { record, digest: owner.definition, definition: record.closure.get(owner.definition).definition };
+  }
+  #dependency(id, alias) {
+    const { record, definition } = this.#lookup(id);
+    if (typeof alias !== 'string' || !Object.hasOwn(definition.dependencies, alias)) throw Error('dependency_not_declared');
+    const digest = definition.dependencies[alias];
+    return { digest, definition: record.closure.get(digest).definition };
   }
 }

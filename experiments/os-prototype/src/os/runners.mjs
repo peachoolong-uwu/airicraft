@@ -65,11 +65,14 @@ export class RunnerPool {
   }
   resume(id, input = null) { return this.#evaluation(id, 'resume', input); }
   offers(id, input) { return this.#evaluation(id, 'offers', input); }
-  cancel(id, reason = 'cancelled') {
+  cancel(id, reason = 'cancelled') { this.#stop(id, reason, false); }
+  fail(id, reason) { this.#stop(id, reason, true); }
+  #stop(id, reason, failed) {
     const { rootId } = this.#invocations.execution(id), root = this.#get(rootId);
-    this.#invocations.cancel(id, reason);
+    if (failed) this.#invocations.failed(id, reason);
+    else this.#invocations.cancel(id, reason);
     this.#sweep(root); this.#changed(rootId);
-    if (id === rootId) { root.ready = false; root.runner.close().catch(() => {}); }
+    if (id === rootId || this.#invocations.execution(rootId).phase === 'stopping') { root.ready = false; root.runner.close().catch(() => {}); }
     this.#schedule();
   }
   async retire(rootId) {

@@ -1,6 +1,6 @@
 # Isolated execution foundation
 
-`RunnerPool` connects the owned invocation broker to disposable root processes. The existing prototype's `src/main.mjs` does not yet use this installation path. Library revision resolution, condition/work/worker services and the mixed-world scheduler are subsequent layers.
+`RunnerPool` connects the owned invocation broker to disposable root processes. The existing prototype's `src/main.mjs` does not yet use this installation path. The [library](library-api.md), [condition waits](wait-api.md), and [generator service loop](loop-api.md) now connect pinned definitions to passive observations and owned children. Work/worker services and the mixed-world scheduler remain subsequent layers.
 
 ## Ownership and lifecycle
 
