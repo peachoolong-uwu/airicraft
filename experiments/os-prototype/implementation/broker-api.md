@@ -1,6 +1,6 @@
 # Broker foundation
 
-The host modules in `src/os/` implement the ownership, stock and native-effect seams from the [handoff](../design/implementation-handoff.md). They are not yet the prototype's default `src/main.mjs` entrypoint. Guest runners, installed supply rules, complete lifecycle traces, and domain scheduling are subsequent layers.
+The host modules in `src/os/` implement the ownership, stock and native-effect seams from the [handoff](../design/implementation-handoff.md). They are not yet the prototype's default `src/main.mjs` entrypoint. Guest runners, supply selection, complete measurement traces, and domain scheduling are subsequent layers.
 
 ## Ownership and stock
 
@@ -21,6 +21,18 @@ Finite deliveries use host-issued increasing IDs. `requestDelivery` is idempoten
 The first domain adapter is `ContainerTransfer`, bound to one currently open window. It projects component-aware stock, destination capacity and exclusive targets into the ledger, and gives native work a quantity allowance. Mixed source variants are rejected because this native operation currently selects by item ID. Each transfer closes its owned window; shared physical visits and opening contexts are later work.
 
 These objects are trusted host interfaces. Passing them directly into a guest would bypass the intended capability and ownership boundary. The runner layer must translate bounded typed guest effects through these interfaces.
+
+## Supply declarations and lifecycle evidence
+
+An operation may declare `supplyDependencies`, an array of other registered operation names. Coordinator construction validates the complete bounded graph and rejects missing dependencies and cycles with their path. This validates declarations before installation; later supply selection still has to use those declarations, current demand and observed stock.
+
+Pass the same `DecisionTrace` as `trace` to the invocation broker, effect broker and activity coordinator. It records linked host lifecycle, admission and reconciliation events. In particular, mandatory parent close records each child outcome and join before consuming the handle. Native intent also remains in the independent durable journal.
+
+Rejected admissions retain their copied request, reason, and available owner/capture/resource basis. A rejection does not alter another admission's busy ownership. If recording that rejection fails, the original domain error survives while trace failure starts the same safe drain. Ordinary progress uses ordinary trace capacity; terminal and reconciliation evidence can use the cleanup reserve.
+
+`DecisionTrace.open` creates a new run directory and refuses to overwrite existing evidence. `record` copies and bounds an event before enqueueing it; `flush` waits for queued writes, and `close` appends a terminal stream record and closes files. Quota and queue failures latch an incomplete stream and notify subscribers asynchronously. The effect broker revokes authority and the coordinator stops ordinary admission. Cleanup recording uses reserved capacity and cannot prevent physical cancellation if the writer is broken. Drain physical obligations before closing the trace.
+
+The `trace.closed` completeness field describes this host event stream only. It does not establish full native history, clock classification, opportunity coverage or benchmark success. Native event-gap handling, bounded author queries, archive quota and evaluation verdicts remain part of the subsequent observation/evaluation layers.
 
 ## Validation
 

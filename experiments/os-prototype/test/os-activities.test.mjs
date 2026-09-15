@@ -9,6 +9,7 @@ import { EffectJournal } from '../src/os/journal.mjs';
 import { EffectBroker } from '../src/os/effects.mjs';
 import { ActivityCoordinator } from '../src/os/activities.mjs';
 import { ContainerTransfer } from '../src/os/container-transfer.mjs';
+import { DecisionTrace } from '../src/os/trace.mjs';
 
 class NativeContainer {
   lease = null;
@@ -47,19 +48,23 @@ class NativeContainer {
 
 test('the integrated admission path enforces stock protection and owns the player until journalled release', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-activities-'));
-  let journal, effects;
+  let journal, effects, trace;
+  const records = [];
   try {
+    trace = new DecisionTrace({ runId: 'activity-trace', writer: { write: async (_, bytes) => records.push(JSON.parse(bytes)), close: async () => {} } });
     journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
-    const native = new NativeContainer(), invocations = new InvocationBroker(), ledger = new ResourceLedger();
+    const native = new NativeContainer(), invocations = new InvocationBroker({ trace }), ledger = new ResourceLedger();
     const operation = new ContainerTransfer({ scope: 'home', windowId: 'home-window' });
     const root = invocations.install({ definition: 'rods@digest', grants: ['container:home'] });
     const other = invocations.install({ definition: 'other@digest', grants: ['container:home'] });
     const source = operation.resource('container', 'minecraft:string', '');
     ledger.target(root, source, 2); ledger.target(other, source, 2);
-    effects = new EffectBroker({ native, journal, expectedWorld: 'fixture' });
+    effects = new EffectBroker({ native, journal, expectedWorld: 'fixture', trace });
     await effects.start();
-    const activities = new ActivityCoordinator({ invocations, ledger, effects, operations: { transfer: operation } });
+    const activities = new ActivityCoordinator({ invocations, ledger, effects, operations: { transfer: operation }, trace });
     const request = { owner: root, operation: 'transfer', arguments: { direction: 'withdraw', itemId: 'minecraft:string', quantity: 3 } };
+    await assert.rejects(activities.admit({ ...request, owner: 'missing-root' }), /invocation_unknown/);
+    await assert.rejects(activities.admit({ ...request, arguments: { ...request.arguments, quantity: 0 } }), /invalid_transfer/);
     await assert.rejects(activities.admit(request), /resource_unavailable/);
     assert.equal(native.submissions, 0);
     assert.equal(invocations.activity(), null);
@@ -78,7 +83,26 @@ test('the integrated admission path enforces stock protection and owns the playe
     assert.equal(invocations.activity(), null);
     assert.deepEqual(await journal.unfinished(), []);
     assert.equal(native.submissions, 1);
-  } finally { await effects?.stop(); await journal?.close(); await rm(directory, { recursive: true, force: true }); }
+    await trace.flush();
+    const admission = records.find(event => event.type === 'activity.admitted').data;
+    const rejections = records.filter(event => event.type === 'activity.rejected').map(event => event.data);
+    assert.deepEqual(rejections.map(event => event.reason), ['invocation_unknown', 'invalid_transfer', 'resource_unavailable', 'player_owned']);
+    assert.equal(rejections[2].request.owner, root);
+    assert.equal(rejections[2].request.arguments.quantity, 3);
+    assert.equal(rejections[2].consumer, root);
+    assert.equal(rejections[2].definition, 'rods@digest');
+    assert.equal(rejections[2].observation.revision, 'capture-4');
+    assert.equal(rejections[2].bundle.inputs[source], 3);
+    const intent = records.find(event => event.type === 'native.intent').data;
+    const released = records.find(event => event.type === 'claim.released').data;
+    assert.equal(admission.owner, root);
+    assert.equal(intent.invocation, root);
+    assert.equal(intent.provenance.activityId, admission.id);
+    assert.deepEqual(intent.id, native.receipt.id);
+    assert.equal(released.activityId, admission.id);
+    assert.equal(released.evidence.released, true);
+    assert.equal(trace.status().incomplete, false);
+  } finally { await effects?.stop(); await journal?.close(); await trace?.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test('shared deliveries use one native attempt and cancellation drains only after the last subscriber withdraws', async () => {
@@ -119,6 +143,29 @@ test('shared deliveries use one native attempt and cancellation drains only afte
     assert.equal(native.submissions, 1);
     assert.deepEqual(await journal.unfinished(), []);
   } finally { await effects?.stop(); await journal?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('an oversized rejection trace preserves the admission error and revokes authority', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'airicraft-rejection-'));
+  let journal, effects, trace;
+  try {
+    trace = new DecisionTrace({ runId: 'rejection-trace', writer: { write: async () => {}, close: async () => {} },
+      limits: { segmentBytes: 1024, budgetBytes: 4096, cleanupBytes: 1024, queueBytes: 4096 } });
+    journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
+    const native = new NativeContainer(), invocations = new InvocationBroker({ trace }), ledger = new ResourceLedger();
+    const root = invocations.install({ definition: 'rods', grants: ['container:home'] });
+    effects = new EffectBroker({ native, journal, expectedWorld: 'fixture', trace });
+    await effects.start();
+    const activities = new ActivityCoordinator({ invocations, ledger, effects, trace,
+      operations: { transfer: new ContainerTransfer({ scope: 'home', windowId: 'home-window' }) } });
+    await assert.rejects(activities.admit({ owner: root, operation: 'transfer', arguments: {
+      direction: 'withdraw', itemId: 'minecraft:string', quantity: 2, invalid: 'x'.repeat(1024)
+    } }), /invalid_transfer/);
+    assert.equal(trace.status().reason, 'trace_event_limit');
+    assert.equal(native.submissions, 0);
+    assert.equal(native.lease, null);
+    assert.equal(invocations.activity(), null);
+  } finally { await effects?.stop(); await journal?.close(); await trace?.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test('a journal failure during progress polling revokes native authority and blocks replacement work', async () => {
@@ -344,4 +391,37 @@ test('native revocation prevents late subscribers from claiming output while cle
     assert.equal(ledger.delivery(1).credited, 1);
     assert.equal(invocations.activity(), null);
   } finally { await effects?.stop(); await journal?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('required trace failure revokes authority and preserves cleanup even when no further records can be written', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'airicraft-activities-'));
+  let journal, effects, trace;
+  try {
+    let broken = false;
+    trace = new DecisionTrace({ runId: 'trace-failure', writer: { write: async () => {
+      if (broken) throw Error('trace_disk_failed');
+    }, close: async () => {} } });
+    journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
+    const native = new NativeContainer(), invocations = new InvocationBroker({ trace }), ledger = new ResourceLedger();
+    const root = invocations.install({ definition: 'rods', grants: ['container:home'] });
+    effects = new EffectBroker({ native, journal, expectedWorld: 'fixture', trace });
+    await effects.start();
+    const activities = new ActivityCoordinator({ invocations, ledger, effects, trace,
+      operations: { transfer: new ContainerTransfer({ scope: 'home', windowId: 'home-window' }) } });
+    const request = { owner: root, operation: 'transfer', arguments: { direction: 'withdraw', itemId: 'minecraft:string', quantity: 2 } };
+    await activities.admit(request);
+    await trace.flush();
+    broken = true;
+    trace.record('qualification.inject_failure', {});
+    await assert.rejects(trace.flush(), /trace_disk_failed/);
+    assert.equal(native.lease, null);
+    await effects.stop();
+    await assert.rejects(activities.admit(request), /coordinator_failed/);
+    assert.equal(invocations.inspect(root).outcome, null);
+    native.progress(2, 1, true, 'CANCELLED');
+    await activities.poll();
+    assert.equal(invocations.inspect(root).outcome.status, 'failure');
+    assert.deepEqual(await journal.unfinished(), []);
+    assert.equal(trace.status().incomplete, true);
+  } finally { await effects?.stop(); await journal?.close(); await trace?.close().catch(() => {}); await rm(directory, { recursive: true, force: true }); }
 });

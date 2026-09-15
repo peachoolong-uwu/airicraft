@@ -1,5 +1,6 @@
 import { copyMessage } from './value.mjs';
 import { nativeIdKey } from './native-id.mjs';
+import { supplyOperations } from './supplies.mjs';
 
 /** One trusted admission path joins invocation ownership, resource claims and native effects. */
 export class ActivityCoordinator {
@@ -12,23 +13,43 @@ export class ActivityCoordinator {
   #busy = false;
   #fault = false;
   #last = null;
+  #trace;
 
-  constructor({ invocations, ledger, effects, operations }) {
+  constructor({ invocations, ledger, effects, operations, trace }) {
     this.#invocations = invocations; this.#ledger = ledger; this.#effects = effects;
-    this.#operations = new Map(Object.entries(operations));
+    this.#operations = supplyOperations(operations);
+    this.#trace = trace;
+    trace?.onFailure(error => this.#drain(error));
   }
   async admit(request) {
+    const attempt = { request: null, definition: null, consumer: null, basis: null, observation: null, bundle: null };
+    try {
+      request = copyMessage(request);
+      attempt.request = request;
+      return await this.#admit(request, attempt);
+    } catch (error) {
+      if (!attempt.admitted) {
+        try { this.#trace?.record('activity.rejected', { ...attempt, reason: String(error?.message ?? 'admission_failed').slice(0, 256) }); }
+        catch (traceError) { await this.#drain(traceError); }
+      }
+      throw error;
+    }
+  }
+  async #admit(request, attempt) {
     if (this.#fault) throw Error('coordinator_failed');
+    this.#trace?.assertHealthy();
     if (this.#busy || this.#active || this.#invocations.activity()) throw Error('player_owned');
-    request = copyMessage(request);
     if (!request || !Array.isArray(request.deliveries ?? []) || (request.deliveries?.length ?? 0) > 32) throw Error('invalid_activity');
     const operation = this.#operations.get(request.operation);
     if (!operation) throw Error('operation_unknown');
     this.#busy = true;
     try {
       const receipt = await this.#effects.execute(frame => {
+        attempt.basis = { epoch: frame.epoch, captureId: frame.captureId };
         const owner = this.#invocations.authorize(request.owner, operation.grant);
+        attempt.definition = owner.definition; attempt.consumer = owner.consumer;
         const prepared = operation.prepare(frame, request.arguments);
+        attempt.observation = prepared.observation; attempt.bundle = prepared.bundle;
         const deliveries = request.deliveries ?? [];
         for (const delivery of deliveries) {
           const subscriber = this.#invocations.authorize(delivery.owner, operation.grant);
@@ -51,6 +72,9 @@ export class ActivityCoordinator {
           throw error;
         }
         this.#active = { id, prepared, operation, supplyId, deliveries, cancelRequested: false };
+        attempt.admitted = true;
+        this.#trace?.record('activity.admitted', { id, owner: request.owner, definition: owner.definition, consumer: owner.consumer,
+          observation: prepared.observation, bundle: prepared.bundle, deliveries, supplyId });
         return { definition: owner.definition, invocation: request.owner, operation: operation.nativeOperation, arguments: prepared.arguments,
           provenance: { activityId: id, consumer: owner.consumer, bundle: prepared.bundle, deliveries } };
       });
@@ -82,6 +106,7 @@ export class ActivityCoordinator {
   }
   join(request) {
     if (this.#fault) throw Error('coordinator_failed');
+    this.#trace?.assertHealthy();
     if (this.#busy) throw Error('activity_busy');
     request = copyMessage(request);
     if (!this.#active || this.#active.id !== request.activityId || this.#active.supplyId === null) throw Error('activity_unknown');
@@ -96,10 +121,12 @@ export class ActivityCoordinator {
       return demand;
     }
     if (this.#active.deliveries.length >= 32) throw Error('activity_subscriber_capacity');
+    this.#trace?.record('activity.delivery_joining', { ...request, consumer: subscriber.consumer });
     // All checks and both mutations are synchronous: an owner cannot close between them.
     this.#ledger.joinSupply(this.#active.supplyId, request.deliveryId, request.quantity);
     this.#invocations.subscribeActivity(activity.id, request.owner);
     this.#active.deliveries.push({ id: request.deliveryId, owner: request.owner, quantity: request.quantity });
+    this.#trace?.record('activity.delivery_joined', { activityId: activity.id, ...request, delivery: this.#ledger.delivery(request.deliveryId) }, { cleanup: true });
     return this.#ledger.delivery(request.deliveryId);
   }
   async #drain(error) {
@@ -139,6 +166,8 @@ export class ActivityCoordinator {
         quantity: evidence.produced[this.#active.prepared.destination] ?? 0, accountingComplete: true }).credits;
     }
     this.#last = { activityId: this.#active.id, receipt: copyMessage(receipt), evidence, credits };
+    this.#trace?.record('activity.accounted', this.#last,
+      { cleanup: this.#fault || evidence.released === true || !['ACCEPTED', 'RUNNING'].includes(receipt.state) });
     this.#settle(evidence);
     return copyMessage(this.#last);
   }
@@ -146,6 +175,7 @@ export class ActivityCoordinator {
     if (!this.#active) return;
     const { id } = this.#active;
     if (evidence.released !== true || evidence.accountingComplete !== true) return;
+    this.#trace?.record('claim.released', { activityId: id, supplyId: this.#active.supplyId, evidence }, { cleanup: true });
     this.#ledger.settle(id, evidence);
     if (this.#active.supplyId !== null) {
       this.#ledger.settleSupply(this.#active.supplyId, evidence);

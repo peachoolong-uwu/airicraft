@@ -5,6 +5,9 @@ export class InvocationBroker {
   #instances = new Map();
   #sequence = 0;
   #activity = null;
+  #trace;
+
+  constructor({ trace } = {}) { this.#trace = trace; }
 
   install(spec) {
     if (this.capacity().roots >= 12) throw Error('root_capacity');
@@ -30,6 +33,7 @@ export class InvocationBroker {
     if (instance.phase !== 'running') return;
     try { instance.value = copyMessage(value === undefined ? null : value); }
     catch { this.failed(id, 'invalid_result'); return; }
+    this.#trace?.record('invocation.body_returned', { id, value: instance.value }, { cleanup: true });
     instance.phase = 'closing';
     this.#settle(instance);
   }
@@ -45,6 +49,7 @@ export class InvocationBroker {
     const child = this.#get(id);
     if (!child.outcome) return { status: 'pending' };
     const outcome = structuredClone(child.outcome);
+    this.#trace?.record('invocation.joined', { parentId, childId: id, sequence: handle.sequence, mandatory: false }, { cleanup: true });
     parent.children.delete(handle.sequence);
     this.#instances.delete(id);
     this.#settle(parent);
@@ -54,6 +59,7 @@ export class InvocationBroker {
     if (this.#activity) throw Error('player_owned');
     if (!subscribers.length) throw Error('activity_requires_subscriber');
     for (const subscriber of subscribers) if (this.#get(subscriber).phase !== 'running') throw Error('invocation_closing');
+    this.#trace?.record('activity.attached', { id, subscribers });
     this.#activity = { id, subscribers: new Set(subscribers), cleanupOwners: new Set(), stopRequested: false };
   }
   activity() {
@@ -65,13 +71,16 @@ export class InvocationBroker {
     if (!this.#activity || this.#activity.id !== id) throw Error('activity_unknown');
     if (this.#activity.stopRequested) throw Error('activity_stopping');
     if (this.#get(owner).phase !== 'running') throw Error('invocation_closing');
+    this.#trace?.assertHealthy();
     this.#activity.subscribers.add(owner);
+    this.#trace?.record('activity.subscribed', { id, owner }, { cleanup: true });
   }
   settleActivity(id, evidence) {
     const activity = this.#activity;
     if (!activity || activity.id !== id) throw Error('activity_unknown');
     evidence = copyMessage(evidence);
     if (evidence.released !== true || evidence.accountingComplete !== true) return;
+    this.#trace?.record('activity.released', { ...this.activity(), evidence }, { cleanup: true });
     this.#activity = null;
     for (const owner of [...activity.subscribers, ...activity.cleanupOwners]) {
       const instance = this.#instances.get(owner);
@@ -110,6 +119,7 @@ export class InvocationBroker {
     if (this.capacity().live >= 32) throw Error('live_invocation_capacity');
     const instance = { id: `invocation:${++this.#sequence}`, parentId: parent?.id ?? null,
       depth, spec: structuredClone(spec), children: new Map(), childSequence: 0, phase: 'running', outcome: null };
+    this.#trace?.record('invocation.created', { id: instance.id, parentId: instance.parentId, depth, spec });
     this.#instances.set(instance.id, instance);
     return instance;
   }
@@ -121,12 +131,16 @@ export class InvocationBroker {
   #reason(reason) { return typeof reason === 'string' && reason.length > 0 && reason.length <= 256 ? reason : 'invalid_failure'; }
   #stop(instance, cause) {
     if (instance.outcome || instance.cause) return;
+    this.#trace?.record('invocation.stop_requested', { id: instance.id, cause }, { cleanup: true });
     instance.cause = cause;
     instance.phase = 'stopping';
     const activity = this.#activity;
-    if (activity?.subscribers.delete(instance.id) && activity.subscribers.size === 0) {
-      activity.cleanupOwners.add(instance.id);
-      activity.stopRequested = true;
+    if (activity?.subscribers.delete(instance.id)) {
+      if (activity.subscribers.size === 0) {
+        activity.cleanupOwners.add(instance.id);
+        activity.stopRequested = true;
+      }
+      this.#trace?.record('activity.withdrawn', { id: activity.id, owner: instance.id, stopRequested: activity.stopRequested }, { cleanup: true });
     }
     if (cause.status === 'failure' && instance.parentId) {
       const parent = this.#get(instance.parentId);
@@ -143,7 +157,10 @@ export class InvocationBroker {
     if (!['closing', 'stopping'].includes(instance.phase)) return;
     if (this.#activity?.subscribers.has(instance.id) || this.#activity?.cleanupOwners.has(instance.id)) return;
     for (const id of instance.children.values()) if (!this.#get(id).outcome) return;
-    for (const id of instance.children.values()) this.#instances.delete(id);
+    for (const [sequence, id] of instance.children) {
+      this.#trace?.record('invocation.joined', { parentId: instance.id, childId: id, sequence, mandatory: true }, { cleanup: true });
+      this.#instances.delete(id);
+    }
     instance.children.clear();
     try {
       instance.outcome = copyMessage({ ...(instance.cause ?? { status: 'success', value: instance.value }),
@@ -153,6 +170,7 @@ export class InvocationBroker {
         ...(instance.lastActivity ? { lastActivityId: instance.lastActivity.id } : {}) };
     }
     instance.phase = 'terminal';
+    this.#trace?.record('invocation.terminal', { id: instance.id, parentId: instance.parentId, outcome: instance.outcome }, { cleanup: true });
     if (instance.parentId) {
       const parent = this.#instances.get(instance.parentId);
       if (parent) this.#settle(parent);

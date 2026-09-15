@@ -26,10 +26,13 @@ export class EffectBroker {
   #leaseError = null;
   #starting = null;
   #stopping = false;
+  #trace;
 
-  constructor({ native, journal, expectedWorld, hostId = randomUUID(), timers = { setInterval, clearInterval } }) {
+  constructor({ native, journal, expectedWorld, hostId = randomUUID(), timers = { setInterval, clearInterval }, trace }) {
     this.#native = native; this.#journal = journal; this.#expectedWorld = expectedWorld; this.#hostId = hostId;
     this.#timers = timers;
+    this.#trace = trace;
+    trace?.onFailure(() => this.stop());
   }
   start() {
     if (this.#stopping) return Promise.reject(Error('broker_stopping'));
@@ -38,6 +41,7 @@ export class EffectBroker {
     return this.#starting.finally(() => { this.#starting = null; });
   }
   async #start() {
+    this.#trace?.assertHealthy();
     if (this.#lease) throw Error('broker_started');
     let { frame } = await this.#call('os_observe');
     this.#checkWorld(frame);
@@ -51,12 +55,14 @@ export class EffectBroker {
     if (this.#stopping) throw Error('broker_stopping');
     this.#lease = (await this.#call('os_lease', { action: 'acquire', hostId: this.#hostId, epoch: frame.epoch })).lease;
     this.#recoveryBlocked = false;
+    this.#trace?.record('native.lease_acquired', { lease: this.#lease });
     if (this.#stopping) throw Error('broker_stopping');
     this.#renewal = this.#timers.setInterval(() => this.#renew(), 1000);
     this.#renewal?.unref?.();
   }
   execute(activity) { return this.#exclusive(() => this.#execute(activity)); }
   async #execute(activity) {
+    this.#trace?.assertHealthy();
     if (this.#stopping) throw Error('broker_stopping');
     if (!this.#lease) throw Error('broker_not_started');
     if (this.#leaseError) throw this.#leaseError;
@@ -75,9 +81,11 @@ export class EffectBroker {
     this.#active = { id, request, payloadHash: request.payloadHash, definition: activity.definition, invocation: activity.invocation,
       ...(activity.provenance ? { provenance: activity.provenance } : {}) };
     await this.#journal.record(this.#active);
+    this.#trace?.record('native.intent', this.#active);
     if (this.#stopping || this.#leaseError) {
       const receipt = { released: true, accountingComplete: true, disposition: 'not_submitted' };
       await this.#journal.settle(id, receipt);
+      this.#trace?.record('native.recovered', { id, receipt }, { cleanup: true });
       this.#last = { id, ...receipt };
       this.#active = null;
       throw this.#leaseError ?? Error('broker_stopping');
@@ -125,6 +133,7 @@ export class EffectBroker {
       try {
         await this.#call('os_lease', { action: 'release', lease });
         this.#lease = null;
+        this.#trace?.record('native.lease_released', { lease }, { cleanup: true });
       } catch (error) {
         const authority = error.response?.authority;
         if (error.response?.code === 'stale_fence' && authority &&
@@ -179,6 +188,7 @@ export class EffectBroker {
       authority.lease === null && authority.active === null && Number.isSafeInteger(authority.admissionSequence) && authority.admissionSequence >= 0 && authority.admissionSequence < intent.id.sequence) {
       const receipt = { released: true, accountingComplete: true, disposition: 'not_admitted', proof: authority };
       await this.#journal.settle(intent.id, receipt);
+      this.#trace?.record('native.recovered', { id: intent.id, receipt }, { cleanup: true });
       return { settled: true, receipt: { id: intent.id, ...receipt } };
     }
   }
@@ -191,6 +201,8 @@ export class EffectBroker {
     const released = receipt.released === true && receipt.effects?.releaseEvidence?.verified === true;
     const accountingComplete = receipt.effects?.accountingComplete === true;
     await this.#journal.settle(intent.id, { released, accountingComplete, native: receipt });
+    this.#trace?.record('native.receipt', { id: intent.id, released, accountingComplete, native: receipt },
+      { cleanup: this.#stopping || !['ACCEPTED', 'RUNNING'].includes(receipt.state) });
     return released && accountingComplete;
   }
 }
