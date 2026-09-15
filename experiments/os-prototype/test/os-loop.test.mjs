@@ -9,7 +9,7 @@ import { InvocationBroker } from '../src/os/broker.mjs';
 import { RunnerPool } from '../src/os/runners.mjs';
 import { InstallationHost } from '../src/os/installations.mjs';
 import { ConditionWaits } from '../src/os/waits.mjs';
-import { GeneratorLoop } from '../src/os/loop.mjs';
+import { BehaviorLoop } from '../src/os/loop.mjs';
 import { ResourceLedger } from '../src/os/ledger.mjs';
 import { ResourceService } from '../src/os/resources.mjs';
 import { ContainerTransfer } from '../src/os/container-transfer.mjs';
@@ -50,7 +50,7 @@ async function fixture(run, { workEnabled = false, suppliesEnabled = false, feed
       await feed.refresh();
     }
   }
-  const loop = new GeneratorLoop({ installations: host, invocations, runners, waits, resources, work });
+  const loop = new BehaviorLoop({ installations: host, invocations, runners, waits, resources, work, observations: feed });
   const definition = async (source, overrides = {}) => {
     const revision = await library.candidate({ schemaVersion: 1, kind: 'behavior', name: 'dispatch-test', description: 'execution seam fixture', tags: [],
       capabilities: grants, environment: {}, dependencies: {}, mode: 'generator', inputContract: true, outputContract: true,
@@ -162,7 +162,7 @@ test('service rejections are typed and an unrelated guest failure stays within i
   assert.equal(invocations.activity(), null);
 }));
 
-test('generator dispatch rejects an offers-only dependency before allocating its child', async () => fixture(async ({ definition, install, until, invocations }) => {
+test('an offers dependency needs observation and work services before a child can be allocated', async () => fixture(async ({ definition, install, until, invocations }) => {
   const child = await definition('function offers() { return []; }', { mode: 'offers' });
   const parent = await install(await definition('function* main(os) { return yield os.spawn("child"); }', { dependencies: { child: child.digest } }));
   await until(() => invocations.inspect(parent.rootId).outcome);
@@ -261,6 +261,86 @@ test('an observation query without scopes is a typed argument rejection', async 
 }));
 
 const supplySource = 'function* main(os) { yield os.target("wheat",2); return yield os.demand("wheat",2,["chest"]); }';
+
+test('an installed recurring offer duty repeats only from fresh observations and stops offering after its condition clears', async () => fixture(async ({ definition, install, until, workNative, workJournal, invocations, work, loop }) => {
+  const source = 'function offers(os,input,view) { const seen=view.scopes.find(s=>s.scope==="wheat"); if(!seen?.current || seen.frame.facts[0].value>=4) return []; const offer=os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2}); return [offer,offer]; }';
+  const duty = await install(await definition(source, { mode: 'offers' }));
+  const waiter = await install(await definition('function* main(os) { return (yield os.wait({scope:"wheat",path:["stock","wheat"],atLeast:4})).status; }'));
+  await until(() => workNative.submissions === 1 && !work.state().busy);
+  assert.equal(work.state().recurringOffers, 1);
+  workNative.progress(2, 2, true); workNative.playerQuantity = 2; workNative.quantity = 2; workNative.windowOpen = false;
+  await until(() => !invocations.activity() && !work.state().busy);
+  assert.equal(invocations.inspect(waiter.rootId).outcome, null);
+  assert.equal(workNative.submissions, 1);
+  workNative.windowOpen = true;
+  await until(() => workNative.submissions === 2 && !work.state().busy);
+  workNative.progress(2, 2, true); workNative.playerQuantity = 4; workNative.quantity = 0; workNative.windowOpen = false;
+  await until(() => invocations.inspect(waiter.rootId).outcome && work.state().recurringOffers === 0);
+  assert.equal(invocations.inspect(waiter.rootId).outcome.value, 'met');
+  assert.equal(invocations.inspect(duty.rootId).phase, 'running');
+  assert.equal(workNative.submissions, 2);
+  assert.deepEqual(await workJournal.unfinished(), []);
+  loop.cancel(duty.rootId);
+  assert.equal(invocations.inspect(duty.rootId).outcome.status, 'cancelled');
+}, { workEnabled: true, feedEnabled: true }));
+
+test('a late offers evaluation is discarded after a newer capture and a quiet duty evaluates only once per basis', async () => fixture(async ({ definition, install, until, host, feed, workNative, work, loop, invocations }) => {
+  let evaluations = 0, release;
+  const barrier = new Promise(resolve => { release = resolve; }), original = host.offers.bind(host);
+  host.offers = async (...args) => {
+    evaluations++;
+    const result = await original(...args);
+    if (evaluations === 1) await barrier;
+    return result;
+  };
+  try {
+    const duty = await install(await definition('function offers(os,input,view) { return view.scopes[0].frame.facts[0].value===0 ? [os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2})] : []; }', { mode: 'offers' }));
+    const other = await install(await definition('function* main() { return "independent"; }'));
+    await until(() => evaluations === 1 && invocations.inspect(other.rootId).outcome);
+    assert.equal(invocations.inspect(other.rootId).outcome.value, 'independent');
+    workNative.playerQuantity = 4;
+    await feed.refresh(); release();
+    await until(() => loop.state().jobs === 0);
+    assert.equal(work.state().requests, 0);
+    assert.equal(workNative.submissions, 0);
+    await until(() => evaluations === 2 && loop.state().jobs === 0);
+    for (let i = 0; i < 20; i++) { loop.tick(); await delay(1); }
+    assert.equal(evaluations, 2);
+    assert.equal(work.state().requests, 0);
+    assert.equal(invocations.inspect(duty.rootId).phase, 'running');
+  } finally { release(); }
+}, { workEnabled: true, feedEnabled: true }));
+
+test('a returned parent retains its recurring child and cancellation awaits the admitted attempt release', async () => fixture(async ({ definition, install, until, workNative, workJournal, work, invocations, loop }) => {
+  const child = await definition('function offers(os) { return [os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2})]; }', { mode: 'offers' });
+  const parent = await install(await definition('function* main(os) { yield os.spawn("duty"); return "body returned"; }', { dependencies: { duty: child.digest } }));
+  await until(() => invocations.inspect(parent.rootId).phase === 'closing' && workNative.submissions === 1 && !work.state().busy);
+  assert.equal(invocations.capacity().retainedChildren, 1);
+  loop.cancel(parent.rootId);
+  await until(() => workNative.cancellations === 1 && !work.state().busy);
+  assert.equal(invocations.inspect(parent.rootId).outcome, null);
+  assert.equal((await workJournal.unfinished()).length, 1);
+  workNative.progress(2, 1, false); loop.tick();
+  assert.notEqual(invocations.activity(), null);
+  workNative.progress(2, 1, true, 'CANCELLED');
+  await until(() => invocations.inspect(parent.rootId).outcome);
+  assert.equal(invocations.inspect(parent.rootId).outcome.status, 'cancelled');
+  assert.equal(invocations.capacity().retainedChildren, 0);
+  assert.equal(work.state().requests, 0);
+  assert.deepEqual(await workJournal.unfinished(), []);
+}, { workEnabled: true, feedEnabled: true }));
+
+test('a failed offer batch stays within its root while an ungranted observation scope stays outside its VM', async () => fixture(async ({ definition, install, until, invocations, work, workNative }) => {
+  const restricted = await install(await definition('function offers(os,input,view) { if(view.scopes.length) throw Error("scope leaked"); return []; }', { mode: 'offers', capabilities: ['container:home'] }));
+  const failed = await install(await definition('function offers(os) { return [os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2}),os.work("absent")]; }', { mode: 'offers' }));
+  const other = await install(await definition('function* main() { return "independent"; }'));
+  await until(() => invocations.inspect(failed.rootId).outcome && invocations.inspect(other.rootId).outcome);
+  assert.equal(invocations.inspect(failed.rootId).outcome.status, 'failure');
+  assert.equal(invocations.inspect(restricted.rootId).phase, 'running');
+  assert.equal(invocations.inspect(other.rootId).outcome.value, 'independent');
+  assert.equal(work.state().requests, 0);
+  assert.equal(workNative.submissions, 0);
+}, { workEnabled: true, feedEnabled: true }));
 
 test('real installed generators receive automatic supplies and observed stock through the native feed', async () => fixture(async ({ definition, install, until, workNative, workJournal, invocations, feed }) => {
   const revision = await definition('function* main(os) { const delivered = yield os.demand("wheat",2,["chest"]); const observed = yield os.wait({scope:"wheat",path:["stock","wheat"],atLeast:4}); return {delivered:delivered.credited,observed:observed.status}; }');

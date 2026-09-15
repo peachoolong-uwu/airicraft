@@ -30,7 +30,7 @@ The calculation includes the coordinator's internal target-share deliveries from
 
 These views are scheduling inputs. Even a known shortage remains a hint until the coordinator obtains a fresh native frame and admits a valid atomic bundle. The [work service](work-api.md) now combines automatic supply proposals with finite requests under one bounded scheduler, including admission and retry backoff. Native readiness and inspection/context entry remain unconnected. This resource service itself does not poll or reopen an empty chest just because a demand exists.
 
-`GeneratorLoop` accepts the configured service and handles target/demand effects alongside observation/wait/spawn/join. Its regular pulses and stop/failure paths sweep resource subscriptions. Native heartbeat, acquisition, progress and cleanup remain independently serviced; no resource wait awaits a transport call on the code-execution pulse.
+`BehaviorLoop` accepts the configured service and handles generator target/demand effects alongside observation/wait/spawn/join. Its regular pulses and stop/failure paths sweep resource subscriptions. Native heartbeat, acquisition, progress and cleanup remain independently serviced; no resource wait awaits a transport call on the code-execution pulse.
 
 ## Evidence
 

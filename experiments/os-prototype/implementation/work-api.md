@@ -1,14 +1,18 @@
 # Owned work requests and admission
 
-`WorkService` connects finite `os.work(...)` generator effects and optional automatic supply proposals to the scheduling policy and the existing `ActivityCoordinator`. It owns request/result lifetime, not another physical lease. A trusted rule names an installed operation and supplies priority. Operation grants come from the same catalog used by the coordinator; behavior arguments cannot raise authority or priority.
+`WorkService` connects finite `os.work(...)` generator effects, recurring offer declarations and optional automatic supply proposals to the scheduling policy and the existing `ActivityCoordinator`. It owns request/result lifetime, not another physical lease. A trusted rule names an installed operation and supplies priority. Operation grants come from the same catalog used by the coordinator; behavior arguments cannot raise authority or priority.
 
-This first connection accepts land operations with no retained cross-operation context. The bound, already-open container transfer is the integrated adapter. Fishing and retained-context rules reject at construction until their native lifecycle adapters exist. This does not yet run the mixed duties, retain pen/chest visits or install offers-only definitions.
+This connection accepts land operations with no retained cross-operation context. The bound, already-open container transfer is the integrated adapter. Fishing and retained-context rules reject at construction until their native lifecycle adapters exist. This does not yet run the mixed duties or retain pen/chest visits.
 
 ## Request lifetime
 
 `request(owner, sequence, { operation, arguments, context: null })` checks the closed request and current grant before registration. The generator loop supplies owner and effect sequence. Repeating an active sequence with identical input returns its existing ID; changed input conflicts, and a consumed sequence cannot recreate work. Distinct sequences are distinct finite requests. At most 32 retained requests belong to an invocation. Without automatic supply, the service retains at most 1,024 finite requests; completed unconsumed results and unresolved work still occupy slots.
 
 `take(owner, id)` returns pending until the coordinator reports both verified release and complete accounting. Final results distinguish success, failure, cancellation and pre-admission rejection, retaining the coordinator activity evidence. Consumption removes the result. Cancelling an owner removes queued work; an admitting or active request remains until its native obligation settles. The regular `poll()` sweeps subscriptions and retired owner cursors. Late transport replies cannot resume a cancelled generator.
+
+## Recurring declarations
+
+Recurring definitions use `replaceOffers(owner, sequence, declarations, basis)` instead of finite request/result slots. Full-batch validation, stable identities, retry and withdrawal semantics are specified in the [offer contract](offers-api.md). They share the 32-per-invocation and remaining global work budget with finite requests. As with automatic supply, at most one retired admitting/active record can remain outside the current declaration budget for physical cleanup; all paths share one actor.
 
 ## Automatic supply
 

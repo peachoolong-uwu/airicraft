@@ -46,7 +46,7 @@ async function fixture(run) {
   };
   try {
     await effects.start();
-    await run({ feed, native, invocations, ledger, resources, work, waits, effects, journal, key, chestKey, root, pulse, time: value => { now = value; } });
+    await run({ feed, native, invocations, ledger, resources, work, waits, effects, journal, operations, key, chestKey, root, pulse, time: value => { now = value; } });
   } finally { feed.close(); await effects.stop(); await journal.close(); await rm(directory, { recursive: true, force: true }); }
 }
 
@@ -74,6 +74,45 @@ test('one native inventory capture drives passive waits and automatic shared sup
   assert.equal(invocations.activity(), null);
   assert.deepEqual(await journal.unfinished(), []);
   assert.equal(work.state().fault, null);
+}));
+
+test('offers use one granted native view and old declarations cannot run against a newer capture', async () => fixture(async ({ feed, native, work, invocations, pulse, time }) => {
+  const owner = invocations.install({ definition: 'offers', grants: ['container:home'] });
+  assert.equal(feed.offerView(owner), null);
+  await feed.refresh();
+  const initial = feed.offerView(owner);
+  assert.deepEqual(initial.view.scopes.map(scope => scope.scope), ['home']);
+  const offer = { operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat', quantity: 2 }, context: null };
+  const [id] = work.replaceOffers(owner, 1, [offer], initial.basis).ids;
+  await feed.refresh();
+  assert.equal(feed.isCurrentOfferBasis(initial.basis), false);
+  assert.equal((await pulse()).kind, 'wait');
+  assert.equal(native.submissions, 0);
+  const next = feed.offerView(owner);
+  assert.deepEqual(work.replaceOffers(owner, 2, [offer], next.basis).ids, [id]);
+  feed.tick();
+  assert.equal((await pulse()).kind, 'select');
+  assert.equal(feed.offerView(owner), null);
+  assert.equal(feed.isCurrentOfferBasis(next.basis), false);
+  native.progress(2, 2, true); await pulse();
+  await feed.refresh();
+  assert.notEqual(feed.offerView(owner), null);
+  time(2000); assert.equal(feed.offerView(owner), null);
+}));
+
+test('host pulses assess new requests once per native basis instead of repeatedly scanning unchanged inventory', async () => fixture(async ({ feed, work, root, operations }) => {
+  const owner = root(), prepare = operations.chest.prepare.bind(operations.chest);
+  let preparations = 0;
+  operations.chest.prepare = (...args) => { preparations++; return prepare(...args); };
+  await feed.refresh();
+  const request = { operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat', quantity: 2 }, context: null };
+  work.request(owner, 1, request);
+  for (let i = 0; i < 20; i++) feed.tick();
+  assert.equal(preparations, 1);
+  work.request(owner, 2, request); feed.tick();
+  assert.equal(preparations, 2);
+  await feed.refresh();
+  assert.equal(preparations, 4);
 }));
 
 test('stock protection blocks readiness without a claim and closed containers leave their contents unknown', async () => fixture(async ({ feed, native, ledger, work, waits, root, chestKey, pulse }) => {

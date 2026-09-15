@@ -33,6 +33,11 @@ export class NativeObservationFeed {
     this.#expectedWorld = expectedWorld; this.#views = copied; this.#now = now; this.#trace = trace;
   }
   tick() {
+    if (this.#closed || this.#fault) return;
+    // Declarations can arrive after their capture. Assess them against that same ledger basis,
+    // without waiting for a newer capture that would invalidate their authoring decision.
+    try { this.#assessPending(); }
+    catch (error) { void this.#onError(error).catch(() => {}); return; }
     if (!this.#closed && !this.#fault && !this.#job && this.#now() >= this.#next) void this.refresh().catch(() => {});
   }
   refresh() {
@@ -40,21 +45,26 @@ export class NativeObservationFeed {
     if (this.#job) return this.#job;
     const generation = this.#work.observationGeneration;
     this.#job = this.#read(generation).catch(async error => {
-      if (!this.#closed) {
-        this.#latest = null; this.#work.invalidate(); this.#ledger.invalidate(); this.#waits.gap(String(error.message).slice(0, 256));
-        if (error.message !== 'observation_stale') {
-          this.#fault = String(error.message).slice(0, 256);
-          await this.#effects.stop();
-        }
-      }
+      await this.#onError(error);
       throw error;
     }).finally(() => { this.#job = null; this.#next = this.#now() + 1000; });
     return this.#job;
   }
   availability() {
-    if (this.#closed || this.#fault || !this.#latest || this.#age(this.#latest.frame) >= 2000 ||
-        this.#latest.generation !== this.#work.observationGeneration) return 'unknown';
+    if (!this.#current()) return 'unknown';
     return this.#effects.canDispatch(this.#latest.authority) ? 'available' : 'unavailable';
+  }
+  offerView(owner) {
+    if (!this.#current()) return null;
+    const { frame, generation } = this.#latest;
+    const view = this.#waits.grantedView(owner, Object.keys(this.#views));
+    if (view.epoch !== frame.epoch || view.scopes.some(scope => scope.frame?.captureId !== frame.captureId ||
+      scope.frame?.captureSequence !== frame.captureSequence)) return null;
+    return { basis: { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence, generation }, view };
+  }
+  isCurrentOfferBasis(basis) {
+    return this.#current() && basis.epoch === this.#epoch && basis.generation === this.#latest.generation &&
+      basis.captureId === this.#latest.frame.captureId && basis.captureSequence === this.#latest.frame.captureSequence;
   }
   close() {
     if (this.#closed) return;
@@ -96,14 +106,14 @@ export class NativeObservationFeed {
     for (const projection of projections) validator.publish(projection);
     this.#session = frame.sessionId;
     this.#capture = { sequence: frame.captureSequence, id: frame.captureId, signature };
-    const state = this.#work.state();
     // Never replace the admitted bundle's basis from a parallel passive read during an effect.
-    if (!state.busy && !state.active && !this.#invocations.activity() && !this.#effects.state().unresolved) {
+    const assessable = this.#quiescent();
+    if (assessable) {
       this.#ledger.observe(observation);
-      for (const request of this.#work.pending()) if (!request.deferred) this.#assess(request, frame);
     }
     for (const projection of projections) this.#waits.publish(projection);
-    this.#latest = { frame, authority: copyMessage(response.authority), generation };
+    this.#latest = { frame, authority: copyMessage(response.authority), generation, assessable, assessed: new Set() };
+    this.#assessPending();
     this.#trace?.record('observation.projected', { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence,
       scopes: Object.keys(this.#views), stockKeys: Object.keys(observation.stocks).length });
     return true;
@@ -137,6 +147,31 @@ export class NativeObservationFeed {
     }
     this.#work.publish(request.id, { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence,
       readiness, ageUpperBoundMillis: this.#age(frame) });
+  }
+  #assessPending() {
+    if (!this.#current() || !this.#latest.assessable || !this.#quiescent()) return;
+    const requests = this.#work.pending(), ids = new Set(requests.map(request => request.id));
+    for (const id of this.#latest.assessed) if (!ids.has(id)) this.#latest.assessed.delete(id);
+    for (const request of requests) if (!request.deferred && !this.#latest.assessed.has(request.id)) {
+      this.#assess(request, this.#latest.frame);
+      this.#latest.assessed.add(request.id);
+    }
+  }
+  #quiescent() {
+    const state = this.#work.state();
+    return !state.busy && !state.active && !this.#invocations.activity() && !this.#effects.state().unresolved;
+  }
+  #current() {
+    return !this.#closed && !this.#fault && this.#latest !== null && this.#age(this.#latest.frame) < 2000 &&
+      this.#latest.generation === this.#work.observationGeneration;
+  }
+  async #onError(error) {
+    if (this.#closed) return;
+    this.#latest = null; this.#work.invalidate(); this.#ledger.invalidate(); this.#waits.gap(String(error.message).slice(0, 256));
+    if (error.message !== 'observation_stale') {
+      this.#fault = String(error.message).slice(0, 256);
+      await this.#effects.stop();
+    }
   }
   #age(frame) {
     const age = frame.captureAgeUpperBoundMillis, received = frame.receivedAtHostMillis, now = this.#now();

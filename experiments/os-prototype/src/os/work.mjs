@@ -6,7 +6,7 @@ import { executionPolicy } from './execution-policy.mjs';
 
 const name = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-export const workPolicy = Object.freeze({ version: 'os-work-v1', supplyRetryMillis: 5000 });
+export const workPolicy = Object.freeze({ version: 'os-work-v2', supplyRetryMillis: 5000, recurringRetryMillis: 5000 });
 const admissionRejections = new Set(['operation_not_granted', 'invocation_closing', 'invocation_unknown', 'stale_observation',
   'resource_reconciling', 'resource_unavailable', 'asset_unavailable', 'capacity_unavailable', 'target_unavailable',
   'container_changed', 'invalid_transfer', 'unsupported_transfer_item', 'ambiguous_item_components', 'supply_offer_stale',
@@ -26,7 +26,9 @@ export class WorkService {
   #requests = new Map();
   #supplyRequests = new Map();
   #supplyDeferrals = new Map();
+  #recurringDeferrals = new Map();
   #history = new Map();
+  #offerHistory = new Map();
   #roots = new Set();
   #sequence = 0;
   #active = null;
@@ -60,25 +62,71 @@ export class WorkService {
     if (this.#fault) throw Error('work_service_failed');
     this.poll();
     const request = copyMessage(value);
-    if (!Number.isSafeInteger(sequence) || sequence < 1 || !object(request) || !name(request.operation) || !object(request.arguments) ||
-        request.context !== null || Object.keys(request).some(key => !['operation', 'arguments', 'context'].includes(key))) throw Error('invalid_work');
-    const rule = this.#rules.get(request.operation);
-    if (!rule) throw Error('operation_unknown');
-    const { consumer } = this.#invocations.authorize(owner, rule.grant), digest = contentDigest(request);
+    if (!Number.isSafeInteger(sequence) || sequence < 1) throw Error('invalid_work');
+    const { rule, consumer, digest } = this.#declaration(owner, request);
     const existing = [...this.#requests.values()].find(record => record.owner === owner && record.sequence === sequence);
     if (existing) {
       if (existing.digest !== digest) throw Error('work_conflict');
       return existing.id;
     }
     if (sequence <= (this.#history.get(owner) ?? 0)) throw Error('work_retired');
-    if (this.#requests.size >= this.#maximumWork) throw Error('work_capacity');
-    if ([...this.#requests.values()].filter(record => record.owner === owner).length >= executionPolicy.offers) throw Error('invocation_work_capacity');
+    if (this.#budgetedRequests().length >= this.#maximumWork) throw Error('work_capacity');
+    if (this.#budgetedRequests().filter(record => record.owner === owner).length >= executionPolicy.offers) throw Error('invocation_work_capacity');
     if (this.#sequence === Number.MAX_SAFE_INTEGER) throw Error('work_id_exhausted');
     const id = `work:${++this.#sequence}`;
     this.#trace?.record('work.requested', { id, owner, consumer, sequence, request, digest });
     this.#requests.set(id, { id, owner, consumer, sequence, digest, request, rule, phase: 'queued', assessment: null });
     this.#history.set(owner, sequence); this.#roots.add(consumer);
     return id;
+  }
+  /** Replace queued declarations atomically. An admitted bounded attempt still owns its physical cleanup. */
+  replaceOffers(owner, sequence, values, basis) {
+    if (this.#fault) throw Error('work_service_failed');
+    this.poll();
+    values = copyMessage(values); basis = copyMessage(basis);
+    if (!Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(values) || values.length > executionPolicy.offers) throw Error('invalid_work_offers');
+    if (!basis || basis.epoch !== this.#epoch || !name(basis.captureId) || !Number.isSafeInteger(basis.captureSequence) || basis.captureSequence < 1 ||
+        Object.keys(basis).length !== 4 || !Number.isSafeInteger(basis.generation) || basis.generation !== this.#observationGeneration ||
+        basis.captureSequence <= this.#invalidatedThrough) throw Error('offer_basis_stale');
+    const invocation = this.#invocations.execution(owner);
+    if (invocation.phase !== 'running') throw Error('invocation_closing');
+    const digest = contentDigest({ values, basis }, 32_768, { maximumNodes: 4096 }), previous = this.#offerHistory.get(owner);
+    if (previous?.sequence === sequence) {
+      if (previous.digest !== digest) throw Error('work_conflict');
+      return { ids: [...previous.ids] };
+    }
+    if (sequence <= (previous?.sequence ?? 0)) throw Error('work_retired');
+    const declarations = new Map();
+    for (const request of values) {
+      const declaration = this.#declaration(owner, request);
+      declarations.set(declaration.digest, declaration);
+    }
+    const existing = [...this.#requests.values()].filter(record => record.owner === owner && record.recurring);
+    const others = this.#budgetedRequests().filter(record => record.owner !== owner || !record.recurring);
+    if (others.length + declarations.size > this.#maximumWork) throw Error('work_capacity');
+    if (others.filter(record => record.owner === owner).length + declarations.size > executionPolicy.offers) throw Error('invocation_work_capacity');
+    const newCount = [...declarations.keys()].filter(key => !existing.some(record => record.digest === key)).length;
+    if (!Number.isSafeInteger(this.#sequence + newCount)) throw Error('work_id_exhausted');
+    this.#trace?.record('work.offers_replaced', { owner, sequence, digest, basis, offers: [...declarations.values()].map(value => value.request) });
+    for (const record of existing) {
+      record.desired = declarations.has(record.digest);
+      if (!record.desired && !['admitting', 'active'].includes(record.phase)) this.#requests.delete(record.id);
+    }
+    const ids = [];
+    for (const declaration of declarations.values()) {
+      let record = existing.find(record => record.digest === declaration.digest);
+      if (!record) {
+        const id = `work:${++this.#sequence}`;
+        record = { id, owner, ...declaration, sequence: null, phase: 'queued', assessment: null, recurring: true, desired: true };
+        this.#requests.set(id, record);
+      } else if (record.phase === 'finished' && !this.#deferral(record)) {
+        record.phase = 'queued'; record.assessment = null; delete record.result;
+      }
+      record.offerBasis = basis;
+      ids.push(record.id); this.#roots.add(record.consumer);
+    }
+    this.#offerHistory.set(owner, { sequence, digest, ids });
+    return { ids: [...ids] };
   }
   publish(id, value) {
     const record = this.#get(id), assessment = copyMessage(value);
@@ -106,6 +154,7 @@ export class WorkService {
     if (record.phase !== 'queued') throw Error('work_not_queued');
     if (!['invalid_transfer', 'unsupported_transfer_item'].includes(reason)) throw Error('invalid_work_rejection');
     record.phase = 'finished'; record.result = { status: 'rejected', reason };
+    if (record.recurring) this.#deferRecurring(record, reason);
     if (record.supply) this.#defer(record, reason);
     this.#trace?.record('work.rejected', { id, reason, fault: null }, { cleanup: true });
   }
@@ -113,11 +162,13 @@ export class WorkService {
     this.poll(); this.#refreshSupplies();
     return this.#records().filter(record => record.phase === 'queued').map(record =>
       ({ id: record.id, owner: record.owner, consumer: record.consumer, request: copyMessage(record.request),
+        ...(record.recurring ? { recurring: true, deferred: this.#deferral(record) ? { ...this.#deferral(record) } : null } : {}),
         ...(record.supply ? { supply: copyMessage(record.supply), deferred: this.#deferral(record) ? { ...this.#deferral(record) } : null } : {}) }));
   }
   take(owner, id) {
     const record = this.#requests.get(id);
     if (!record || record.owner !== owner) throw Error('work_unknown');
+    if (record.recurring) throw Error('work_not_finite');
     this.#invocations.authorize(owner, record.rule.grant);
     if (record.phase !== 'finished') return { status: 'pending' };
     this.#requests.delete(id);
@@ -136,15 +187,18 @@ export class WorkService {
     return delivery;
   }
   poll() {
-    for (const record of this.#requests.values()) if (!this.#running(record.owner) && !['admitting', 'active'].includes(record.phase)) this.#requests.delete(record.id);
+    for (const record of this.#requests.values()) if ((!this.#running(record.owner) || record.recurring && !record.desired) &&
+      !['admitting', 'active'].includes(record.phase)) this.#requests.delete(record.id);
     for (const record of this.#supplyRequests.values()) if (record.phase === 'finished' ||
       (record.phase === 'queued' && record.supply.owners.some(owner => !this.#running(owner)))) this.#supplyRequests.delete(record.id);
     for (const owner of this.#history.keys()) if (!this.#running(owner) && ![...this.#requests.values()].some(record => record.owner === owner)) this.#history.delete(owner);
+    for (const owner of this.#offerHistory.keys()) if (!this.#running(owner) && ![...this.#requests.values()].some(record => record.owner === owner)) this.#offerHistory.delete(owner);
     for (const root of this.#roots) {
       try { if (this.#invocations.execution(root).phase === 'terminal') this.#roots.delete(root); }
       catch (error) { if (error.message !== 'invocation_unknown') throw error; this.#roots.delete(root); }
     }
     for (const [key, deferred] of this.#supplyDeferrals) if (!this.#roots.has(deferred.consumer) || this.#now() >= deferred.retryAt) this.#supplyDeferrals.delete(key);
+    for (const [key, deferred] of this.#recurringDeferrals) if (!this.#roots.has(deferred.consumer) || this.#now() >= deferred.retryAt) this.#recurringDeferrals.delete(key);
   }
   tick({ authority = 'unknown' } = {}) {
     this.poll();
@@ -175,7 +229,9 @@ export class WorkService {
   }
   state() {
     return { requests: this.#requests.size, supplyRequests: this.#supplyRequests.size, maximumWork: this.#maximumWork,
+      recurringOffers: this.#budgetedRequests().filter(record => record.recurring).length, retiringOffers: this.#requests.size - this.#budgetedRequests().length,
       supplyDeferrals: [...this.#supplyDeferrals.values()].map(value => ({ ...value })),
+      recurringDeferrals: [...this.#recurringDeferrals.values()].map(value => ({ ...value })),
       active: this.#active, busy: this.#job !== null, fault: this.#fault, scheduling: this.#policy.state() };
   }
   #launch(record, operation, admitting) {
@@ -193,6 +249,7 @@ export class WorkService {
       record.result = { status, id: record.id, activity: copyMessage(result),
         ...(rejected ? { reason: name(result.receipt.reason) ? result.receipt.reason : result.receipt.disposition ?? 'admission_rejected' } : {}) };
       record.phase = 'finished'; this.#active = null;
+      if (record.recurring && status !== 'success') this.#deferRecurring(record, record.result.reason ?? status);
       // An effect changes the feasibility basis even when its final material result is failure.
       this.#invalidate();
       this.#trace?.record('work.finished', record.result, { cleanup: true });
@@ -207,6 +264,7 @@ export class WorkService {
       } else {
         record.phase = 'finished'; this.#active = null;
         record.result = { status: 'rejected', reason };
+        if (record.recurring) this.#deferRecurring(record, reason);
         if (!admissionRejections.has(reason)) this.#fault = reason;
       }
       if (this.#fault && this.#running(record.owner)) this.#invocations.failed(record.owner, reason);
@@ -219,9 +277,11 @@ export class WorkService {
     const now = this.#now();
     this.#policy.update({ roots: [...this.#roots], offers: this.#records().filter(record => record.phase === 'queued').map(record => {
       const seen = record.assessment, current = seen && now >= seen.receivedAt && seen.ageUpperBoundMillis + now - seen.receivedAt < 2000;
+      const authored = !record.recurring || record.offerBasis.generation === this.#observationGeneration &&
+        record.offerBasis.captureId === seen?.captureId && record.offerBasis.captureSequence === seen?.captureSequence;
       return { id: record.id, roots: record.supply?.consumers ?? [record.consumer], kind: record.rule.kind,
         priority: Math.max(record.rule.priority, record.supply?.priority ?? 0), context: null,
-        readiness: this.#deferral(record) ? 'blocked' : current ? seen.readiness : 'unknown' };
+        readiness: this.#deferral(record) ? 'blocked' : current && authored ? seen.readiness : 'unknown' };
     }) });
   }
   #refreshSupplies() {
@@ -250,8 +310,28 @@ export class WorkService {
     this.#trace?.record('supply.deferred', { id: record.id, ...deferred }, { cleanup: true });
   }
   #supplyKey(record) { return JSON.stringify([record.supply.rule, record.supply.anchor]); }
-  #deferral(record) { return record.supply ? this.#supplyDeferrals.get(this.#supplyKey(record)) : null; }
+  #declaration(owner, request) {
+    if (!object(request) || !name(request.operation) || !object(request.arguments) || request.context !== null ||
+        Object.keys(request).some(key => !['operation', 'arguments', 'context'].includes(key))) throw Error('invalid_work');
+    const rule = this.#rules.get(request.operation);
+    if (!rule) throw Error('operation_unknown');
+    const { consumer } = this.#invocations.authorize(owner, rule.grant);
+    return { request, rule, consumer, digest: contentDigest(request) };
+  }
+  #recurringKey(record) { return JSON.stringify([record.consumer, record.request.operation]); }
+  #deferRecurring(record, reason) {
+    // At most twelve consumers times thirty-two operations. Changing arguments, children or
+    // declaration IDs cannot turn a rejected attempt into an unbounded native retry loop.
+    const deferred = { consumer: record.consumer, operation: record.request.operation, reason, retryAt: this.#now() + workPolicy.recurringRetryMillis };
+    this.#recurringDeferrals.set(this.#recurringKey(record), deferred);
+    this.#trace?.record('work.deferred', { id: record.id, ...deferred }, { cleanup: true });
+  }
+  #deferral(record) {
+    return record.supply ? this.#supplyDeferrals.get(this.#supplyKey(record))
+      : record.recurring ? this.#recurringDeferrals.get(this.#recurringKey(record)) : null;
+  }
   #records() { return [...this.#requests.values(), ...this.#supplyRequests.values()]; }
+  #budgetedRequests() { return [...this.#requests.values()].filter(record => !record.recurring || record.desired || !['admitting', 'active'].includes(record.phase)); }
   #get(id) { const record = this.#requests.get(id) ?? this.#supplyRequests.get(id); if (!record) throw Error('work_unknown'); return record; }
   #running(id) {
     try { return this.#invocations.execution(id).phase === 'running'; }

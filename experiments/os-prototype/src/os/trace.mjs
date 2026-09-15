@@ -62,7 +62,8 @@ export class DecisionTrace {
       if (typeof type !== 'string' || !/^[a-z][a-z0-9_.]{0,79}$/.test(type)) throw Error('invalid_trace_event');
       const seqNo = this.#sequence + 1;
       const event = { schemaVersion: 1, runId: this.#runId, seqNo, hostMonoMillis: performance.now(), atMillis: Date.now(),
-        type, data: copyMessage(data, 64 * 1024) };
+        // Trusted metadata wraps a bounded guest value; keep node headroom as well as byte headroom.
+        type, data: copyMessage(data, 64 * 1024, { maximumNodes: 4096 }) };
       const bytes = Buffer.from(JSON.stringify(event) + '\n');
       const { segmentBytes, budgetBytes, cleanupBytes, queueBytes } = this.#limits;
       if (bytes.length > Math.min(64 * 1024, segmentBytes)) throw Error('trace_event_limit');

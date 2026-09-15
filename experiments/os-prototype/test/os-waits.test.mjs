@@ -33,6 +33,24 @@ test('wait registration uses current facts, wakes once, and owns no player', () 
   assert.equal(waits.state().waits, 0);
 });
 
+test('producer offer views include only granted scopes and reject oversized combined views without truncation', () => {
+  const { invocations, owner, waits, frame } = fixture();
+  waits.publish(frame(1)); waits.publish(frame(1, undefined, { scope: 'sheep' }));
+  const view = waits.grantedView(owner, ['wheat', 'sheep']);
+  assert.deepEqual(view.scopes.map(scope => scope.scope), ['wheat']);
+  assert.equal(view.scopes[0].current, true);
+  view.scopes[0].frame.facts[0].value = 'changed';
+  assert.equal(waits.grantedView(owner, ['wheat']).scopes[0].frame.facts[0].value, false);
+  const both = invocations.install({ definition: 'wide', grants: ['observe:wheat', 'observe:sheep'] });
+  const large = [{ path: ['data'], known: true, value: 'x'.repeat(7000) }];
+  waits.publish(frame(2, large)); waits.publish(frame(2, large, { scope: 'sheep' }));
+  assert.throws(() => waits.grantedView(both, ['wheat', 'sheep']), /message_limit/);
+  assert.equal(waits.grantedView(owner, ['wheat', 'sheep']).scopes.length, 1);
+  assert.throws(() => waits.grantedView(owner, ['missing']), /observation_scope_unknown/);
+  invocations.cancel(owner);
+  assert.throws(() => waits.grantedView(owner, []), /invocation_closing/);
+});
+
 test('missing, stale and unavailable facts remain unknown and do not assert readiness', () => {
   const { owner, waits, frame, advance } = fixture();
   waits.publish(frame(1, [], { coverage: { available: true, complete: false, truncated: true } }));

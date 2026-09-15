@@ -16,22 +16,24 @@ const rejections = new Set([
 ]);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** One pending effect per generator. The caller pulses tick; no guest wait blocks another invocation. */
-export class GeneratorLoop {
+/** One pending evaluation per invocation. Passive waits and offer duties never own the player. */
+export class BehaviorLoop {
   #host;
   #invocations;
   #runners;
   #waits;
   #resources;
   #work;
+  #observations;
   #trace;
   #states = new Map();
   #roots = new Set();
   #jobs = new Set();
   #closed = false;
 
-  constructor({ installations, invocations, runners, waits, resources, work, trace }) {
+  constructor({ installations, invocations, runners, waits, resources, work, observations, trace }) {
     this.#host = installations; this.#invocations = invocations; this.#runners = runners; this.#waits = waits; this.#resources = resources; this.#work = work; this.#trace = trace;
+    this.#observations = observations;
   }
   attach(id) {
     if (this.#closed) throw Error('execution_closed');
@@ -39,11 +41,11 @@ export class GeneratorLoop {
     if (this.#states.has(id)) throw Error('execution_already_attached');
     if (this.#states.size >= policy.invocations) throw Error('execution_capacity');
     const owner = this.#invocations.execution(id), definition = this.#host.describe(id);
-    if (definition.kind !== 'behavior' || definition.mode !== 'generator') throw Error('unsupported_definition_mode');
+    this.#supported(definition);
     if (owner.parentId !== null && !this.#roots.has(owner.rootId)) throw Error('execution_root_not_attached');
     this.#trace?.record('execution.attached', { ...owner, digest: definition.digest });
     this.#roots.add(owner.rootId);
-    this.#states.set(id, { id, rootId: owner.rootId, phase: 'ready', input: null, effect: null, sequence: 0 });
+    this.#states.set(id, { id, rootId: owner.rootId, mode: definition.mode, phase: definition.mode === 'offers' ? 'offers_waiting' : 'ready', input: null, effect: null, sequence: 0 });
   }
   tick() {
     if (this.#closed) return;
@@ -60,6 +62,7 @@ export class GeneratorLoop {
         if (this.#jobs.size < policy.invocations) {
           if (state.phase === 'ready') this.#resume(state);
           else if (state.phase === 'spawn_ready') this.#spawn(state);
+          else if (state.phase === 'offers_waiting') this.#offers(state);
         }
       } catch (error) { this.#rejectOrFail(state, error); }
     }
@@ -90,6 +93,22 @@ export class GeneratorLoop {
       else if (this.#running(state.id)) { state.yielded = result.result.value; state.phase = 'yielded'; }
     });
   }
+  #offers(state) {
+    const observed = this.#observations.offerView(state.id);
+    if (!observed) return;
+    const { basis, view } = observed, key = contentDigest(basis);
+    if (state.lastBasis === key) return;
+    state.lastBasis = key; state.phase = 'evaluating_offers';
+    this.#launch(state, () => this.#host.offers(state.id, view), result => {
+      if (!this.#running(state.id)) return;
+      if (this.#observations.isCurrentOfferBasis(basis)) {
+        const values = result.result.map(effect => ({ operation: effect.operation, arguments: effect.arguments, context: effect.context }));
+        this.#work.replaceOffers(state.id, ++state.sequence, values, basis);
+        this.#trace?.record('execution.offers', { owner: state.id, sequence: state.sequence, basis, digest: contentDigest(values) });
+      }
+      state.phase = 'offers_waiting';
+    });
+  }
   #dispatch(state, value) {
     const effect = guestEffect(value);
     state.effect = effect; state.sequence++;
@@ -106,7 +125,7 @@ export class GeneratorLoop {
       state.phase = 'joining'; this.#poll(state);
     } else if (effect.kind === 'spawn') {
       const definition = this.#host.describe(state.id, effect.definition);
-      if (definition.kind !== 'behavior' || definition.mode !== 'generator') throw Error('unsupported_definition_mode');
+      this.#supported(definition);
       state.phase = 'spawn_ready';
     } else if (effect.kind === 'target' && this.#resources) {
       this.#ready(state, this.#resources.target(state.id, effect.resource, effect.quantity));
@@ -162,8 +181,12 @@ export class GeneratorLoop {
   }
   #rejectOrFail(state, error) {
     if (!this.#current(state)) return;
-    if (this.#running(state.id) && rejections.has(error.message)) this.#ready(state, { status: 'rejected', reason: error.message });
+    if (state.mode === 'generator' && this.#running(state.id) && rejections.has(error.message)) this.#ready(state, { status: 'rejected', reason: error.message });
     else this.#fail(state, error);
+  }
+  #supported(definition) {
+    if (definition.kind !== 'behavior' || definition.mode !== 'generator' &&
+      !(definition.mode === 'offers' && this.#work && this.#observations)) throw Error('unsupported_definition_mode');
   }
   #fail(state, error) {
     if (!this.#current(state)) return;

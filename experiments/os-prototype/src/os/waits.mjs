@@ -50,6 +50,18 @@ export class ConditionWaits {
         !integer(offset) || offset >= scopes.length) throw Error('invalid_observation_page');
     return copyMessage({ ...this.cursor(), scopes: this.#frames.observe([scopes[offset]]), nextOffset: offset + 1 < scopes.length ? offset + 1 : null });
   }
+  /** A producer-selected view for a pure offer evaluation; ungranted scopes never cross the VM boundary. */
+  grantedView(owner, scopes) {
+    scopes = copyMessage(scopes);
+    if (!Array.isArray(scopes) || scopes.length > 32 || new Set(scopes).size !== scopes.length) throw Error('invalid_observation_scopes');
+    if (!this.#running(owner)) throw Error('invocation_closing');
+    const granted = scopes.filter(scope => {
+      if (!this.#grants.has(scope)) throw Error('observation_scope_unknown');
+      try { this.#invocations.authorize(owner, this.#grants.get(scope)); return true; }
+      catch (error) { if (error.message === 'operation_not_granted') return false; throw error; }
+    });
+    return copyMessage({ ...this.cursor(), scopes: this.#frames.observe(granted) }, 12_288, { maximumDepth: 10, maximumNodes: 1900 });
+  }
   wait(owner, condition, options = {}) {
     options = copyMessage(options);
     if (!options || Object.keys(options).some(key => !['cursor', 'deadline'].includes(key))) throw Error('invalid_wait_options');
