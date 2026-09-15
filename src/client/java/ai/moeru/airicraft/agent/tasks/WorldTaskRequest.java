@@ -30,6 +30,7 @@ public record WorldTaskRequest(String taskId, String sourceJobId, Task task) {
 			case UseBlock ignored -> WorldTaskType.USE_BLOCK;
 			case BreakBlocks ignored -> WorldTaskType.BREAK_BLOCKS;
 			case TendCrops ignored -> WorldTaskType.TEND_CROPS;
+			case FishOnce ignored -> WorldTaskType.FISH_ONCE;
 			case LureEntities ignored -> WorldTaskType.LURE_ENTITIES;
 			case ReturnToSurface ignored -> WorldTaskType.RETURN_TO_SURFACE;
 		};
@@ -121,6 +122,12 @@ public record WorldTaskRequest(String taskId, String sourceJobId, Task task) {
 	public static WorldTaskRequest breakBlocks(String taskId, String sourceJobId, BlockBreakStepArgs args) {
 		return new WorldTaskRequest(taskId, sourceJobId, new BreakBlocks(args));
 	}
+
+	public static WorldTaskRequest fishOnce(String taskId, String sourceJobId, FishOnceStepArgs args) {
+		return new WorldTaskRequest(taskId, sourceJobId, new FishOnce(args));
+	}
+
+	public record FishOnce(FishOnceStepArgs args) implements Task { public FishOnce { Objects.requireNonNull(args, "fishing"); } }
 
 	public static WorldTaskRequest tendCrops(String taskId, String sourceJobId, CropTendingStepArgs args) {
 		return new WorldTaskRequest(taskId, sourceJobId, new TendCrops(args));

@@ -61,6 +61,7 @@ public final class AiricraftCliMain {
 		CommandLine agentTools = agent.getSubcommands().get("tools");
 		agentTools.addSubcommand(new AgentToolsListCommand(context));
 		agentTools.addSubcommand(new AgentToolsCallCommand(context));
+		agentTools.addSubcommand(new AgentToolsStreamCommand(transport, out));
 		agent.addSubcommand(new AgentSessionCommand(context));
 		CommandLine agentSession = agent.getSubcommands().get("session");
 		agentSession.addSubcommand(new AgentSessionOpenLanCommand(context));

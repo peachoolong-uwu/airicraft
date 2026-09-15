@@ -16,6 +16,7 @@ public enum LedgerStepKind {
 	BREAK_BLOCKS,
 	ATTACK_ENTITY,
 	USE_ENTITY,
+	FISH_ONCE,
 	ASK_USER,
 	FINISH
 }

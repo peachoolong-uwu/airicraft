@@ -22,6 +22,9 @@ public interface WorldTaskExecutor {
 
 	TaskExecutionSnapshot snapshot();
 
+	/** False while cancellation still has an outstanding physical effect to release. */
+	default boolean released() { return true; }
+
 	void onWorldLeave();
 
 	void shutdown();

@@ -13,6 +13,7 @@
 		"ClientPlayerInteractionManagerAccessor",
 		"ClientPlayerEntityAccessor",
 		"CraftingResultSlotMixin",
+		"FishingBobberEntityAccessor",
 		"GameRendererMixin",
 		"GameRendererPauseMixin",
 		"MessageHandlerMixin",

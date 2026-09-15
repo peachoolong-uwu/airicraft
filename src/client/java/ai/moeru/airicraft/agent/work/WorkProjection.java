@@ -72,6 +72,7 @@ public final class WorkProjection {
 			case USE_BLOCK -> job.blockUse();
 			case BREAK_BLOCKS -> job.blockBreak();
 			case TEND_CROPS -> job.cropTending();
+			case FISH_ONCE -> job.fishing();
 			case LURE_ENTITIES -> job.lureEntities();
 			case RETURN_TO_SURFACE -> job.returnToSurface();
 			case ASK_USER -> job.askPrompt();

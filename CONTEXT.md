@@ -17,6 +17,8 @@ _Avoid_: Worker
 An LLM invoked as a function by behavior code to provide judgment or interpretation during execution or orchestration.
 _Avoid_: Planner
 
+The [crop and fishing driver prototype](experiments/os-prototype/README.md) exercises this model with sandboxed behavior definitions and one host-owned player lease. Its [trial notes](experiments/os-prototype/TRIAL.md) distinguish live evidence from simulation. Worker calls and durable running behaviors remain future work.
+
 ### Evaluation
 
 Airicraft evaluation measures agent behavior in isolated Minecraft scenarios. The evaluation harness collects scenario evidence and optional supporting evidence.

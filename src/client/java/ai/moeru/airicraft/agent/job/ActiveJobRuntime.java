@@ -329,7 +329,8 @@ public final class ActiveJobRuntime {
 			reason,
 			tick,
 			activeJob.cropTending(),
-			activeJob.lureEntities()
+			activeJob.lureEntities(),
+			activeJob.fishing()
 		);
 		collectResourceDebugSnapshot = activeJob.type() == ActiveJobType.COLLECT_RESOURCE
 			? collectResourceProbe(activeJob, activeJob.baselineResourceCount() + activeJob.collectedCount(), false, lastPrimitiveExecution.state(), reason, tick)
@@ -386,7 +387,7 @@ public final class ActiveJobRuntime {
 			case COLLECT_RESOURCE -> tickCollectResource(activeJob, lastPrimitiveExecution, lastEvidence, actuationAllowed, nearbyResourceTargetAvailable, tick);
 			case CRAFT_RECIPE -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
 			case DROP_ITEMS -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, true, tick);
-			case SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS, LURE_ENTITIES -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
+			case SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS, FISH_ONCE, LURE_ENTITIES -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
 			case ATTACK_ENTITY, USE_ENTITY -> tickPrimitiveJob(activeJob, desiredPrimitiveTask, lastPrimitiveExecution, actuationAllowed, tick);
 			case ASK_USER -> tickAskUser(activeJob, tick);
 			case MINE_BLOCKS -> tickMineBlocks(activeJob, lastPrimitiveExecution, actuationAllowed, tick);
@@ -455,6 +456,11 @@ public final class ActiveJobRuntime {
 		if (activeJob.type() == ActiveJobType.LURE_ENTITIES && activeJob.lureEntities() != null) {
 			clearAttemptState();
 			desiredPrimitiveTask = WorldTaskRequest.lureEntities(activeJob.jobId(), activeJob.jobId(), activeJob.lureEntities());
+			return;
+		}
+		if (activeJob.type() == ActiveJobType.FISH_ONCE && activeJob.fishing() != null) {
+			clearAttemptState();
+			desiredPrimitiveTask = WorldTaskRequest.fishOnce(activeJob.jobId(), activeJob.jobId(), activeJob.fishing());
 			return;
 		}
 		if (activeJob.type() == ActiveJobType.TEND_CROPS && activeJob.cropTending() != null) {
@@ -1275,6 +1281,9 @@ public final class ActiveJobRuntime {
 			case LURE_ENTITIES -> new ActiveJob(newJobId(), ActiveJobType.LURE_ENTITIES, ActiveJobStatus.QUEUED,
 				null, null, null, null, null, null, null, null, null, null, null, null,
 				-1L, 0, 0, source, null, null, tick, null, proposal.lureEntities());
+			case FISH_ONCE -> new ActiveJob(newJobId(), ActiveJobType.FISH_ONCE, ActiveJobStatus.QUEUED,
+				null, null, null, null, null, null, null, null, null, null, null, null,
+				-1L, 0, 0, source, null, null, tick, null, null, proposal.fishing());
 			case TEND_CROPS -> new ActiveJob(newJobId(), ActiveJobType.TEND_CROPS, ActiveJobStatus.QUEUED,
 				null, null, null, null, null, null, null, null, null, null, null, null,
 				-1L, 0, 0, source, null, null, tick, proposal.cropTending());
@@ -1314,7 +1323,8 @@ public final class ActiveJobRuntime {
 				activeJob.lastError(),
 				tick,
 				next.cropTending(),
-			next.lureEntities()
+				next.lureEntities(),
+				next.fishing()
 			);
 		}
 		return next;
@@ -1346,6 +1356,7 @@ public final class ActiveJobRuntime {
 			return Objects.equals(left.collectSmeltedItems(), right.collectSmeltedItems());
 		}
 		if (left.lureEntities() != null || right.lureEntities() != null) return Objects.equals(left.lureEntities(), right.lureEntities());
+		if (left.fishing() != null || right.fishing() != null) return Objects.equals(left.fishing(), right.fishing());
 		if (left.cropTending() != null || right.cropTending() != null) return Objects.equals(left.cropTending(), right.cropTending());
 		if (left.returnToSurface() != null || right.returnToSurface() != null) {
 			return Objects.equals(left.returnToSurface(), right.returnToSurface());
@@ -1393,6 +1404,7 @@ public final class ActiveJobRuntime {
 			case PLACE_BLOCK -> activeJob.blockPlacement() == null ? "Place block" : "Place " + activeJob.blockPlacement().targets().size() + " " + activeJob.blockPlacement().itemId();
 			case USE_BLOCK -> activeJob.blockUse() == null ? "Use block" : "Use block at " + activeJob.blockUse().targets().size() + " target blocks";
 			case TEND_CROPS -> "Tend crops in a bounded plot";
+			case FISH_ONCE -> "Fish one bounded cast";
 			case LURE_ENTITIES -> "Lure selected animals into the destination area";
 			case BREAK_BLOCKS -> activeJob.blockBreak() == null ? "Break blocks" : "Break " + activeJob.blockBreak().targets().size() + " target blocks";
 			case ATTACK_ENTITY -> activeJob.entityInteraction() == null ? "Attack entity" : "Attack " + activeJob.entityInteraction().selector();
@@ -1413,6 +1425,7 @@ public final class ActiveJobRuntime {
 			case COLLECT_SMELTED_ITEMS -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.COLLECT_SMELTED_ITEMS;
 			case RETURN_TO_SURFACE -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.NAVIGATE_TO_POSITION;
 			case PLACE_BLOCK -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.PLACE_BLOCK;
+			case FISH_ONCE -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.FISH_ONCE;
 			case USE_BLOCK, TEND_CROPS -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.USE_BLOCK;
 			case BREAK_BLOCKS -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.MINE_BLOCKS;
 			case ATTACK_ENTITY -> ai.moeru.airicraft.agent.tasks.LedgerStepKind.ATTACK_ENTITY;
@@ -1507,7 +1520,8 @@ public final class ActiveJobRuntime {
 			lastError,
 			tick,
 			job.cropTending(),
-			job.lureEntities()
+			job.lureEntities(),
+			job.fishing()
 		);
 	}
 

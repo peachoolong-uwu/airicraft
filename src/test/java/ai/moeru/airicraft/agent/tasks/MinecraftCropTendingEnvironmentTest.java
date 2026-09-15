@@ -7,6 +7,19 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MinecraftCropTendingEnvironmentTest {
+	@Test void approachCellRemainsInReachWhenNavigationStopsAtItsEdge() {
+		var potatoAim = new Vec3d(-305.5, 64.5, -384.5);
+		var oldCenter = new Vec3d(-302.5, 65.62, -381.5);
+		var recordedArrival = new Vec3d(-302.2157860308709, 65.62, -381.2924207031525);
+		assertTrue(oldCenter.squaredDistanceTo(potatoAim) < 4.5 * 4.5);
+		assertTrue(recordedArrival.squaredDistanceTo(potatoAim) > 4.5 * 4.5);
+		assertFalse(MinecraftCropTendingEnvironment.reachableFromWholeCell(oldCenter, potatoAim));
+		var closerCenter = new Vec3d(-303.5, 65.62, -381.5);
+		assertTrue(MinecraftCropTendingEnvironment.reachableFromWholeCell(closerCenter, potatoAim));
+		for (double x : new double[]{-0.5, 0.5}) for (double z : new double[]{-0.5, 0.5})
+			assertTrue(closerCenter.add(x, 0, z).squaredDistanceTo(potatoAim) <= 4.5 * 4.5);
+	}
+
 	@Test void scatteredDropsUseTheirOwnLevelExceptOnShortenedFarmland() {
 		var drop = new BlockPos(261, 62, 478);
 		assertEquals(new ai.moeru.airicraft.agent.goals.GoalPosition(261, 62, 478, true),

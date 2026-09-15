@@ -2829,6 +2829,24 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				applyPlannerJobTool(ActiveJobProposal.lureEntities(lure));
 				yield queuedActionToolResult("lure_entities", "destination=" + lure);
 			}
+			case PlannerToolCatalog.INSPECT_CROP_PLOT -> {
+				var plot = ai.moeru.airicraft.agent.tasks.CropTendingStepArgs.parse(args);
+				var observation = ai.moeru.airicraft.agent.tasks.CropPlotObservation.inspect(plot);
+				observation.addProperty("actuatorReleased", worldTaskExecutor.released());
+				observation.addProperty("actuatorState", worldTaskExecutor.snapshot().state().name());
+				observation.addProperty("reflexHold", survivalReflexRuntime.snapshot().holdId());
+				yield observation.toString();
+			}
+			case PlannerToolCatalog.FISH_ONCE -> {
+				var fishing = ai.moeru.airicraft.agent.tasks.FishOnceStepArgs.parse(args);
+				applyPlannerJobTool(ActiveJobProposal.fishOnce(fishing));
+				yield admittedJobReceipt("fish_once");
+			}
+			case PlannerToolCatalog.START_CROP_PASS -> {
+				var plot = ai.moeru.airicraft.agent.tasks.CropTendingStepArgs.parse(args);
+				applyPlannerJobTool(ActiveJobProposal.tendCrops(plot));
+				yield admittedJobReceipt("start_crop_pass");
+			}
 			case PlannerToolCatalog.TEND_CROPS -> {
 				var cropTending = ai.moeru.airicraft.agent.tasks.CropTendingStepArgs.parse(args);
 				applyPlannerJobTool(ActiveJobProposal.tendCrops(cropTending));
@@ -2914,7 +2932,14 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			|| activeJob.status() == ActiveJobStatus.BLOCKED;
 	}
 
-	private static String queuedActionToolResult(String toolName, String details) {
+	private String admittedJobReceipt(String toolName) {
+		var job = activeJobRuntime.current();
+		return "Tool result for " + toolName + ": " + new com.google.gson.Gson().toJson(Map.of(
+			"accepted", !job.isIdle(), "workId", "JOB:" + job.jobId(), "state", job.status().name()));
+	}
+
+	private String queuedActionToolResult(String toolName, String details) {
+		if (codexDriverActive) return admittedJobReceipt(toolName);
 		return "Tool result for " + toolName + ": accepted queued " + details
 			+ ". Accepted does not mean completed. Wait for TASK UPDATE before saying the action completed.";
 	}
@@ -4761,7 +4786,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return false;
 		}
 		return switch (intent.activeJob().type()) {
-			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS, LURE_ENTITIES -> true;
+			case FOLLOW_PLAYER, NAVIGATE_TO, MINE_BLOCKS, ENSURE_BLOCKS_IN_INVENTORY, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS, FISH_ONCE, LURE_ENTITIES -> true;
 			case IDLE, COLLECT_RESOURCE, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, ATTACK_ENTITY, USE_ENTITY, ASK_USER -> false;
 		};
 	}
@@ -4995,7 +5020,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return false;
 		}
 		return switch (kind) {
-			case COLLECT_RESOURCE, MINE_BLOCKS, CRAFT_RECIPE, TRANSFER_ITEMS, PLACE_BLOCK, USE_BLOCK, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, BREAK_BLOCKS -> true;
+			case COLLECT_RESOURCE, MINE_BLOCKS, CRAFT_RECIPE, TRANSFER_ITEMS, PLACE_BLOCK, USE_BLOCK, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, BREAK_BLOCKS, FISH_ONCE -> true;
 			case NAVIGATE_TO_POSITION, NAVIGATE_TO_BLOCK_KIND, OPEN_CONTAINER, ATTACK_ENTITY, USE_ENTITY, ASK_USER, FINISH -> false;
 		};
 	}
@@ -5005,7 +5030,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return false;
 		}
 		return switch (type) {
-			case MINE, UNDERWATER_HARVEST, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS -> true;
+			case MINE, UNDERWATER_HARVEST, CRAFT_RECIPE, DROP_ITEMS, SMELT_ITEMS, COLLECT_SMELTED_ITEMS, RETURN_TO_SURFACE, PLACE_BLOCK, USE_BLOCK, BREAK_BLOCKS, TEND_CROPS, FISH_ONCE -> true;
 			case FOLLOW, NAVIGATE, ATTACK_ENTITY, USE_ENTITY, LURE_ENTITIES -> false;
 		};
 	}

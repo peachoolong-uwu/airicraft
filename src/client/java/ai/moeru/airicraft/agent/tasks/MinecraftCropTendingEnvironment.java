@@ -59,6 +59,8 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 		if (canHarvest(crop)) return position();
 		var world = client().world;
 		BlockPos target = block(crop);
+		Vec3d aim = cropAim(target);
+		if (aim == null) return null;
 		return StreamSupport.stream(BlockPos.iterate(target.add(-3, -1, -3), target.add(3, 1, 3)).spliterator(), false)
 			.filter(pos -> world.isChunkLoaded(pos)
 				&& world.getBlockState(pos).getCollisionShape(world, pos).isEmpty()
@@ -66,9 +68,19 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 				&& world.getFluidState(pos).isEmpty() && world.getFluidState(pos.up()).isEmpty()
 				&& (world.getBlockState(pos.down()).isSideSolidFullSquare(world, pos.down(), Direction.UP)
 					|| world.getBlockState(pos.down()).isOf(Blocks.FARMLAND))
+				&& reachableFromWholeCell(Vec3d.ofBottomCenter(pos).add(0, 1.62, 0), aim)
 				&& visible(Vec3d.ofBottomCenter(pos).add(0, 1.62, 0), target))
 			.map(BlockPos::toImmutable).min(Comparator.comparingDouble(pos -> pos.getSquaredDistance(client().player.getPos())))
 			.map(MinecraftCropTendingEnvironment::position).orElse(null);
+	}
+
+	static boolean reachableFromWholeCell(Vec3d centeredEye, Vec3d aim) {
+		// GoalBlock accepts any position in the cell, not only its center. Leave enough
+		// reach for the farthest horizontal corner where navigation may stop.
+		double dx = Math.abs(centeredEye.x - aim.x) + 0.5;
+		double dz = Math.abs(centeredEye.z - aim.z) + 0.5;
+		double dy = centeredEye.y - aim.y;
+		return dx * dx + dy * dy + dz * dz <= 20.25;
 	}
 
 	private boolean visible(Vec3d eye, BlockPos target) {

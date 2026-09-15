@@ -1,0 +1,12 @@
+{
+  "plots": [
+    { "id": "wheat", "seedItemId": "minecraft:wheat_seeds", "x1": 0, "y": 64, "z1": 0, "x2": 2, "z2": 2 },
+    { "id": "potato", "seedItemId": "minecraft:potato", "x1": 3, "y": 64, "z1": 0, "x2": 5, "z2": 2 },
+    { "id": "carrot", "seedItemId": "minecraft:carrot", "x1": 6, "y": 64, "z1": 0, "x2": 8, "z2": 2 }
+  ],
+  "fishing": {
+    "stand": { "x": 0, "y": 64, "z": 5 },
+    "water": { "x": 0, "y": 62, "z": 9 },
+    "maxWaitTicks": 1200
+  }
+}

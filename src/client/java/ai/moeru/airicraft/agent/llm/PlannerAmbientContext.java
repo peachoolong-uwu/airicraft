@@ -159,6 +159,7 @@ public record PlannerAmbientContext(
 			case TRANSFER_ITEMS -> String.valueOf(step.args().transferItems());
 			case PLACE_BLOCK -> String.valueOf(step.args().placeBlock());
 			case USE_BLOCK -> "use_block";
+			case FISH_ONCE -> "fish_once";
 			case BREAK_BLOCKS -> String.valueOf(step.args().blockBreak());
 			case DROP_ITEMS -> String.valueOf(step.args().dropItems());
 			case SMELT_ITEMS, COLLECT_SMELTED_ITEMS -> "smelting";

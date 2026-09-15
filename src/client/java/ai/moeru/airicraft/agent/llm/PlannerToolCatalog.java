@@ -58,6 +58,9 @@ public final class PlannerToolCatalog {
 	public static final String USE_BLOCK = "use_block";
 	public static final String BREAK_BLOCKS = "break_blocks";
 	public static final String TEND_CROPS = "tend_crops";
+	public static final String INSPECT_CROP_PLOT = "inspect_crop_plot";
+	public static final String FISH_ONCE = "fish_once";
+	public static final String START_CROP_PASS = "start_crop_pass";
 	public static final String LURE_ENTITIES = "lure_entities";
 	public static final String CANCEL_TASK = "cancel_task";
 	public static final String RESUME_TASK = "resume_task";
@@ -330,6 +333,23 @@ public final class PlannerToolCatalog {
 			prop("x1", integer("Minimum destination x.")), prop("y1", integer("Minimum destination y.")), prop("z1", integer("Minimum destination z.")),
 			prop("x2", integer("Maximum destination x.")), prop("y2", integer("Maximum destination y.")), prop("z2", integer("Maximum destination z."))
 		), List.of("uuids", "itemId", "x1", "y1", "z1", "x2", "y2", "z2")), ai.moeru.airicraft.agent.tasks.LureEntitiesStepArgs::parse),
+		builtInTool(INSPECT_CROP_PLOT, true, tool(INSPECT_CROP_PLOT, "Inspect readiness of one bounded crop plot without acquiring player control. Returns JSON counts, planting stock, loaded-state knowledge, world identity and time. Uses the same bounds and crop item as tend_crops.", properties(
+			prop("narration", optionalString("Optional visible narration.")),
+			prop("seedItemId", string("Crop planting item, e.g. minecraft:wheat_seeds, minecraft:carrot, minecraft:potato, minecraft:beetroot_seeds.")),
+			prop("x1", integer("Minimum plot x.")), prop("y", integer("Crop block y; soil is one block below.")),
+			prop("z1", integer("Minimum plot z.")), prop("x2", integer("Maximum plot x.")), prop("z2", integer("Maximum plot z."))
+		), List.of("seedItemId", "x1", "y", "z1", "x2", "z2")), ai.moeru.airicraft.agent.tasks.CropTendingStepArgs::parse),
+		builtInTool(FISH_ONCE, false, tool(FISH_ONCE, "Cast a held fishing rod from your current dry standing position toward water within 12 blocks. Reels on a bite or at maxWaitTicks, then releases the hook before completing. Does not navigate or equip the rod. Returns an accepted workId immediately; inspect_work provides completion. One bounded cast; inspect inventory for actual yield.", properties(
+			prop("x", integer("Target water block x.")), prop("y", integer("Target water block y.")), prop("z", integer("Target water block z.")),
+			prop("maxWaitTicks", integer("Cast budget in active ticks, 100..2400, default 1200.")),
+			prop("narration", optionalString("Optional visible narration."))
+		), List.of("x", "y", "z")), ai.moeru.airicraft.agent.tasks.FishOnceStepArgs::parse),
+		builtInTool(START_CROP_PASS, false, tool(START_CROP_PASS, "Tend one existing flat crop plot, at most 16 by 16 blocks within 64 blocks of you. System 1 inspects the plot, harvests mature crops, collects drops and replants, and plants empty farmland when seeds are available. Leaves immature crops and other blocks intact. Deliberately edits crops within preserved places. One pass; does not wait for growth or till soil. Returns an accepted workId immediately; inspect_work provides completion and counts. Acceptance is not completion.", properties(
+			prop("narration", optionalString("Optional visible narration.")),
+			prop("seedItemId", string("Crop planting item, e.g. minecraft:wheat_seeds, minecraft:carrot, minecraft:potato, minecraft:beetroot_seeds.")),
+			prop("x1", integer("Minimum plot x.")), prop("y", integer("Crop block y; soil is one block below.")),
+			prop("z1", integer("Minimum plot z.")), prop("x2", integer("Maximum plot x.")), prop("z2", integer("Maximum plot z."))
+		), List.of("seedItemId", "x1", "y", "z1", "x2", "z2")), ai.moeru.airicraft.agent.tasks.CropTendingStepArgs::parse),
 		builtInTool(TEND_CROPS, false, tool(TEND_CROPS, "Tend one existing flat crop plot, at most 16 by 16 blocks within 64 blocks of you. System 1 inspects the plot, harvests mature crops, collects drops and replants, and plants empty farmland when seeds are available. Leaves immature crops and other blocks intact. Deliberately edits crops within preserved places. One pass; does not wait for growth or till soil. Read TASK UPDATE for counts and missing seeds.", properties(
 			prop("narration", optionalString("Optional visible narration.")),
 			prop("seedItemId", string("Crop planting item, e.g. minecraft:wheat_seeds, minecraft:carrot, minecraft:potato, minecraft:beetroot_seeds.")),

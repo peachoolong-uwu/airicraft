@@ -24,15 +24,14 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 	@Override
 	public Optional<TaskTerminalEvent> tick(SessionSnapshot sessionSnapshot, Optional<WorldTaskRequest> activeTask) {
 		if (activeTask.isEmpty()) {
-			deactivate(sessionSnapshot);
-			transitionSnapshot = TaskExecutionSnapshot.idle();
+			if (deactivate(sessionSnapshot)) transitionSnapshot = TaskExecutionSnapshot.idle();
 			return Optional.empty();
 		}
 
 		WorldTaskRequest request = activeTask.get();
 		WorldTaskExecutor requestedExecutor = executors.executorFor(request);
 		if (sharedBaritone != null && activeType != request.type()) {
-			deactivate(sessionSnapshot);
+			if (!deactivate(sessionSnapshot)) return Optional.empty();
 			if (!BaritoneReleaseBarrier.releaseAndDrain(sharedBaritone)) {
 				transitionSnapshot = new TaskExecutionSnapshot(
 					TaskExecutionState.RUNNING,
@@ -47,7 +46,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 			}
 		}
 		else if (activeExecutor != null && activeExecutor != requestedExecutor) {
-			deactivate(sessionSnapshot);
+			if (!deactivate(sessionSnapshot)) return Optional.empty();
 		}
 
 		activeExecutor = requestedExecutor;
@@ -56,12 +55,14 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 		return activeExecutor.tick(sessionSnapshot, activeTask);
 	}
 
-	private void deactivate(SessionSnapshot sessionSnapshot) {
+	private boolean deactivate(SessionSnapshot sessionSnapshot) {
 		if (activeExecutor != null) {
 			activeExecutor.tick(sessionSnapshot, Optional.empty());
+			if (!activeExecutor.released()) return false;
 		}
 		activeExecutor = null;
 		activeType = null;
+		return true;
 	}
 
 	@Override
@@ -88,6 +89,11 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 	@Override
 	public TaskExecutionSnapshot snapshot() {
 		return activeExecutor == null ? transitionSnapshot : activeExecutor.snapshot();
+	}
+
+	@Override
+	public boolean released() {
+		return activeExecutor == null || activeExecutor.released();
 	}
 
 	@Override
@@ -118,8 +124,17 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 		WorldTaskExecutor acquisition,
 		WorldTaskExecutor underwaterHarvest,
 		WorldTaskExecutor cropTending,
-		WorldTaskExecutor lureEntities
+		WorldTaskExecutor lureEntities,
+		WorldTaskExecutor fishing
 	) {
+		public ExecutorSet(WorldTaskExecutor baritone, WorldTaskExecutor crafting, WorldTaskExecutor dropItems,
+			WorldTaskExecutor entityInteraction, WorldTaskExecutor smelting, WorldTaskExecutor returnToSurface,
+			WorldTaskExecutor blockInteraction, WorldTaskExecutor blockBreak, WorldTaskExecutor acquisition,
+			WorldTaskExecutor underwaterHarvest, WorldTaskExecutor cropTending, WorldTaskExecutor lureEntities) {
+			this(baritone, crafting, dropItems, entityInteraction, smelting, returnToSurface, blockInteraction,
+				blockBreak, acquisition, underwaterHarvest, cropTending, lureEntities, entityInteraction);
+		}
+
 		public ExecutorSet(WorldTaskExecutor baritone, WorldTaskExecutor crafting, WorldTaskExecutor dropItems,
 			WorldTaskExecutor entityInteraction, WorldTaskExecutor smelting, WorldTaskExecutor returnToSurface,
 			WorldTaskExecutor blockInteraction, WorldTaskExecutor blockBreak, WorldTaskExecutor acquisition,
@@ -141,6 +156,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 		}
 
 		public ExecutorSet {
+			Objects.requireNonNull(fishing, "fishing");
 			Objects.requireNonNull(cropTending, "cropTending");
 			Objects.requireNonNull(lureEntities, "lureEntities");
 			Objects.requireNonNull(acquisition, "acquisition");
@@ -168,6 +184,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 				case PLACE_BLOCK, USE_BLOCK -> blockInteraction;
 				case BREAK_BLOCKS -> blockBreak;
 				case TEND_CROPS -> cropTending;
+				case FISH_ONCE -> fishing;
 				case LURE_ENTITIES -> lureEntities;
 			};
 		}
@@ -181,7 +198,7 @@ public final class DispatchingWorldTaskExecutor implements WorldTaskExecutor {
 				smelting,
 				returnToSurface,
 				blockInteraction,
-				blockBreak, acquisition, underwaterHarvest, cropTending, lureEntities
+				blockBreak, acquisition, underwaterHarvest, cropTending, lureEntities, fishing
 			)));
 		}
 	}

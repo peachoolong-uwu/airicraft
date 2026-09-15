@@ -1,0 +1,7 @@
+{
+  "interfaceVersion": "generator-effects/v1",
+  "definitions": {
+    "farm": { "source": "farm.js", "priority": 10, "actions": ["tend_crops"] },
+    "fishing": { "source": "fishing.js", "priority": 0, "actions": ["fish_once"] }
+  }
+}
