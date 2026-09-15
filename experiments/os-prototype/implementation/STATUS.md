@@ -76,7 +76,9 @@ The [scoped observation projections and passive condition waits](wait-api.md) no
 
 The [generator service loop](loop-api.md) now connects real supervised VMs to passive observations, condition waits, owned child spawning and joins. Thirteen new integration cases exercise independent progress, late initialization/cancellation, parent return, both sibling failure policies, bounded result delivery, argument rejections and metadata reconciliation. Demand/work/worker effects explicitly report unavailable services. Both axes of the [source review](loop-review.md) have zero remaining findings; the complete JavaScript regression passes 184 tests.
 
-1. Connect guest resource effects to the ledger/supply services and work offers to scheduling.
+The [guest resource service](resource-api.md) now connects root stock targets and owned finite deliveries to the existing ledger. Actual sandboxed generators share a journalled transfer and withdraw independently in simulated-transport integration cases. Thirteen additional tests cover these connections and the resource contract; the complete JavaScript regression passes 197 tests. Both axes of the [source review](resource-review.md) have zero findings. Automatic supply selection remains a scheduler integration.
+
+1. Implement supply selection and work-offer scheduling over the shared resource services.
 2. Bounded inference-only worker functions and fallbacks. A real model profile is not configured.
 3. Scheduling and native crop, sheep, birch, compost, supplies, storage and fishing operations.
 4. Complete trace/opportunity/time accounting and staged evaluator integration.

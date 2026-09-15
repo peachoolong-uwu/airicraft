@@ -17,6 +17,9 @@ export class ResourceLedger {
   #deliverySequence = 0;
   #supplySequence = 0;
 
+  get epoch() { return this.#frame?.epoch ?? null; }
+  get needsObservation() { return this.#needsObservation; }
+
   observe(frame) {
     frame = copyMessage(frame);
     if (!frame || !identity(frame.epoch) || !identity(frame.revision) || !amountMap(frame.stocks, 0, true) ||
@@ -134,6 +137,10 @@ export class ResourceLedger {
     return true;
   }
   /** IDs are host-issued monotonic sequence numbers, separate from native admission IDs. */
+  createDelivery(spec) {
+    if (this.#deliverySequence === Number.MAX_SAFE_INTEGER) throw Error('demand_id_exhausted');
+    return this.requestDelivery(this.#deliverySequence + 1, spec);
+  }
   requestDelivery(id, spec) {
     spec = copyMessage(spec);
     if (!Number.isSafeInteger(id) || id < 1 || !spec || !identity(spec.consumer) || !identity(spec.resource) || !amount(spec.quantity, 1) ||
@@ -154,7 +161,8 @@ export class ResourceLedger {
   }
   delivery(id) {
     const demand = this.#delivery(id);
-    return copyMessage({ ...demand, outstanding: demand.state === 'pending' ? demand.spec.quantity - demand.credited : 0 });
+    const outstanding = demand.state === 'pending' ? demand.spec.quantity - demand.credited : 0, allocated = this.#allocated(id);
+    return copyMessage({ ...demand, outstanding, allocated, unallocated: Math.max(0, outstanding - allocated) });
   }
   cancelDelivery(id) {
     const demand = this.#delivery(id);
@@ -258,8 +266,7 @@ export class ResourceLedger {
     if (supply.spec.epoch !== this.#frame?.epoch || demand.epoch !== supply.spec.epoch || demand.state !== 'pending' || demand.withdrawn ||
         demand.spec.resource !== supply.spec.resource || !demand.spec.methods.includes(supply.spec.method)) throw Error('supply_inapplicable');
     if (supply.allocations.some(allocation => allocation.demandId === demandId)) throw Error('demand_already_joined');
-    const allocated = [...this.#supplies.values()].filter(attempt => attempt.state !== 'settled').flatMap(attempt => attempt.allocations)
-      .filter(allocation => allocation.demandId === demandId).reduce((sum, allocation) => sum + allocation.quantity - allocation.credited, 0);
+    const allocated = this.#allocated(demandId);
     if (quantity > demand.spec.quantity - demand.credited - allocated ||
         quantity > supply.spec.expected - supply.allocations.reduce((sum, allocation) => sum + allocation.quantity, 0)) throw Error('supply_capacity_unavailable');
   }
@@ -284,5 +291,9 @@ export class ResourceLedger {
       if (quantity) totals.set(claim.consumer, (totals.get(claim.consumer) ?? 0) + quantity);
     }
     return totals;
+  }
+  #allocated(demandId) {
+    return [...this.#supplies.values()].filter(attempt => attempt.state !== 'settled').flatMap(attempt => attempt.allocations)
+      .filter(allocation => allocation.demandId === demandId).reduce((sum, allocation) => sum + allocation.quantity - allocation.credited, 0);
   }
 }

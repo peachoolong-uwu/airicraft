@@ -12,10 +12,12 @@ The host installs a validated revision, calls `loop.attach(rootId)`, and pulses 
 | `wait(condition, options)` | Suspends only this generator until the owned wait returns `met`, `deadline`, `gap` or `epoch_changed`. No player/resource claim is acquired. |
 | `spawn(alias, input, options)` | Creates a typed, attenuated child in the same root process and returns its owned handle after VM initialization. That child begins independently of when its parent joins it. |
 | `join(handle)` | Waits for the broker's settled child outcome, consumes it once, and returns its distinct success/failure/cancellation value. Physical cleanup can keep the outcome pending. |
+| `target(alias, quantity)` | Updates this installed consumer's stock floor through the configured resource service. |
+| `demand(alias, quantity, methods)` | Suspends for an owned finite delivery; shared verified output and cleanup determine completion. |
 
 Replies are plain copied data passed to the generator's next step. Declared validation, capability and capacity rejections return `{status: "rejected", reason}`. Unknown host faults fail the invocation through the runner/broker's normal sibling policy. Arbitrary error stacks are not sent to guests. A response exceeding the enclosing runner wire becomes an explicit `effect_response_limit` rejection; a joined child is still consumed once, and its full outcome remains in the broker's terminal/join trace rather than being silently truncated into a successful value.
 
-`target`, `demand`, `work` and `worker` currently return `service_unavailable` with the service name. The ledger/coordinator exist, but their guest services and the work scheduler are separate remaining integrations. The loop accepts generator definitions only. An offers-only child is rejected before allocation; recurring offers will be connected with the scheduler. There is no generic callback/plugin dispatcher that could bypass these boundaries.
+The [resource service](resource-api.md) implements `target` and `demand` when supplied to the loop; absent configuration returns `service_unavailable`. `work` and `worker` remain unavailable. Supply selection and the work scheduler are separate remaining integrations. The loop accepts generator definitions only. An offers-only child is rejected before allocation; recurring offers will be connected with the scheduler. There is no generic callback/plugin dispatcher that could bypass these boundaries.
 
 ## Scheduling and ownership
 
