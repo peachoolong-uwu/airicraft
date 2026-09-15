@@ -60,3 +60,9 @@ Seven host tests cover sandbox bounds, capability isolation, repeated handoffs, 
 Run `node src/audit.mjs artifacts/<run>` after a trial to check the recorded lease/native-work ordering and summarize handoffs and admission delays. It writes `audit.json` and fails on recorded overlaps or unresolved owners. These checks cover the recorded protocol; they do not measure every physical input or classify all idle time.
 
 Live trial evidence and findings are recorded separately in `TRIAL.md` when available. Simulation or unit tests alone do not prove live fishing or crop efficiency.
+
+## Roadmap position
+
+[Define behavior instances and compositional execution](https://github.com/shinohara-rin/airicraft/issues/53) is resolved: child instances have owned lifetimes, parents settle their children before stopping, and parallel child failure cancels siblings by default with an explicit collect-all option. Invocation ownership remains separate from OS-owned shared activities and access contexts. The [evidence and walkthrough](design/behavior-composition.md) records what the prototype demonstrates and which lifecycle capabilities still need implementation.
+
+The remaining architecture contracts are recorded in [Chart the Airicraft OS driver experiment](https://github.com/shinohara-rin/airicraft/issues/51). The [coordination walkthrough](design/coordination-walkthrough.md) checks their interactions; the [implementation and evaluation handoff](design/implementation-handoff.md) starts with a guarded native transfer and explicit admission, cancellation, and release evidence. These are design decisions and qualification requirements, not claims that the full contract already runs. Gameplay-specific sheep recovery is a separate scope.
