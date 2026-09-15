@@ -2,7 +2,7 @@
 
 This follows the settled [implementation handoff](../design/implementation-handoff.md). Work is on `os-exp`. The existing prototype and unrelated JourneyMap edits were preserved in `run/os-implementation/baseline-20260915-233217` before implementation began.
 
-## Current slice: native authority
+## Native authority
 
 The new driver-only boundary has identified submit, inspect and cancel operations; a renewable five-second lease; world/load fencing; two-second observation freshness; a submission high-water mark; and retained receipts. A guarded transfer uses the existing container transfer planner and vanilla container-click mechanics, with server-side validation at the actual effect. One effect is outstanding at a time. Cancellation preserves verified delivered items and returns the remaining cursor stack before closing the owned window.
 
@@ -26,7 +26,7 @@ Ignored local evidence is under `run/os-implementation/native-qualification/`: f
 
 The corrected native tests (30) and EmbodiedAgentRuntime tests (115) pass. The full root suite had one one-second planning timeout among 1,344 tests (two skipped); its 51-test class passed when rerun alone. Wrapper (97), advisor (10), and existing prototype (50) checks passed. The original full-run failure remains recorded. See [native-review.md](native-review.md) for the independent Standards and Spec findings and corrections.
 
-## Broker implementation in progress
+## Broker foundation
 
 The new `src/os/` modules are separate from the preserved earlier prototype edits. Deterministic checks currently cover owned parent/child completion, cancellation versus physical cleanup, explicit collect-all, shared subscriber withdrawal, reclaimed live capacity and bounded result handles, child grant/depth limits, atomic stock/tool/capacity/target claims, floor/claim overlap, and reconciliation after external stock loss.
 
@@ -60,13 +60,20 @@ Native history through sequence 135 had no gap. Local evidence is under `run/os-
 
 The initial world join timed out while the client continued loading. Some legacy status handshakes also timed out before any native admission; those failed attempts remain recorded. A direct native handshake was then measured and adopted. Client load variability was not calibrated for timing claims, and the functional tests do not establish throughput improvement.
 
+## Supervised execution
+
+The supervised execution foundation is now implemented separately from the earlier prototype entrypoint. Each root owns one process, and each live invocation has a separate QuickJS VM. Copied typed effects, bounded source chunks/framing, a one-second external watchdog, independent root failure, shared CPU/message budgets, round-robin execution and RSS supervision are covered by the [execution API](execution-api.md). Runner failure retains native cleanup obligations in the broker; it does not claim the player is free.
+
+The two-axis [execution source review](execution-review.md) has zero remaining findings. Focused VM/process/pool/broker checks pass 26 tests. The first full JavaScript regression passed 123 of 124: an infinite-loop fixture hit the configured wall guard before its CPU guard, while the test expected only the CPU guard. The corrected expectation accepts either independent limit; production limits were unchanged. The complete rerun passes all 124 tests. Both logs are preserved.
+
+The corrected-source footprint probe reached twelve roots and thirty-two lightweight live VMs. Thirteen samples recorded a peak group RSS of 739.875 MiB and a peak root RSS of 82.46875 MiB, below the unchanged 768/256 MiB stop thresholds. All runners were closed afterwards. Evidence is in `run/os-implementation/runner-qualification/footprint-1789499742315.json`, with runtime/package-lock and reviewed-code identity. An earlier diagnostic probe also passed at 729.89 MiB group peak. The initial attempt stopped on an unavailable memory reading; its cause remains unestablished and its artifact is retained. The reader now retains bounded failure diagnostics. These short lightweight-VM measurements do not establish peak memory or efficiency of the Minecraft reference workload.
+
 ## Remaining implementation
 
-1. Broker ownership, child joins and shared subscribers; resource ledger and durable unfinished-effect journal.
-2. Supervised per-root QuickJS processes, bounded IPC and versioned library installation.
-3. Bounded inference-only worker functions and fallbacks. A real model profile is not configured.
-4. Scheduling and native crop, sheep, birch, compost, supplies, storage and fishing operations.
-5. Complete trace/opportunity/time accounting and staged evaluator integration.
-6. Prepared live qualification, mixed paired runs, context ablation, and revision/reuse evidence.
+1. Versioned source/dependency library, candidate validation and drain-before-replacement; connect guest effects to owned child, condition, demand and work services.
+2. Bounded inference-only worker functions and fallbacks. A real model profile is not configured.
+3. Scheduling and native crop, sheep, birch, compost, supplies, storage and fishing operations.
+4. Complete trace/opportunity/time accounting and staged evaluator integration.
+5. Prepared live qualification, mixed paired runs, context ablation, and revision/reuse evidence.
 
 Escaped-sheep repair, mining, embedded authorship and production confinement remain outside this experiment. The architecture map is closed; this document tracks implementation, not a claim that the experiment has passed.

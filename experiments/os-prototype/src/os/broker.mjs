@@ -94,13 +94,17 @@ export class InvocationBroker {
     const instance = this.#get(id);
     return structuredClone({ id, phase: instance.phase, outcome: instance.outcome });
   }
+  execution(id) {
+    const instance = this.#get(id);
+    let root = instance;
+    while (root.parentId) root = this.#get(root.parentId);
+    return { id, parentId: instance.parentId, rootId: root.id, definition: instance.spec.definition, phase: instance.phase };
+  }
   authorize(id, grant) {
     const instance = this.#get(id);
     if (instance.phase !== 'running') throw Error('invocation_closing');
     if (!instance.spec.grants.includes(grant)) throw Error('operation_not_granted');
-    let root = instance;
-    while (root.parentId) root = this.#get(root.parentId);
-    return { definition: instance.spec.definition, consumer: root.id };
+    return { definition: instance.spec.definition, consumer: this.execution(id).rootId };
   }
   capacity() {
     const all = [...this.#instances.values()];
