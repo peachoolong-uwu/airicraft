@@ -1,8 +1,8 @@
-/** Copy closed JSON data after bounding its traversal and encoded size. */
-export function copyMessage(value, maximumBytes = 16_384) {
+/** Copy closed JSON data; only trusted storage envelopes opt into extra traversal headroom. */
+export function copyMessage(value, maximumBytes = 16_384, { maximumDepth = 16, maximumNodes = 2048 } = {}) {
   let nodes = 0, textBytes = 0;
   function visit(item, depth) {
-    if (++nodes > 2048 || depth > 16) throw Error('message_limit');
+    if (++nodes > maximumNodes || depth > maximumDepth) throw Error('message_limit');
     if (item === null || typeof item === 'boolean') return item;
     if (typeof item === 'number' && Number.isFinite(item)) return item;
     if (typeof item === 'string') {

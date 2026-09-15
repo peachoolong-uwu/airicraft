@@ -183,6 +183,7 @@ export class RunnerPool {
       this.#trace?.record('runner.dispatched', { rootId: root.id, invocation: job.id, command: job.command, reservedMicros: job.allowance });
       const result = await job.operation(); actual = result.cpuMicros;
       if (this.#invocations.execution(job.id).phase !== 'running') throw Error('invocation_closing');
+      if (job.command === 'offers') result.result = this.#invocations.validateResult(job.id, result.result);
       if (job.command === 'resume' && result.result.done) this.#invocations.returned(job.id, result.result.value);
       this.#trace?.record('runner.completed', { rootId: root.id, invocation: job.id, command: job.command, cpuMicros: actual },
         { cleanup: job.command === 'resume' && result.result.done });

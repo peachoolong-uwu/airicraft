@@ -1,4 +1,5 @@
 import { copyMessage } from './value.mjs';
+import { compileContract } from './contracts.mjs';
 
 /** Trusted invocation ownership. Runners report body completion; only the host settles effects. */
 export class InvocationBroker {
@@ -31,11 +32,17 @@ export class InvocationBroker {
   returned(id, value) {
     const instance = this.#get(id);
     if (instance.phase !== 'running') return;
-    try { instance.value = copyMessage(value === undefined ? null : value); }
+    try { instance.value = this.validateResult(id, value); }
     catch { this.failed(id, 'invalid_result'); return; }
     this.#trace?.record('invocation.body_returned', { id, value: instance.value }, { cleanup: true });
     instance.phase = 'closing';
     this.#settle(instance);
+  }
+  validateResult(id, value) {
+    const instance = this.#get(id);
+    if (instance.phase !== 'running') throw Error('invocation_closing');
+    try { return instance.validateResult(value === undefined ? null : value); }
+    catch (error) { throw Object.assign(Error('invalid_result'), { cause: error.message }); }
   }
   failed(id, reason) { this.#stop(this.#get(id), { status: 'failure', cause: { reason: this.#reason(reason) } }); }
   cancel(id, reason = 'cancelled') { this.#stop(this.#get(id), { status: 'cancelled', cause: { reason: this.#reason(reason) } }); }
@@ -122,7 +129,8 @@ export class InvocationBroker {
     if (depth > 8) throw Error('invocation_depth');
     if (this.capacity().live >= 32) throw Error('live_invocation_capacity');
     const instance = { id: `invocation:${++this.#sequence}`, parentId: parent?.id ?? null,
-      depth, spec: structuredClone(spec), children: new Map(), childSequence: 0, phase: 'running', outcome: null };
+      depth, spec: structuredClone(spec), validateResult: compileContract(spec.outputContract ?? true),
+      children: new Map(), childSequence: 0, phase: 'running', outcome: null };
     this.#trace?.record('invocation.created', { id: instance.id, parentId: instance.parentId, depth, spec });
     this.#instances.set(instance.id, instance);
     return instance;
