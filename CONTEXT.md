@@ -17,7 +17,23 @@ _Avoid_: Worker
 An LLM invoked as a function by behavior code to provide judgment or interpretation during execution or orchestration.
 _Avoid_: Planner
 
-The [crop and fishing driver prototype](experiments/os-prototype/README.md) exercises this model with sandboxed behavior definitions and one host-owned player lease. Its [trial notes](experiments/os-prototype/TRIAL.md) distinguish live evidence from simulation. Worker calls and durable running behaviors remain future work.
+**Behavior definition**:
+Reusable behavior code with an input/output contract and declared capabilities. A skill names a behavior definition, rather than a particular run of it.
+
+**Behavior instance**:
+One invocation of a behavior definition, with its own inputs, local state, owned child instances, and eventual outcome. Separate invocations remain distinct even when the OS shares their physical work.
+
+**Installed duty**:
+An independently supervised root behavior instance, typically recurring until stopped or replaced.
+
+**Work request**:
+One behavior instance's identified interest in a physical operation or desired effect. Multiple requests can share service without sharing invocation ownership.
+
+**Activity**:
+One bounded attempt at physical work, owned by the OS and carried out through the native action boundary.
+
+**Access context**:
+Exclusive setup that compatible activities can reuse, such as a pen visit or an owned chest window. Its lifetime belongs to the OS and may span work from different behavior instances.
 
 ### Evaluation
 
