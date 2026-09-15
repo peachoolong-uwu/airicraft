@@ -78,7 +78,9 @@ The [generator service loop](loop-api.md) now connects real supervised VMs to pa
 
 The [guest resource service](resource-api.md) now connects root stock targets and owned finite deliveries to the existing ledger. Actual sandboxed generators share a journalled transfer and withdraw independently in simulated-transport integration cases. Thirteen additional tests cover these connections and the resource contract; the complete JavaScript regression passes 197 tests. Both axes of the [source review](resource-review.md) have zero findings. Automatic supply selection remains a scheduler integration.
 
-1. Implement supply selection and work-offer scheduling over the shared resource services.
+The [deterministic scheduling policy](scheduling-api.md) now implements ready-land precedence, root-owned eligible age and overdue FIFO, score terms, context budgets with an owed outside turn, and a bounded fishing-yield decision. Eight public-interface tests use synthetic clock/eligibility and native-state inputs; the complete JavaScript regression passes 205 tests. Both axes of the [source review](scheduling-review.md) have zero findings. Work/supply admission, native clock production and physical context/checkpoint integration remain to be connected.
+
+1. Connect supply selection and work-offer admission to the policy and shared resource services.
 2. Bounded inference-only worker functions and fallbacks. A real model profile is not configured.
 3. Scheduling and native crop, sheep, birch, compost, supplies, storage and fishing operations.
 4. Complete trace/opportunity/time accounting and staged evaluator integration.
