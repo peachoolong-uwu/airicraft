@@ -35,6 +35,27 @@ One bounded attempt at physical work, owned by the OS and carried out through th
 **Access context**:
 Exclusive setup that compatible activities can reuse, such as a pen visit or an owned chest window. Its lifetime belongs to the OS and may span work from different behavior instances.
 
+**Observation frame**:
+A bounded capture of a granted world scope, with identity, capture time, provenance, and explicit coverage and unknown values.
+
+**World epoch**:
+One continuous loaded-world generation within a bridge session and dimension. Observations, waits, and physical authority from another epoch are stale.
+
+**Admission fence**:
+Native authority identifying the current host lease generation and world epoch. An operation from a revoked generation cannot regain control by arriving late.
+
+**Progress eligibility**:
+Evidence that a particular area or entity can advance its relevant world process. Eligibility allows a growth budget to advance; it is not evidence that growth completed.
+
+**Resource demand**:
+A consumer's identified unmet requirement for an item, capacity, or reusable asset. Expected future production is demand evidence, not currently available stock.
+
+**Stock target**:
+A maintained quantity for one consumer and resource location. Repeated declarations of the same target do not add demand; distinct consumers' targets do.
+
+**Resource reservation**:
+An allocation of observed resources to one admitted activity attempt. It accounts for the consumer's existing protected stock rather than protecting the same units twice.
+
 ### Evaluation
 
 Airicraft evaluation measures agent behavior in isolated Minecraft scenarios. The evaluation harness collects scenario evidence and optional supporting evidence.
