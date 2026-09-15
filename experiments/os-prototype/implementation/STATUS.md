@@ -72,6 +72,8 @@ The corrected-source footprint probe reached twelve roots and thirty-two lightwe
 
 The local definition library now has content digests, locked dependency resolution, bounded lifecycle records, closed input/output contracts, supervised deterministic examples, and installation/replacement through broker-confirmed retirement. Separate bindings reuse one immutable definition with distinct outcomes; replacement starts with a new VM and observation. See the [library API](library-api.md). The two-axis [source review](library-review.md) has zero remaining findings; 46 focused tests and the complete 155-test JavaScript regression pass. Review regressions include close/replacement races, output-contract enforcement, full outcome envelopes, and ambiguously acknowledged metadata writes. It does not yet dispatch guest effects to Minecraft duties or qualify live improvements.
 
+The [scoped observation projections and passive condition waits](wait-api.md) now pass sixteen focused tests covering known/unknown facts, freshness, cursor gaps, epochs, owned subscriptions, declared clocks, capacity and bounded export through the runner wire. An offline maximum-wait probe identified and removed repeated large-value copying. Both axes of the [source review](wait-review.md) have zero remaining findings; the complete JavaScript regression passes 171 tests. Native domain projections and the guest effect loop remain to be connected.
+
 1. Connect guest effects to owned child, condition, demand and work services.
 2. Bounded inference-only worker functions and fallbacks. A real model profile is not configured.
 3. Scheduling and native crop, sheep, birch, compost, supplies, storage and fishing operations.
