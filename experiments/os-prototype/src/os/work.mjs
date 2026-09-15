@@ -10,7 +10,7 @@ export const workPolicy = Object.freeze({ version: 'os-work-v1', supplyRetryMill
 const admissionRejections = new Set(['operation_not_granted', 'invocation_closing', 'invocation_unknown', 'stale_observation',
   'resource_reconciling', 'resource_unavailable', 'asset_unavailable', 'capacity_unavailable', 'target_unavailable',
   'container_changed', 'invalid_transfer', 'unsupported_transfer_item', 'ambiguous_item_components', 'supply_offer_stale',
-  'demand_unknown', 'demand_capacity', 'supply_capacity', 'supply_capacity_unavailable', 'supply_inapplicable']);
+  'demand_unknown', 'demand_capacity', 'supply_capacity', 'supply_capacity_unavailable', 'supply_inapplicable', 'supply_output_mismatch']);
 
 /** Owned work and supply scheduling. Only the coordinator may turn a selected offer into physical admission. */
 export class WorkService {
@@ -34,6 +34,7 @@ export class WorkService {
   #fault = null;
   #capture = null;
   #invalidatedThrough = 0;
+  #observationGeneration = 0;
 
   constructor({ invocations, activities, operations, rules, supplies, epoch, now = () => performance.now(), trace }) {
     const catalog = supplyOperations(operations), copied = copyMessage(rules);
@@ -98,6 +99,16 @@ export class WorkService {
     record.assessment = { ...assessment, ageUpperBoundMillis: Math.max(assessment.ageUpperBoundMillis, this.#capture.age), receivedAt: this.#capture.receivedAt };
     return true;
   }
+  get observationGeneration() { return this.#observationGeneration; }
+  invalidate() { this.#invalidate(); }
+  reject(id, reason) {
+    const record = this.#get(id);
+    if (record.phase !== 'queued') throw Error('work_not_queued');
+    if (!['invalid_transfer', 'unsupported_transfer_item'].includes(reason)) throw Error('invalid_work_rejection');
+    record.phase = 'finished'; record.result = { status: 'rejected', reason };
+    if (record.supply) this.#defer(record, reason);
+    this.#trace?.record('work.rejected', { id, reason, fault: null }, { cleanup: true });
+  }
   pending() {
     this.poll(); this.#refreshSupplies();
     return this.#records().filter(record => record.phase === 'queued').map(record =>
@@ -151,6 +162,7 @@ export class WorkService {
       const record = this.#get(decision.offerId);
       this.#trace?.record('work.selected', { decision, owner: record.owner, basis: record.assessment });
       record.phase = 'admitting'; record.selection = copyMessage(decision);
+      this.#observationGeneration++;
       this.#launch(record, () => this.#activities.admit(record.supply ? { supplyOfferId: record.id, workId: record.id }
         : { owner: record.owner, operation: record.request.operation, arguments: record.request.arguments, workId: record.id }), true);
     }
@@ -225,6 +237,7 @@ export class WorkService {
     }
   }
   #invalidate() {
+    this.#observationGeneration++;
     this.#invalidatedThrough = this.#capture?.sequence ?? 0;
     for (const queued of this.#records()) queued.assessment = null;
   }

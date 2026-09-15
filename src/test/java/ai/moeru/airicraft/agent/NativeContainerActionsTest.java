@@ -11,6 +11,24 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NativeContainerActionsTest {
 	@Test
+	void passiveCarriedInventoryRemainsVisibleWithoutOpeningAContainer() {
+		var chest = new Chest();
+		chest.open = false;
+		chest.carried = 3;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var facts = runtime.observe().facts();
+		assertNotNull(facts.getAsJsonObject("inventory"));
+		var inventory = facts.getAsJsonObject("inventory");
+		assertTrue(inventory.get("available").getAsBoolean());
+		assertEquals(36, inventory.getAsJsonArray("slots").size());
+		assertEquals(3, inventory.getAsJsonArray("slots").get(0).getAsJsonObject().get("count").getAsInt());
+		assertFalse(chest.open);
+		assertEquals(20, chest.stored);
+		assertNull(runtime.authority().lease());
+		assertNull(runtime.authority().active());
+	}
+
+	@Test
 	void aConfirmedExternalWindowCloseCanReleaseAnInterruptedTransferWithoutInventingEffects() {
 		var chest = new Chest();
 		chest.delayConfirmation = false;
@@ -339,6 +357,10 @@ class NativeContainerActionsTest {
 
 	/** Fake Minecraft inventory and delayed server response, outside the tested native seam. */
 	private static final class Chest implements NativeContainerActions.Access {
+		public List<NativeContainerActions.Slot> inventory() {
+			return java.util.stream.IntStream.range(0, 36).mapToObj(index -> new NativeContainerActions.Slot(index, false,
+				index == 0 && carried > 0 ? itemId : "", "", index == 0 ? carried : 0, 64)).toList();
+		}
 		private String itemId = "minecraft:wheat";
 		private int stored = 20;
 		private int carried;

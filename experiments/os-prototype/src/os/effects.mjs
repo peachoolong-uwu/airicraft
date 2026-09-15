@@ -96,6 +96,12 @@ export class EffectBroker {
     return await this.#receipt(response.receipt);
   }
   state() { return copyMessage({ unresolved: this.#active !== null, last: this.#last }); }
+  canDispatch(authority) {
+    const lease = authority?.lease;
+    return !this.#stopping && !this.#leaseError && !this.#recoveryBlocked && !this.#flight && !this.#active &&
+      this.#lease !== null && authority?.active === null && authority.epoch === this.#lease.epoch &&
+      lease?.epoch === this.#lease.epoch && lease.generation === this.#lease.generation && lease.hostId === this.#lease.hostId;
+  }
   cancel() {
     return this.#exclusive(async () => {
       if (!this.#active) return this.#last;

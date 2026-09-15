@@ -22,9 +22,11 @@ export class ResourceLedger {
   get epoch() { return this.#frame?.epoch ?? null; }
   get needsObservation() { return this.#needsObservation; }
   get availableDeliverySlots() { return 256 - this.#deliveries.size; }
+  invalidate() { this.#needsObservation = true; }
 
   observe(frame) {
-    frame = copyMessage(frame);
+    // Trusted native projection only. The three maps remain bounded; guest messages keep their 16 KiB limit.
+    frame = copyMessage(frame, 524_288);
     if (!frame || !identity(frame.epoch) || !identity(frame.revision) || !amountMap(frame.stocks, 0, true) ||
       !amountMap(frame.assets, 0, true) || !amountMap(frame.capacities, 0, true) || !Array.isArray(frame.targets) ||
       frame.targets.length > 256 || !frame.targets.every(identity)) throw Error('invalid_observation');
@@ -82,9 +84,17 @@ export class ResourceLedger {
     return { known: true, quantity, surplus: available, allocated: Object.fromEntries(allocated), unmet: Object.fromEntries(unmet) };
   }
   reserve(id, consumer, bundle, revision) {
-    if (!this.#frame || this.#needsObservation || this.#frame.revision !== revision) throw Error('stale_observation');
     if (this.#claims.has(id)) throw Error('claim_exists');
-    if (!identity(id) || !identity(consumer)) throw Error('invalid_claim');
+    if (!identity(id)) throw Error('invalid_claim');
+    const checked = this.assess(consumer, bundle, revision);
+    const claim = { id, consumer, ...checked, epoch: this.#frame.epoch, revision, state: 'reserved' };
+    this.#claims.set(id, claim);
+    return copyMessage(claim);
+  }
+  /** The readiness producer uses the same checks without reserving or changing observation validity. */
+  assess(consumer, bundle, revision) {
+    if (!this.#frame || this.#needsObservation || this.#frame.revision !== revision) throw Error('stale_observation');
+    if (!identity(consumer)) throw Error('invalid_claim');
     if (this.#claims.size >= 32) throw Error('claim_capacity');
     bundle = copyMessage(bundle);
     if (!bundle || Array.isArray(bundle) || Object.keys(bundle).some(key => !['inputs', 'assets', 'capacities', 'targets'].includes(key))) throw Error('invalid_bundle');
@@ -114,9 +124,7 @@ export class ResourceLedger {
     for (const target of targets) {
       if (!this.#frame.targets.includes(target) || claims.some(claim => claim.targets.includes(target))) throw Error('target_unavailable');
     }
-    const claim = { id, consumer, inputs, assets, capacities, targets, epoch: this.#frame.epoch, revision, state: 'reserved' };
-    this.#claims.set(id, claim);
-    return copyMessage(claim);
+    return { inputs, assets, capacities, targets };
   }
   claim(id) {
     const claim = this.#claims.get(id);

@@ -1,22 +1,38 @@
-import { createHash } from 'node:crypto';
 import { copyMessage } from './value.mjs';
+import { itemResource, itemSlots, itemStocks, observeInventory } from './item-observation.mjs';
 
 const text = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 64;
+const capacityFor = (slots, container, item) => slots.filter(slot => slot.container === container).reduce((sum, slot) => sum +
+  (slot.count === 0 ? item.maxCount : slot.itemId === item.itemId && slot.variant === item.variant ? slot.maxCount - slot.count : 0), 0);
 
 /** First domain adapter: a transfer in one explicitly bound, already-open container. */
 export class ContainerTransfer {
   #scope;
   #windowId;
   constructor({ scope, windowId }) {
-    if (!text(scope) || scope.length > 64 || !text(windowId)) throw Error('invalid_container_binding');
+    if (!text(scope) || scope.length > 64 || scope.includes('/') || !text(windowId)) throw Error('invalid_container_binding');
     this.#scope = scope; this.#windowId = windowId;
   }
   get grant() { return `container:${this.#scope}`; }
   get nativeOperation() { return 'transfer_container'; }
   resource(side, itemId, variant) {
-    if (!['container', 'player'].includes(side) || !text(itemId) || typeof variant !== 'string') throw Error('invalid_item_identity');
-    return `${side === 'container' ? this.grant : 'player'}/${itemId}/${createHash('sha256').update(variant).digest('hex')}`;
+    if (!['container', 'player'].includes(side)) throw Error('invalid_item_identity');
+    return itemResource(side === 'container' ? this.grant : 'player', itemId, variant);
+  }
+  observe(frame, knownKeys = []) {
+    const observation = { epoch: frame.epoch, revision: frame.captureId, stocks: observeInventory(frame, knownKeys), assets: {}, capacities: {}, targets: [] };
+    const window = frame.facts?.window;
+    if (!window?.open || window.windowId !== this.#windowId) return observation;
+    const slots = itemSlots(window.slots);
+    Object.assign(observation.stocks, itemStocks(slots.filter(slot => slot.container), this.grant, knownKeys));
+    // The open handler is authoritative for transfer capacity. Its player slots are separate from main-inventory IDs.
+    for (const item of slots.filter(slot => slot.count > 0)) for (const side of [true, false]) {
+      const key = this.resource(side ? 'container' : 'player', item.itemId, item.variant);
+      observation.capacities[key] = capacityFor(slots, side, item);
+    }
+    observation.targets = [this.grant];
+    return observation;
   }
   prepare(frame, args) {
     args = copyMessage(args);
@@ -27,11 +43,7 @@ export class ContainerTransfer {
     if (!window?.open || window.windowId !== this.#windowId || !Number.isSafeInteger(window.syncId) || window.syncId < 0 ||
         window.cursor?.count !== 0 || !Array.isArray(window.slots) || window.slots.length > 90 ||
         new Set(window.slots.map(slot => slot.id)).size !== window.slots.length) throw Error('container_changed');
-    for (const slot of window.slots) {
-      if (!Number.isSafeInteger(slot.id) || slot.id < 0 || typeof slot.container !== 'boolean' || !count(slot.count) ||
-          !count(slot.maxCount) || slot.maxCount < 1 || slot.count > slot.maxCount || typeof slot.itemId !== 'string' ||
-          (slot.count > 0 && !text(slot.itemId)) || typeof slot.variant !== 'string' || slot.variant.length > 4096) throw Error('invalid_container_observation');
-    }
+    itemSlots(window.slots);
     const fromContainer = args.direction === 'withdraw';
     const sources = window.slots.filter(slot => slot.container === fromContainer && slot.count > 0 && slot.itemId === args.itemId);
     if (!sources.length) throw Error('resource_unavailable');
@@ -45,8 +57,7 @@ export class ContainerTransfer {
       const resource = this.resource(slot.container ? 'container' : 'player', slot.itemId, slot.variant);
       stocks[resource] = (stocks[resource] ?? 0) + slot.count;
     }
-    const capacity = window.slots.filter(slot => slot.container !== fromContainer).reduce((sum, slot) => sum +
-      (slot.count === 0 ? maxCount : slot.itemId === args.itemId && slot.variant === variant ? slot.maxCount - slot.count : 0), 0);
+    const capacity = capacityFor(window.slots, !fromContainer, sources[0]);
     return { source, destination, quantity: args.quantity,
       observation: { epoch: frame.epoch, revision: frame.captureId, stocks, assets: {}, capacities: { [destination]: capacity }, targets: [this.grant] },
       bundle: { inputs: { [source]: args.quantity }, capacities: { [destination]: args.quantity }, targets: [this.grant] },

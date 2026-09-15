@@ -142,6 +142,7 @@ export class ResourceService {
     })), targetSlots: this.#ledger.availableDeliverySlots };
   }
   state() { return { targets: this.#targets.size, deliveries: this.#deliveries.size, ownerCursors: this.#history.size }; }
+  get resourceKeys() { return [...this.#resources.values()].map(spec => spec.key); }
   #authorize(owner, resource) {
     const spec = this.#resources.get(resource);
     if (!spec) throw Error('resource_unknown');

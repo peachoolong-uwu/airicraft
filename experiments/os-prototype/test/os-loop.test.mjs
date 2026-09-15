@@ -19,29 +19,36 @@ import { EffectJournal } from '../src/os/journal.mjs';
 import { NativeContainer } from './fixtures/native-container.mjs';
 import { WorkService } from '../src/os/work.mjs';
 import { SupplyPlanner } from '../src/os/supply-planner.mjs';
+import { NativeObservationFeed } from '../src/os/native-feed.mjs';
 
-async function fixture(run, { workEnabled = false, suppliesEnabled = false } = {}) {
+async function fixture(run, { workEnabled = false, suppliesEnabled = false, feedEnabled = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-loop-'));
   const library = await DefinitionLibrary.open(directory), invocations = new InvocationBroker(), runners = new RunnerPool({ invocations });
   const grants = ['observe:wheat', 'observe:sheep', 'resource:wheat', 'container:home'];
   const host = new InstallationHost({ library, invocations, runners, grants, environment: {}, runId: 'loop-test', refresh: async () => null });
-  const waits = new ConditionWaits({ invocations, scopes: { wheat: 'observe:wheat', sheep: 'observe:sheep' }, epoch: 'world', now: () => 0 });
+  const now = feedEnabled ? () => performance.now() : () => 0;
+  const waits = new ConditionWaits({ invocations, scopes: { wheat: 'observe:wheat', sheep: 'observe:sheep' }, epoch: 'world', now });
   const ledger = new ResourceLedger(), operation = new ContainerTransfer({ scope: 'home', windowId: 'home-window' });
   const operations = { chest: operation }, resourceKey = operation.resource('player', 'minecraft:wheat', '');
-  ledger.observe({ epoch: 'world', revision: 'initial', stocks: { [resourceKey]: 0 }, assets: {}, capacities: {}, targets: [] });
+  if (!feedEnabled) ledger.observe({ epoch: 'world', revision: 'initial', stocks: { [resourceKey]: 0 }, assets: {}, capacities: {}, targets: [] });
   const resources = new ResourceService({ invocations, ledger, operations,
     resources: { wheat: { key: resourceKey, grant: 'resource:wheat', methods: ['chest'], priority: 12 } } });
-  let work, workNative, workJournal, workEffects;
+  let work, workNative, workJournal, workEffects, feed;
   if (workEnabled || suppliesEnabled) {
-    workNative = new NativeContainer({ itemId: 'minecraft:wheat' });
+    workNative = new NativeContainer({ itemId: 'minecraft:wheat', now });
     workJournal = await EffectJournal.open(join(directory, 'work-effects.sqlite'));
     workEffects = new EffectBroker({ native: workNative, journal: workJournal, expectedWorld: 'fixture' });
     await workEffects.start();
     const supplies = suppliesEnabled ? new SupplyPlanner({ resources, operations, epoch: 'world',
       rules: { wheat: { resource: resourceKey, operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat' }, maximum: 64 } } }) : undefined;
-    work = new WorkService({ invocations, operations, supplies, epoch: 'world', now: () => 0,
+    work = new WorkService({ invocations, operations, supplies, epoch: 'world', now,
       activities: new ActivityCoordinator({ invocations, ledger, effects: workEffects, operations, supplies }),
       rules: { chest: { priority: 12, kind: 'land', context: null } } });
+    if (feedEnabled) {
+      feed = new NativeObservationFeed({ native: workNative, effects: workEffects, work, invocations, ledger, resources, waits, operations,
+        epoch: 'world', expectedWorld: 'fixture', now, views: { wheat: { location: 'player', resources: { wheat: resourceKey } } } });
+      await feed.refresh();
+    }
   }
   const loop = new GeneratorLoop({ installations: host, invocations, runners, waits, resources, work });
   const definition = async (source, overrides = {}) => {
@@ -66,13 +73,14 @@ async function fixture(run, { workEnabled = false, suppliesEnabled = false } = {
     const deadline = performance.now() + 5000;
     while (!predicate()) {
       loop.tick();
-      work?.tick({ authority: 'available' });
+      feed?.tick();
+      work?.tick({ authority: feed ? feed.availability() : 'available' });
       if (performance.now() > deadline) assert.fail(`loop stalled: ${JSON.stringify(loop.state())}`);
       await delay(5);
     }
   };
-  try { await run({ loop, host, invocations, runners, waits, library, definition, install, publish, until, resources, ledger, operations, directory, work, workNative, workJournal }); }
-  finally { loop.close(); await workEffects?.stop(); await workJournal?.close(); await host.close(); await runners.close(); await rm(directory, { recursive: true, force: true }); }
+  try { await run({ loop, host, invocations, runners, waits, library, definition, install, publish, until, resources, ledger, operations, directory, work, workNative, workJournal, feed }); }
+  finally { feed?.close(); loop.close(); await workEffects?.stop(); await workJournal?.close(); await host.close(); await runners.close(); await rm(directory, { recursive: true, force: true }); }
 }
 
 const childSource = 'function* main(os, input) { const result = yield os.wait({scope:input,path:["mature"],equals:true}); return {scope:input,wait:result.status}; }';
@@ -253,6 +261,20 @@ test('an observation query without scopes is a typed argument rejection', async 
 }));
 
 const supplySource = 'function* main(os) { yield os.target("wheat",2); return yield os.demand("wheat",2,["chest"]); }';
+
+test('real installed generators receive automatic supplies and observed stock through the native feed', async () => fixture(async ({ definition, install, until, workNative, workJournal, invocations, feed }) => {
+  const revision = await definition('function* main(os) { const delivered = yield os.demand("wheat",2,["chest"]); const observed = yield os.wait({scope:"wheat",path:["stock","wheat"],atLeast:4}); return {delivered:delivered.credited,observed:observed.status}; }');
+  const a = await install(revision), b = await install(revision);
+  await until(() => workNative.submissions === 1);
+  assert.deepEqual(new Set(invocations.activity().subscribers), new Set([a.rootId, b.rootId]));
+  workNative.progress(4, 4, true); workNative.playerQuantity = 4; workNative.quantity = 0; workNative.windowOpen = false;
+  await until(() => invocations.inspect(a.rootId).outcome && invocations.inspect(b.rootId).outcome);
+  assert.deepEqual(invocations.inspect(a.rootId).outcome.value, { delivered: 2, observed: 'met' });
+  assert.deepEqual(invocations.inspect(b.rootId).outcome.value, { delivered: 2, observed: 'met' });
+  assert.equal(workNative.submissions, 1);
+  assert.deepEqual(await workJournal.unfinished(), []);
+  assert.equal(feed.state().fault, null);
+}, { suppliesEnabled: true, feedEnabled: true }));
 
 test('sandboxed demands are supplied automatically while an unrelated root completes and one subscriber cancels', async () => fixture(async ({ definition, install, until, invocations, resources, ledger, loop, work, workNative }) => {
   const source = await definition(supplySource), a = await install(source), b = await install(source);

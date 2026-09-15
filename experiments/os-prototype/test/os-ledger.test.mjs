@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ResourceLedger } from '../src/os/ledger.mjs';
 
+test('read-only bundle assessment shares admission checks without creating or releasing a claim', () => {
+  const ledger = new ResourceLedger();
+  ledger.observe({ epoch: 'world', revision: 'assessment', stocks: { wheat: 4 }, assets: { shears: 2 }, capacities: { output: 4 }, targets: ['pen'] });
+  ledger.target('other', 'wheat', 2);
+  const bundle = { inputs: { wheat: 2 }, assets: { shears: 1 }, capacities: { output: 2 }, targets: ['pen'] };
+  assert.doesNotThrow(() => ledger.assess('caller', bundle, 'assessment'));
+  assert.doesNotThrow(() => ledger.assess('caller', bundle, 'assessment'));
+  assert.equal(ledger.needsObservation, false);
+  ledger.reserve('act', 'caller', bundle, 'assessment');
+  assert.throws(() => ledger.assess('caller', bundle, 'assessment'), /resource_unavailable/);
+  assert.throws(() => ledger.assess('caller', {}, 'old'), /stale_observation/);
+  assert.equal(ledger.claim('act').state, 'reserved');
+});
+
 const frame = stocks => ({ epoch: 'world-1', revision: 'capture-1', stocks, assets: {}, capacities: {}, targets: [] });
 
 test('activity claims spend their own stock floors without counting protection twice', () => {

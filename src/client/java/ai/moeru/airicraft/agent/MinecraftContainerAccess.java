@@ -92,6 +92,15 @@ final class MinecraftContainerAccess implements Access {
 		return window(client.player, handler, current.id);
 	}
 
+	@Override public List<Slot> inventory() {
+		var client = MinecraftClient.getInstance();
+		if (client == null || client.player == null || client.world == null) return null;
+		var slots = new ArrayList<Slot>(36);
+		for (int index = 0; index < 36; index++)
+			slots.add(stack(client.player, index, false, client.player.getInventory().getStack(index)));
+		return List.copyOf(slots);
+	}
+
 	@Override public void retainWindow(String windowId) {
 		Context context = contexts.get(windowId);
 		if (context == null || (retained != null && retained != context)) throw new Rejected("container_changed");

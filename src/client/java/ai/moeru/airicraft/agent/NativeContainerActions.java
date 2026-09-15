@@ -42,6 +42,8 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		var result = new JsonObject();
 		var window = access.capture();
 		result.add("window", JSON.toJsonTree(window));
+		var inventory = access.inventory();
+		result.add("inventory", JSON.toJsonTree(Map.of("available", inventory != null, "slots", inventory == null ? List.of() : inventory)));
 		result.add("scope", JSON.toJsonTree(Map.of("kind", "current_container", "windowId", window.windowId(), "syncId", window.syncId())));
 		result.add("coverage", JSON.toJsonTree(Map.of("state", window.syncId() < 0 ? "unknown" : "known",
 			"source", "client_open_handler", "truncated", false, "unopenedContainers", "unknown")));
@@ -265,6 +267,8 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		default boolean available() { return true; }
 		default void retainWindow(String windowId) {}
 		default void releaseWindow(String windowId) {}
+		/** Main inventory and hotbar, independent of an open handler; null means unavailable. */
+		default List<Slot> inventory() { return null; }
 		World world();
 		Window capture();
 		CompletableFuture<Window> confirm(String windowId);

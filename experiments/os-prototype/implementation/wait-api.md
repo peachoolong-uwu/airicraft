@@ -1,6 +1,6 @@
 # Scoped observations and passive waits
 
-This implements the host-side observation/condition portion of [issue 56](https://github.com/shinohara-rin/airicraft/issues/56). Native scope projections and the guest effect loop still need to be connected. These classes do not perform inspection, navigation, or other Minecraft actions.
+This implements the host-side observation/condition portion of [issue 56](https://github.com/shinohara-rin/airicraft/issues/56). The generator loop and [native item projections](native-feed-api.md) are connected; other native domain scopes remain to be added. These classes do not perform inspection, navigation, or other Minecraft actions.
 
 ## Current facts and provenance
 
