@@ -1,0 +1,31 @@
+# Owned work requests and admission
+
+`WorkService` connects finite `os.work(...)` generator effects to the scheduling policy and the existing `ActivityCoordinator`. It owns request/result lifetime, not another physical lease. A trusted rule names an installed operation and supplies priority. Operation grants come from the same catalog used by the coordinator; behavior arguments cannot raise authority or priority.
+
+This first connection accepts land operations with no retained cross-operation context. The bound, already-open container transfer is the integrated adapter. Fishing and retained-context rules reject at construction until their native lifecycle adapters exist. This does not yet run the mixed duties, retain pen/chest visits, generate supply requests or install offers-only definitions.
+
+## Request lifetime
+
+`request(owner, sequence, { operation, arguments, context: null })` checks the closed request and current grant before registration. The generator loop supplies owner and effect sequence. Repeating an active sequence with identical input returns its existing ID; changed input conflicts, and a consumed sequence cannot recreate work. Distinct sequences are distinct finite requests. At most 32 retained requests belong to an invocation and 1,024 to the service; completed unconsumed results and unresolved work still occupy slots.
+
+`take(owner, id)` returns pending until the coordinator reports both verified release and complete accounting. Final results distinguish success, failure, cancellation and pre-admission rejection, retaining the coordinator activity evidence. Consumption removes the result. Cancelling an owner removes queued work; an admitting or active request remains until its native obligation settles. The regular `poll()` sweeps subscriptions and retired owner cursors. Late transport replies cannot resume a cancelled generator.
+
+## Feasibility and clocks
+
+All new requests start with unknown feasibility. A trusted host observer reads `pending()` and calls `publish(id, assessment)`, giving epoch, capture identity, monotonic capture sequence, ready/blocked/unknown status and a conservative age upper bound. This first producer contract uses one common capture sequence within the epoch. It must supply real capture age and operation-specific eligibility; it is not exposed to guests.
+
+Assessment freshness is less than two wall seconds, including its reported age. Duplicate or old capture sequences cannot restart the freshness timer, even for a newly registered request using that same capture. Conflicting current capture identities reject. A completed effect invalidates all queued assessments through the highest observed capture sequence; another request needs newer evidence. Selection remains a hint: the coordinator independently obtains a fresh native frame, checks grants and atomic resource claims, journals intent, and submits the identified operation.
+
+`advance(interval)` passes covered eligible game ticks to the same `SchedulingPolicy`. It refreshes unrelated readiness and root membership even during transport; the pending admission retains only its copied selection for eventual service credit. Its continuous-eligibility contract still applies; the service does not synthesize age from wall time, endpoint polls or a pending request. The authoritative native eligibility producer remains to be connected.
+
+## Dispatch and failure
+
+`tick({ authority })` is synchronous and never waits for native transport. Unknown/unavailable authority cannot start work. One asynchronous admission or reconciliation runs at a time; the code-execution loop and independent lease heartbeat keep progressing. While any activity remains owned, no replacement is admitted. Selection is recorded with score terms and its assessment basis; the work ID also follows the activity into durable intent provenance. The root receives service credit only after native admission, not after a failed proposal.
+
+The active path continues polling cleanup even when new ordinary work is unavailable. Expected argument/resource admission failures return a typed rejection. An infrastructure fault stops new dispatch, reports `state().fault`, fails the affected invocation and preserves unresolved ownership. The containing runtime must stop/drain the rest of the run on that fault; this service does not secretly restart it. Native epoch transitions and run shutdown still require the global host lifecycle policy.
+
+The generator loop optionally accepts this service and suspends a work caller without occupying a computation job. Missing service configuration still returns `service_unavailable`. Unsupported arguments/operations/grants and native preflight rejections retain typed rejection reasons; native rejection evidence remains attached. Unexpected host faults use invocation failure propagation. Its sweep also synchronizes runner ownership when a native service stops an owner, using retained root identity even if mandatory join consumed the child's handle. It does not acknowledge physical release or cancel the children of a normally returning parent. Oversized final envelopes retain the existing explicit response-limit rejection.
+
+## Evidence
+
+Integration tests use the actual invocation broker, ledger, coordinator and SQLite effect journal with a simulated native container transport. Cases cover priority/overdue selection, unknown/stale assessment gating, capture replay, protected stock, delayed admission cancellation, partial cleanup, transport failure and retained capacity. A real supervised QuickJS generator completes a transfer through this path while another root finishes independently; its return waits for physical handback. Native-state evidence and readiness in these tests are controlled fixtures. No new Minecraft or efficiency qualification is claimed.

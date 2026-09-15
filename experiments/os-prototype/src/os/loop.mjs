@@ -11,7 +11,8 @@ const rejections = new Set([
   'unsupported_definition_mode', 'invalid_spawn_options', 'capability_escalation', 'capability_missing', 'contract_mismatch',
   'child_result_capacity', 'live_invocation_capacity', 'invocation_depth', 'message_limit', 'resource_unknown',
   'supply_method_unavailable', 'invalid_target', 'invalid_demand', 'target_capacity', 'demand_capacity',
-  'invocation_demand_capacity', 'demand_conflict', 'demand_retired', 'stale_observation'
+  'invocation_demand_capacity', 'demand_conflict', 'demand_retired', 'stale_observation',
+  'invalid_work', 'operation_unknown', 'work_conflict', 'work_retired', 'work_capacity', 'invocation_work_capacity'
 ]);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -22,14 +23,15 @@ export class GeneratorLoop {
   #runners;
   #waits;
   #resources;
+  #work;
   #trace;
   #states = new Map();
   #roots = new Set();
   #jobs = new Set();
   #closed = false;
 
-  constructor({ installations, invocations, runners, waits, resources, trace }) {
-    this.#host = installations; this.#invocations = invocations; this.#runners = runners; this.#waits = waits; this.#resources = resources; this.#trace = trace;
+  constructor({ installations, invocations, runners, waits, resources, work, trace }) {
+    this.#host = installations; this.#invocations = invocations; this.#runners = runners; this.#waits = waits; this.#resources = resources; this.#work = work; this.#trace = trace;
   }
   attach(id) {
     if (this.#closed) throw Error('execution_closed');
@@ -54,7 +56,7 @@ export class GeneratorLoop {
           delete state.yielded;
           this.#dispatch(state, effect);
         }
-        if (['waiting', 'joining', 'delivery'].includes(state.phase)) this.#poll(state);
+        if (['waiting', 'joining', 'delivery', 'working'].includes(state.phase)) this.#poll(state);
         if (this.#jobs.size < policy.invocations) {
           if (state.phase === 'ready') this.#resume(state);
           else if (state.phase === 'spawn_ready') this.#spawn(state);
@@ -111,6 +113,9 @@ export class GeneratorLoop {
     } else if (effect.kind === 'demand' && this.#resources) {
       state.demandId = this.#resources.request(state.id, state.sequence, { resource: effect.resource, quantity: effect.quantity, methods: effect.methods });
       state.phase = 'delivery'; this.#poll(state);
+    } else if (effect.kind === 'work' && this.#work) {
+      state.workId = this.#work.request(state.id, state.sequence, { operation: effect.operation, arguments: effect.arguments, context: effect.context });
+      state.phase = 'working'; this.#poll(state);
     } else this.#ready(state, { status: 'rejected', reason: 'service_unavailable', service: effect.kind });
   }
   #spawn(state) {
@@ -126,6 +131,7 @@ export class GeneratorLoop {
     let result;
     if (state.phase === 'waiting') result = this.#waits.take(state.id, state.waitId);
     else if (state.phase === 'delivery') result = this.#resources.take(state.id, state.demandId);
+    else if (state.phase === 'working') result = this.#work.take(state.id, state.workId);
     else result = this.#host.join(state.id, state.effect.handle);
     if (result.status !== 'pending') this.#ready(state, result);
   }
@@ -140,7 +146,7 @@ export class GeneratorLoop {
       input = { status: 'rejected', reason: 'effect_response_limit' };
     }
     this.#trace?.record('execution.response', { owner: state.id, sequence: state.sequence, kind: state.effect.kind, digest: contentDigest(input) });
-    state.input = input; state.phase = 'ready'; delete state.waitId; delete state.demandId;
+    state.input = input; state.phase = 'ready'; delete state.waitId; delete state.demandId; delete state.workId;
   }
   #launch(state, operation, completed, canReject = false) {
     const job = Promise.resolve().then(() => {
@@ -165,7 +171,7 @@ export class GeneratorLoop {
     if (this.#running(state.id)) this.#runners.fail(state.id, String(error.message ?? 'execution_failed').slice(0, 256));
     this.#pollPassive();
   }
-  #pollPassive() { this.#waits.poll(); this.#resources?.poll(); }
+  #pollPassive() { this.#waits.poll(); this.#resources?.poll(); this.#work?.poll(); }
   #current(state) { return !this.#closed && this.#states.get(state.id) === state; }
   #exists(id) {
     try { this.#invocations.execution(id); return true; }
@@ -173,7 +179,10 @@ export class GeneratorLoop {
   }
   #running(id) { return this.#exists(id) && this.#invocations.execution(id).phase === 'running'; }
   #sweep() {
-    for (const id of this.#states.keys()) if (!this.#running(id)) this.#states.delete(id);
+    const changedRoots = new Set();
+    for (const [id, state] of this.#states) if (!this.#running(id)) { this.#states.delete(id); changedRoots.add(state.rootId); }
+    // A mandatory join may have consumed the stopped child's handle; its retained root identity still owns the VM.
+    for (const rootId of changedRoots) this.#runners.syncOwnership(rootId);
     for (const id of this.#roots) if (!this.#exists(id)) this.#roots.delete(id);
   }
 }

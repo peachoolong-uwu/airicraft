@@ -40,6 +40,7 @@ export class ActivityCoordinator {
     this.#trace?.assertHealthy();
     if (this.#busy || this.#active || this.#invocations.activity()) throw Error('player_owned');
     if (!request || !Array.isArray(request.deliveries ?? []) || (request.deliveries?.length ?? 0) > 32) throw Error('invalid_activity');
+    if (request.workId !== undefined && (typeof request.workId !== 'string' || !request.workId.length || request.workId.length > 256)) throw Error('invalid_activity');
     const operation = this.#operations.get(request.operation);
     if (!operation) throw Error('operation_unknown');
     this.#busy = true;
@@ -74,9 +75,9 @@ export class ActivityCoordinator {
         this.#active = { id, prepared, operation, supplyId, deliveries, cancelRequested: false };
         attempt.admitted = true;
         this.#trace?.record('activity.admitted', { id, owner: request.owner, definition: owner.definition, consumer: owner.consumer,
-          observation: prepared.observation, bundle: prepared.bundle, deliveries, supplyId });
+          observation: prepared.observation, bundle: prepared.bundle, deliveries, supplyId, ...(request.workId ? { workId: request.workId } : {}) });
         return { definition: owner.definition, invocation: request.owner, operation: operation.nativeOperation, arguments: prepared.arguments,
-          provenance: { activityId: id, consumer: owner.consumer, bundle: prepared.bundle, deliveries } };
+          provenance: { activityId: id, consumer: owner.consumer, bundle: prepared.bundle, deliveries, ...(request.workId ? { workId: request.workId } : {}) } };
       });
       return this.#account(receipt);
     } catch (error) {

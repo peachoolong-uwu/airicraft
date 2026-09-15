@@ -96,10 +96,15 @@ export class SchedulingPolicy {
     if (context && winner.context !== context.id) return { kind: 'close_context', context: context.id, reason: 'incompatible_work', nextOfferId: winner.id };
     return { kind: 'select', offerId: winner.id, roots: [...winner.roots], context: winner.context, reason, score: this.#score(winner, context) };
   }
-  served(id) {
-    const offer = this.#offers.get(id);
-    if (!offer || offer.readiness !== 'ready') throw Error('offer_not_ready');
-    for (const rootId of offer.roots) Object.assign(this.#roots.get(rootId), { ageTicks: 0, overdue: null });
+  served(selected) {
+    const offer = typeof selected === 'string' ? this.#offers.get(selected) : copyMessage(selected);
+    if (typeof selected === 'string') {
+      if (!offer || offer.readiness !== 'ready') throw Error('offer_not_ready');
+    } else if (!offer || offer.kind !== 'select' || !name(offer.offerId) || !Array.isArray(offer.roots) || !offer.roots.length ||
+        offer.roots.length > executionPolicy.roots || offer.roots.some(id => !name(id)) || new Set(offer.roots).size !== offer.roots.length ||
+        (offer.context !== null && !name(offer.context))) throw Error('invalid_service_selection');
+    // The admitted snapshot can outlive queue refreshes and cancelled/retired consumers.
+    for (const rootId of offer.roots) if (this.#roots.has(rootId)) Object.assign(this.#roots.get(rootId), { ageTicks: 0, overdue: null });
     if (this.#outsideContext && offer.context !== this.#outsideContext) this.#outsideContext = null;
   }
   state() {

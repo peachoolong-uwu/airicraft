@@ -17,8 +17,9 @@ import { ActivityCoordinator } from '../src/os/activities.mjs';
 import { EffectBroker } from '../src/os/effects.mjs';
 import { EffectJournal } from '../src/os/journal.mjs';
 import { NativeContainer } from './fixtures/native-container.mjs';
+import { WorkService } from '../src/os/work.mjs';
 
-async function fixture(run) {
+async function fixture(run, { workEnabled = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-loop-'));
   const library = await DefinitionLibrary.open(directory), invocations = new InvocationBroker(), runners = new RunnerPool({ invocations });
   const grants = ['observe:wheat', 'observe:sheep', 'resource:wheat', 'container:home'];
@@ -29,7 +30,17 @@ async function fixture(run) {
   ledger.observe({ epoch: 'world', revision: 'initial', stocks: { [resourceKey]: 0 }, assets: {}, capacities: {}, targets: [] });
   const resources = new ResourceService({ invocations, ledger, operations,
     resources: { wheat: { key: resourceKey, grant: 'resource:wheat', methods: ['chest'], priority: 12 } } });
-  const loop = new GeneratorLoop({ installations: host, invocations, runners, waits, resources });
+  let work, workNative, workJournal, workEffects;
+  if (workEnabled) {
+    workNative = new NativeContainer({ itemId: 'minecraft:wheat' });
+    workJournal = await EffectJournal.open(join(directory, 'work-effects.sqlite'));
+    workEffects = new EffectBroker({ native: workNative, journal: workJournal, expectedWorld: 'fixture' });
+    await workEffects.start();
+    work = new WorkService({ invocations, operations, epoch: 'world', now: () => 0,
+      activities: new ActivityCoordinator({ invocations, ledger, effects: workEffects, operations }),
+      rules: { chest: { priority: 12, kind: 'land', context: null } } });
+  }
+  const loop = new GeneratorLoop({ installations: host, invocations, runners, waits, resources, work });
   const definition = async (source, overrides = {}) => {
     const revision = await library.candidate({ schemaVersion: 1, kind: 'behavior', name: 'dispatch-test', description: 'execution seam fixture', tags: [],
       capabilities: grants, environment: {}, dependencies: {}, mode: 'generator', inputContract: true, outputContract: true,
@@ -52,12 +63,13 @@ async function fixture(run) {
     const deadline = performance.now() + 5000;
     while (!predicate()) {
       loop.tick();
+      work?.tick({ authority: 'available' });
       if (performance.now() > deadline) assert.fail(`loop stalled: ${JSON.stringify(loop.state())}`);
       await delay(5);
     }
   };
-  try { await run({ loop, host, invocations, runners, waits, library, definition, install, publish, until, resources, ledger, operations, directory }); }
-  finally { loop.close(); await host.close(); await runners.close(); await rm(directory, { recursive: true, force: true }); }
+  try { await run({ loop, host, invocations, runners, waits, library, definition, install, publish, until, resources, ledger, operations, directory, work, workNative, workJournal }); }
+  finally { loop.close(); await workEffects?.stop(); await workJournal?.close(); await host.close(); await runners.close(); await rm(directory, { recursive: true, force: true }); }
 }
 
 const childSource = 'function* main(os, input) { const result = yield os.wait({scope:input,path:["mature"],equals:true}); return {scope:input,wait:result.status}; }';
@@ -288,3 +300,71 @@ test('resource-loop cancellation keeps a shared transfer for its remaining VM an
     assert.deepEqual(await journal.unfinished(), []);
   } finally { await effects.stop(); await journal.close(); }
 }));
+
+test('a sandboxed work call is scheduled through the journal and releases its caller only after physical handback', async () => fixture(async ({ definition, install, until, invocations, work, workNative, workJournal }) => {
+  const caller = await install(await definition('function* main(os) { return yield os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2}); }'));
+  const other = await install(await definition('function* main() { return "independent"; }'));
+  await until(() => work.pending().length === 1 && invocations.inspect(other.rootId).outcome);
+  assert.equal(workNative.submissions, 0);
+  const [request] = work.pending();
+  work.publish(request.id, { epoch: 'world', captureId: 'work-basis-1', captureSequence: 1, readiness: 'ready', ageUpperBoundMillis: 0 });
+  await until(() => workNative.submissions === 1 && !work.state().busy);
+  workNative.progress(2, 2, false); work.tick({ authority: 'available' });
+  await until(() => !work.state().busy);
+  assert.equal(invocations.inspect(caller.rootId).outcome, null);
+  assert.equal(work.take(caller.rootId, request.id).status, 'pending');
+  workNative.progress(2, 2, true);
+  await until(() => invocations.inspect(caller.rootId).outcome);
+  assert.equal(invocations.inspect(caller.rootId).outcome.value.status, 'success');
+  assert.equal(work.state().requests, 0);
+  assert.deepEqual(await workJournal.unfinished(), []);
+}, { workEnabled: true }));
+
+test('work argument and grant errors return typed rejections to the sandbox without native effects', async () => fixture(async ({ definition, install, until, invocations, workNative }) => {
+  const caller = await install(await definition('function* main(os) { const unknown = yield os.work("absent"); const context = yield os.work("chest",{},{id:"foreign"}); const grant = yield os.work("chest"); return [unknown,context,grant]; }', { capabilities: ['observe:wheat'] }));
+  await until(() => invocations.inspect(caller.rootId).outcome);
+  assert.deepEqual(invocations.inspect(caller.rootId).outcome.value, [
+    { status: 'rejected', reason: 'operation_unknown' }, { status: 'rejected', reason: 'invalid_work' },
+    { status: 'rejected', reason: 'operation_not_granted' }
+  ]);
+  assert.equal(workNative.submissions, 0);
+}, { workEnabled: true }));
+
+test('a native work fault retires its suspended VM while physical cleanup remains owned', async () => fixture(async ({ definition, install, until, invocations, runners, loop, work, workNative }) => {
+  const caller = await install(await definition('function* main(os) { return yield os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2}); }'));
+  await until(() => work.pending().length === 1);
+  const [request] = work.pending();
+  work.publish(request.id, { epoch: 'world', captureId: 'work-basis-1', captureSequence: 1, readiness: 'ready', ageUpperBoundMillis: 0 });
+  await until(() => workNative.submissions === 1 && !work.state().busy);
+  let failed = false;
+  workNative.beforeReply = async name => { if (name === 'os_inspect' && !failed) { failed = true; throw Error('native_transport_lost'); } };
+  await until(() => work.state().fault && loop.state().invocations.length === 0);
+  assert.equal(runners.state(caller.rootId).ready, false);
+  assert.equal(runners.state(caller.rootId).guests, 0);
+  assert.equal(invocations.inspect(caller.rootId).outcome, null);
+  assert.equal(invocations.activity().stopRequested, true);
+  workNative.progress(2, 1, true, 'CANCELLED');
+  await until(() => invocations.inspect(caller.rootId).outcome);
+  assert.equal(invocations.inspect(caller.rootId).outcome.status, 'failure');
+}, { workEnabled: true }));
+
+for (const collectAll of [false, true]) test(`mandatory join reclaims a failed suspended child after its handle is consumed (collect-all subgroup: ${collectAll})`, async () => fixture(async ({ definition, install, until, invocations, runners, loop, publish, waits, work, workNative }) => {
+  publish('wheat', 1, false);
+  const bad = await definition('function* main(os) { return yield os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:2}); }');
+  const group = await definition('function* main(os) { yield os.spawn("bad"); return "group-returned"; }', { dependencies: { bad: bad.digest } });
+  const waiting = await definition(childSource);
+  const parent = await install(collectAll ? await definition('function* main(os) { yield os.spawn("group",null,{failurePolicy:"collect_all"}); yield os.spawn("waiting","wheat"); return "parent-returned"; }', { dependencies: { group: group.digest, waiting: waiting.digest } }) : group);
+  await until(() => invocations.inspect(parent.rootId).phase === 'closing' && work.pending().length === 1 && (!collectAll || waits.state().waits === 1));
+  const [request] = work.pending();
+  workNative.beforeReply = async name => { if (name === 'os_observe') throw Error('fresh_observation_failed'); };
+  work.publish(request.id, { epoch: 'world', captureId: 'work-basis-1', captureSequence: 1, readiness: 'ready', ageUpperBoundMillis: 0 });
+  await until(() => work.state().fault && !loop.state().invocations.some(state => state.id === request.owner));
+  assert.throws(() => invocations.inspect(request.owner), /invocation_unknown/);
+  assert.equal(runners.state(parent.rootId).guests, collectAll ? 1 : 0);
+  if (collectAll) {
+    assert.equal(invocations.inspect(parent.rootId).outcome, null);
+    publish('wheat', 2, true);
+    await until(() => invocations.inspect(parent.rootId).outcome);
+  } else assert.equal(runners.state(parent.rootId).ready, false);
+  assert.equal(workNative.submissions, 0);
+}, { workEnabled: true }));

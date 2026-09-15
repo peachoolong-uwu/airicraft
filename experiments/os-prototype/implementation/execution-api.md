@@ -1,6 +1,6 @@
 # Isolated execution foundation
 
-`RunnerPool` connects the owned invocation broker to disposable root processes. The existing prototype's `src/main.mjs` does not yet use this installation path. The [library](library-api.md), [condition waits](wait-api.md), and [generator service loop](loop-api.md) now connect pinned definitions to passive observations and owned children. Work/worker services and the mixed-world scheduler remain subsequent layers.
+`RunnerPool` connects the owned invocation broker to disposable root processes. The existing prototype's `src/main.mjs` does not yet use this installation path. The [library](library-api.md), [condition waits](wait-api.md), and [generator service loop](loop-api.md) now connect pinned definitions to passive observations, owned children, resource declarations and finite [work requests](work-api.md). Worker functions, automatic supply selection and the full mixed-world scheduler remain subsequent layers.
 
 ## Ownership and lifecycle
 
@@ -11,6 +11,8 @@ Create an owned root or child through `InvocationBroker`, open one pool runner f
 Guest failure fails the invocation according to its existing sibling policy. Process failure fails its root subtree. Both preserve the broker's native cleanup owners and claims. `onOwnershipChanged` is a notification for the host execution loop to poll/reconcile owned activity; it is not release evidence. The process pool itself never submits or cancels a native action.
 
 `cancel` also accepts a parent whose body has already returned while children are still pending. `retire` requires a settled root outcome before destroying its pool entry. `close` cancels roots and stops their processes; the caller must still drain native obligations through the coordinator before closing the journal and trace. A destroyed VM is never resumed or restored.
+
+`syncOwnership(rootId)` disposes computations whose broker owners have stopped or been consumed, using the root's retained process association. This lets the generator loop notice a native-origin failure even when the VM is suspended and mandatory join already deleted its child handle. It preserves running children of a closing parent and leaves physical release to the broker/coordinator. A previously retired process is an idempotent no-op.
 
 ## Guest surface
 

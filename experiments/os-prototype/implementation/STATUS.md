@@ -80,7 +80,9 @@ The [guest resource service](resource-api.md) now connects root stock targets an
 
 The [deterministic scheduling policy](scheduling-api.md) now implements ready-land precedence, root-owned eligible age and overdue FIFO, score terms, context budgets with an owed outside turn, and a bounded fishing-yield decision. Eight public-interface tests use synthetic clock/eligibility and native-state inputs; the complete JavaScript regression passes 205 tests. Both axes of the [source review](scheduling-review.md) have zero findings. Work/supply admission, native clock production and physical context/checkpoint integration remain to be connected.
 
-1. Connect supply selection and work-offer admission to the policy and shared resource services.
+The [finite work service](work-api.md) now connects generator work requests to policy selection, fresh coordinator admission and journalled physical release. It accepts only land operations without retained contexts. Readiness/capture evidence and continuous eligible intervals come from a trusted host producer; the native producer remains unconnected. Simulated-transport tests cover delayed admission cancellation, stale captures, stock protection and infrastructure failure, plus real QuickJS callers and mandatory-join VM reclamation. Review corrections preserve eligibility during transport, typed native rejection evidence and private admission selections. Both axes of the [source review](work-review.md) have zero remaining findings; 42 focused tests and the complete 219-test JavaScript regression pass.
+
+1. Connect supply selection, recurring offers and native eligibility production to work admission and the shared resource services.
 2. Bounded inference-only worker functions and fallbacks. A real model profile is not configured.
 3. Scheduling and native crop, sheep, birch, compost, supplies, storage and fishing operations.
 4. Complete trace/opportunity/time accounting and staged evaluator integration.

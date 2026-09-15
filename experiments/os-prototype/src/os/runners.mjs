@@ -68,12 +68,18 @@ export class RunnerPool {
   cancel(id, reason = 'cancelled') { this.#stop(id, reason, false); }
   fail(id, reason) { this.#stop(id, reason, true); }
   #stop(id, reason, failed) {
-    const { rootId } = this.#invocations.execution(id), root = this.#get(rootId);
+    const { rootId } = this.#invocations.execution(id);
     if (failed) this.#invocations.failed(id, reason);
     else this.#invocations.cancel(id, reason);
+    this.syncOwnership(rootId);
+  }
+  syncOwnership(rootId) {
+    const root = this.#roots.get(rootId);
+    if (!root) return false; // Retirement can precede reconciliation of its durable metadata reply.
     this.#sweep(root); this.#changed(rootId);
-    if (id === rootId || this.#invocations.execution(rootId).phase === 'stopping') { root.ready = false; root.runner.close().catch(() => {}); }
+    if (this.#invocations.execution(rootId).phase === 'stopping') { root.ready = false; root.runner.close().catch(() => {}); }
     this.#schedule();
+    return true;
   }
   async retire(rootId) {
     const root = this.#get(rootId);
