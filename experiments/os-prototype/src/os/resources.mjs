@@ -120,6 +120,28 @@ export class ResourceService {
         methods: running ? this.#methods(target.consumer, spec, []) : [], priority: spec.priority }];
     });
   }
+  /** Union demand estimates, not stock: outstanding deliveries can also satisfy their own consumer's floor. */
+  procurement(routes = null) {
+    if (routes !== null) {
+      routes = copyMessage(routes);
+      if (!object(routes) || Object.keys(routes).length > 64 || Object.entries(routes).some(([resource, methods]) =>
+        !name(resource) || !Array.isArray(methods) || methods.length > 32 || new Set(methods).size !== methods.length ||
+        methods.some(method => !name(method) || !this.#operations.has(method)))) throw Error('invalid_supply_routes');
+    }
+    this.poll();
+    const committed = new Map();
+    for (const record of this.#deliveries.values()) {
+      const delivery = this.#ledger.delivery(record.id);
+      if (record.reason || delivery.state !== 'pending') continue;
+      const key = JSON.stringify([record.consumer, delivery.spec.resource]);
+      const methods = routes && Object.hasOwn(routes, delivery.spec.resource) ? routes[delivery.spec.resource] : [];
+      const applicable = routes === null || delivery.spec.methods.some(method => methods.includes(method));
+      committed.set(key, (committed.get(key) ?? 0) + (applicable ? delivery.outstanding : delivery.allocated));
+    }
+    return { deliveries: this.pending(), targets: this.shortages().map(target => ({ ...target,
+      quantity: target.missing === null ? null : Math.max(0, target.missing - (committed.get(JSON.stringify([target.consumer, target.resource])) ?? 0))
+    })) };
+  }
   state() { return { targets: this.#targets.size, deliveries: this.#deliveries.size, ownerCursors: this.#history.size }; }
   #authorize(owner, resource) {
     const spec = this.#resources.get(resource);

@@ -155,3 +155,23 @@ test('a settled physical effect leaves target shortages unknown until stock is o
   observe('after', 1);
   assert.equal(service.shortages()[0].missing, 3);
 });
+
+test('procurement unions a consumer floor with finite deliveries while preserving distinct consumers and in-flight allocations', () => {
+  const { root, service, ledger, invocations, observe } = fixture();
+  const a = root(), b = root(), child = invocations.spawn(a, { definition: 'helper', grants: ['resource:wheat', 'container:home'] });
+  service.target(a, 'wheat', 6); service.target(b, 'wheat', 2);
+  const first = service.request(a, 1, demand(2)), second = service.request(child.id, 1, demand(2));
+  let needs = service.procurement();
+  assert.equal(needs.deliveries.reduce((sum, item) => sum + item.quantity, 0), 4);
+  assert.equal(needs.targets.find(item => item.consumer === a).quantity, 2);
+  assert.equal(needs.targets.find(item => item.consumer === b).quantity, 2);
+  ledger.beginSupply(1, { epoch: 'world', resource: 'player/wheat/plain', method: 'chest', expected: 2, deliveries: [{ id: first, quantity: 2 }] });
+  needs = service.procurement();
+  assert.deepEqual(needs.deliveries.map(item => item.id), [second]);
+  assert.equal(needs.targets.find(item => item.consumer === a).quantity, 2); // Allocated future delivery is not requested twice.
+  assert.equal(ledger.stock('player/wheat/plain').quantity, 0); // The union never invents stock.
+  invocations.cancel(child.id); service.poll();
+  assert.equal(service.procurement().targets.find(item => item.consumer === a).quantity, 4);
+  observe('unknown', null);
+  assert.equal(service.procurement().targets.find(item => item.consumer === a).quantity, null);
+});
