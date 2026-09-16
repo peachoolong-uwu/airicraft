@@ -16,6 +16,22 @@ import { WorkService } from '../src/os/work.mjs';
 import { ConditionWaits } from '../src/os/waits.mjs';
 import { NativeObservationFeed } from '../src/os/native-feed.mjs';
 import { NativeContainer } from './fixtures/native-container.mjs';
+import { contentDigest } from '../src/os/content.mjs';
+
+function availability(native) {
+  const proof = { available: true, source: 'native_stable_material_ticks', clockId: 'material-clock', gateRevision: 1, fromTick: 0, throughTick: 0 };
+  native.beforeReply = async (name, response) => {
+    if (name !== 'os_observe') return;
+    const frame = response.frame;
+    const stamp = contentDigest({ captureId: 'eligibility-v1', operation: 'material', arguments: {
+      world: frame.world, lease: native.lease, gateRevision: proof.gateRevision, window: frame.facts.window, inventory: frame.facts.inventory
+    } }, 524_288, { maximumNodes: 8192 }).slice(7);
+    frame.facts.availability = { ...proof, fromTick: proof.available ? proof.fromTick : null, stamp: proof.available ? stamp : null };
+  };
+  return proof;
+}
+const transferRequest = { operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat', quantity: 2 }, context: null };
+const ageOf = (work, owner) => work.state().scheduling.roots.find(root => root.id === owner)?.ageTicks ?? 0;
 
 async function fixture(run, { progressScopes = [] } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-feed-'));
@@ -74,6 +90,131 @@ test('one native inventory capture drives passive waits and automatic shared sup
   assert.equal(invocations.activity(), null);
   assert.deepEqual(await journal.unfinished(), []);
   assert.equal(work.state().fault, null);
+}));
+
+test('native covered availability ages one root once across duplicate offers and selects overdue work', async () => fixture(async ({ feed, native, work, root, pulse }) => {
+  const owner = root(), proof = availability(native);
+  work.request(owner, 1, transferRequest);
+  work.request(owner, 2, transferRequest);
+  await feed.refresh();
+  proof.throughTick = 300;
+  await feed.refresh();
+  assert.equal(ageOf(work, owner), 300);
+  for (let i = 0; i < 5; i++) feed.tick();
+  assert.equal(ageOf(work, owner), 300);
+  proof.throughTick = 2400;
+  await feed.refresh();
+  assert.equal(ageOf(work, owner), 2400);
+  assert.equal((await pulse()).reason, 'overdue');
+  assert.equal(ageOf(work, owner), 0, 'successful admission services the root once');
+  native.progress(2, 2, true); await pulse();
+}));
+
+test('stock allocation changes, unavailable coverage and freshness gaps cannot manufacture waiting age', async () => fixture(async ({ feed, native, work, ledger, root, chestKey, time }) => {
+  const owner = root(), other = root(), proof = availability(native);
+  work.request(owner, 1, transferRequest);
+  await feed.refresh();
+  proof.throughTick = 300; await feed.refresh();
+  ledger.target(other, chestKey, 4);
+  ledger.target(other, chestKey, 0);
+  proof.throughTick = 600; await feed.refresh();
+  assert.equal(ageOf(work, owner), 300, 'restored stock does not erase an intervening protection');
+  proof.throughTick = 900; await feed.refresh();
+  assert.equal(ageOf(work, owner), 600);
+  proof.available = false; proof.throughTick = 1200; await feed.refresh();
+  proof.available = true; proof.fromTick = 1200; proof.throughTick = 1500; await feed.refresh();
+  assert.equal(ageOf(work, owner), 600);
+  proof.throughTick = 1800; await feed.refresh();
+  assert.equal(ageOf(work, owner), 900);
+  time(2000); proof.throughTick = 2100; await feed.refresh();
+  assert.equal(ageOf(work, owner), 900, 'fresh endpoints cannot fill a host observation gap');
+  proof.throughTick = 2400; await feed.refresh();
+  assert.equal(ageOf(work, owner), 1200);
+  proof.throughTick = 2700; proof.fromTick = 2600; await feed.refresh();
+  assert.equal(ageOf(work, owner), 1300, 'only the covered suffix contributes');
+}));
+
+test('recurring declarations retain waiting age after reevaluation but replacement starts with new evidence', async () => fixture(async ({ feed, native, work, root }) => {
+  const owner = root(), proof = availability(native);
+  await feed.refresh();
+  let sequence = 1;
+  const declare = offers => work.replaceOffers(owner, sequence++, offers, feed.offerView(owner).basis).ids;
+  const [id] = declare([transferRequest]);
+  await feed.refresh(); declare([transferRequest]); feed.tick();
+  proof.throughTick = 300; await feed.refresh();
+  assert.equal(ageOf(work, owner), 300, 'a retained declaration was feasible through the captured interval');
+  assert.deepEqual(declare([transferRequest, transferRequest]), [id]); feed.tick();
+  assert.equal(ageOf(work, owner), 300);
+  declare([]);
+  const [replacement] = declare([transferRequest]);
+  assert.notEqual(replacement, id);
+  proof.throughTick = 600; await feed.refresh(); declare([transferRequest]); feed.tick();
+  assert.equal(ageOf(work, owner), 300, 'withdrawal and recreation cannot borrow the old offer interval');
+  proof.throughTick = 900; await feed.refresh(); declare([transferRequest]); feed.tick();
+  assert.equal(ageOf(work, owner), 600);
+}));
+
+test('a recurring VM awaiting reevaluation cannot suppress another root entering overdue FIFO', async () => fixture(async ({ feed, native, work, root, pulse }) => {
+  const finite = root(), recurring = root(), proof = availability(native);
+  work.request(finite, 1, transferRequest);
+  await feed.refresh();
+  work.replaceOffers(recurring, 1, [transferRequest], feed.offerView(recurring).basis);
+  await feed.refresh(); work.replaceOffers(recurring, 2, [transferRequest], feed.offerView(recurring).basis); feed.tick();
+  proof.throughTick = 2390; await feed.refresh();
+  work.replaceOffers(recurring, 3, [transferRequest], feed.offerView(recurring).basis); feed.tick();
+  assert.equal(ageOf(work, finite), 2390);
+  proof.throughTick = 2410; await feed.refresh();
+  assert.equal(ageOf(work, finite), 2400);
+  const selection = await pulse();
+  assert.equal(selection.reason, 'overdue');
+  assert.deepEqual(selection.roots, [finite], 'stale recurring declarations still cannot execute');
+  native.progress(2, 2, true); await pulse();
+}));
+
+test('only ready declared adapters and actual native covered ticks earn age, including shared consumers', async () => fixture(async ({ feed, native, work, resources, root, operations }) => {
+  const a = root(), b = root(), blockedOwner = root(), proof = availability(native);
+  await feed.refresh();
+  resources.request(a, 1, { resource: 'wheat', quantity: 1 });
+  resources.request(b, 1, { resource: 'wheat', quantity: 1 });
+  work.request(blockedOwner, 1, { ...transferRequest, arguments: { ...transferRequest.arguments, quantity: 5 } });
+  await feed.refresh();
+  proof.throughTick = 300; await feed.refresh();
+  assert.equal(ageOf(work, a), 300); assert.equal(ageOf(work, b), 300);
+  assert.equal(ageOf(work, blockedOwner), 0);
+  native.serverTick = 100000; await feed.refresh();
+  assert.equal(ageOf(work, a), 300, 'a paused proof ignores sampled server-tick jumps');
+  Object.defineProperty(operations.chest, 'availabilitySource', { value: null });
+  proof.throughTick = 600; await feed.refresh();
+  assert.equal(ageOf(work, a), 300, 'an adapter must explicitly declare that the proof covers its feasibility');
+}));
+
+for (const [label, corrupt, reason] of [
+  ['clock replacement', proof => { proof.clockId = 'different-clock'; }, 'eligibility_clock_changed'],
+  ['clock regression', proof => { proof.throughTick = 0; }, 'eligibility_clock_regressed'],
+  ['invalid interval', proof => { proof.fromTick = 500; }, 'invalid_native_availability'],
+  ['unsafe counter', proof => { proof.throughTick = Number.MAX_SAFE_INTEGER + 1; }, 'invalid_native_availability']
+]) test(`availability rejects ${label} and revokes the lease`, async () => fixture(async ({ feed, native, work, root }) => {
+  const proof = availability(native);
+  work.request(root(), 1, transferRequest);
+  proof.throughTick = 100; await feed.refresh();
+  proof.throughTick = 200; corrupt(proof);
+  await assert.rejects(feed.refresh(), new RegExp(reason));
+  assert.equal(native.lease, null);
+  assert.equal(native.submissions, 0);
+}));
+
+test('native proof cannot authenticate altered material and missing proof never ages a ready request', async () => fixture(async ({ feed, native, work, root }) => {
+  const owner = root(); work.request(owner, 1, transferRequest);
+  await feed.refresh(); native.serverTick = 2400; await feed.refresh();
+  assert.equal(ageOf(work, owner), 0);
+  availability(native);
+  const attachProof = native.beforeReply;
+  native.beforeReply = async (name, response) => {
+    await attachProof(name, response);
+    if (name === 'os_observe') response.frame.facts.window.slots[0].count = 3;
+  };
+  await assert.rejects(feed.refresh(), /availability_material_mismatch/);
+  assert.equal(native.lease, null);
 }));
 
 test('native scope counters drive a declared growth deadline without inferring progress from sampled ticks', async () => fixture(async ({ feed, native, waits, invocations, time }) => {

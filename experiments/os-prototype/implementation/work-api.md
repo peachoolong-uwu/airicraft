@@ -32,7 +32,7 @@ Assessment freshness is less than two wall seconds, including its reported age. 
 
 The native feed is one producer of this contract. `observationGeneration` changes when admission begins or assessments are invalidated, fencing out reads delayed across physical work. Trusted `invalidate()` clears readiness; trusted `reject(id, reason)` returns invalid transfer arguments or unsupported items without leaving the caller suspended forever. Neither API grants or releases the player.
 
-`advance(interval)` passes covered eligible game ticks to the same `SchedulingPolicy`. It refreshes unrelated readiness and root membership even during transport; the pending admission retains only its copied selection for eventual service credit. Its continuous-eligibility contract still applies; the service does not synthesize age from wall time, endpoint polls or a pending request. The authoritative native eligibility producer remains to be connected.
+`advance(interval)` passes trusted covered eligible game ticks to the same `SchedulingPolicy`. The native feed now uses `progress(evidence)` to combine the [native bound-container proof](availability-api.md) with allocation continuity, observation generation and retained ready requests. Elapsed accounting uses native feasibility independently of fresh recurring authorship; execution selection still requires that authorship. The service never synthesizes age from wall time, endpoint polls or a pending request. Other native operation scopes and age while an activity owns the actor remain unconnected.
 
 ## Dispatch and failure
 

@@ -1,5 +1,6 @@
 import { copyMessage } from './value.mjs';
 import { itemResource, itemSlots, itemStocks, observeInventory } from './item-observation.mjs';
+import { materialAvailabilitySource } from './availability-observation.mjs';
 
 const text = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 64;
@@ -16,6 +17,7 @@ export class ContainerTransfer {
   }
   get grant() { return `container:${this.#scope}`; }
   get nativeOperation() { return 'transfer_container'; }
+  get availabilitySource() { return materialAvailabilitySource; }
   resource(side, itemId, variant) {
     if (!['container', 'player'].includes(side)) throw Error('invalid_item_identity');
     return itemResource(side === 'container' ? this.grant : 'player', itemId, variant);

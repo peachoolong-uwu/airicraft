@@ -37,6 +37,9 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 	}
 
 	@Override public World world() { return access.world(); }
+	@Override public void availability(AvailabilityGate gate) {
+		access.availability(gate);
+	}
 	@Override public Set<String> operations() { return access.available() ? Set.of("transfer_container") : Set.of(); }
 	@Override public JsonObject observe() {
 		return observe(new JsonObject());
@@ -50,6 +53,7 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		result.add("window", JSON.toJsonTree(window));
 		var inventory = access.inventory();
 		result.add("inventory", JSON.toJsonTree(Map.of("available", inventory != null, "slots", inventory == null ? List.of() : inventory)));
+		result.add("availability", access.availabilityProof(window, inventory));
 		result.add("scope", JSON.toJsonTree(Map.of("kind", "current_container", "windowId", window.windowId(), "syncId", window.syncId())));
 		result.add("coverage", JSON.toJsonTree(Map.of("state", window.syncId() < 0 ? "unknown" : "known",
 			"source", "client_open_handler", "truncated", false, "unopenedContainers", "unknown")));
@@ -271,6 +275,10 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 	/** Minecraft is the external system. Implementations use its owning threads and ordinary GUI clicks. */
 	public interface Access {
 		default boolean available() { return true; }
+		default void availability(AvailabilityGate gate) {}
+		default JsonObject availabilityProof(Window window, List<Slot> inventory) {
+			var result = new JsonObject(); result.addProperty("available", false); return result;
+		}
 		default void retainWindow(String windowId) {}
 		default void releaseWindow(String windowId) {}
 		/** Main inventory and hotbar, independent of an open handler; null means unavailable. */

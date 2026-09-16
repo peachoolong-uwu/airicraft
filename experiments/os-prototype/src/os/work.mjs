@@ -37,6 +37,9 @@ export class WorkService {
   #capture = null;
   #invalidatedThrough = 0;
   #observationGeneration = 0;
+  #availabilityClock = null;
+  #availabilityWitness = null;
+  #availabilityCapture = 0;
 
   constructor({ invocations, activities, operations, rules, supplies, epoch, now = () => performance.now(), trace }) {
     const catalog = supplyOperations(operations), copied = copyMessage(rules);
@@ -227,6 +230,35 @@ export class WorkService {
     this.#updateSchedule();
     this.#policy.advance(interval);
   }
+  /** Trusted native evidence plus host allocation continuity; no guest can publish elapsed time. */
+  progress({ proof, allocationRevision, generation, captureId, captureSequence, receivedAtHostMillis, ageUpperBoundMillis, operations }) {
+    if (!proof) { this.#availabilityWitness = null; return true; }
+    const clock = this.#availabilityClock;
+    if (clock && proof.clockId !== clock.id) throw Error('eligibility_clock_changed');
+    if (clock && proof.throughTick < clock.throughTick) throw Error('eligibility_clock_regressed');
+    this.#availabilityClock = { id: proof.clockId, throughTick: proof.throughTick };
+    if (captureSequence <= this.#availabilityCapture) return true;
+    this.poll();
+    // Retained intent can earn elapsed age from native feasibility before its VM reevaluates.
+    // The ordinary selection view still requires fresh authorship before it can execute.
+    const offers = this.#updateSchedule(true), records = this.#records();
+    const ids = new Set(offers.filter(offer => offer.readiness === 'ready' && records.some(record => record.id === offer.id &&
+      record.assessment?.captureId === captureId && operations.includes(record.request.operation))).map(offer => offer.id));
+    const previous = this.#availabilityWitness, now = this.#now();
+    const covered = proof.available && previous?.stamp === proof.stamp && previous.generation === generation &&
+      previous.allocationRevision === allocationRevision && now >= previous.receivedAt &&
+      previous.age + now - previous.receivedAt < 2000 && now >= receivedAtHostMillis && ageUpperBoundMillis + now - receivedAtHostMillis < 2000;
+    const eligibleRoots = covered ? [...new Set(offers.filter(offer => ids.has(offer.id) && previous.ids.has(offer.id)).flatMap(offer => offer.roots))] : [];
+    const interval = { epoch: this.#epoch, fromTick: covered ? Math.max(previous.throughTick, proof.fromTick) : proof.throughTick,
+      toTick: proof.throughTick, eligibleRoots, covered: Boolean(covered), ordinaryAllowed: proof.available };
+    try { this.#policy.advance(interval); }
+    finally { this.#updateSchedule(); }
+    this.#availabilityWitness = proof.available ? { stamp: proof.stamp, throughTick: proof.throughTick, allocationRevision, generation, ids,
+      receivedAt: receivedAtHostMillis, age: ageUpperBoundMillis } : null;
+    this.#availabilityCapture = captureSequence;
+    this.#trace?.record('work.eligibility', { ...interval, captureId, clockId: proof.clockId, allocationRevision });
+    return true;
+  }
   state() {
     return { requests: this.#requests.size, supplyRequests: this.#supplyRequests.size, maximumWork: this.#maximumWork,
       recurringOffers: this.#budgetedRequests().filter(record => record.recurring).length, retiringOffers: this.#requests.size - this.#budgetedRequests().length,
@@ -272,17 +304,19 @@ export class WorkService {
       this.#trace?.record('work.rejected', { id: record.id, reason, fault: this.#fault }, { cleanup: true });
     }).finally(() => { this.#job = null; this.poll(); });
   }
-  #updateSchedule() {
+  #updateSchedule(forProgress = false) {
     this.#refreshSupplies();
     const now = this.#now();
-    this.#policy.update({ roots: [...this.#roots], offers: this.#records().filter(record => record.phase === 'queued').map(record => {
+    const offers = this.#records().filter(record => record.phase === 'queued').map(record => {
       const seen = record.assessment, current = seen && now >= seen.receivedAt && seen.ageUpperBoundMillis + now - seen.receivedAt < 2000;
       const authored = !record.recurring || record.offerBasis.generation === this.#observationGeneration &&
         record.offerBasis.captureId === seen?.captureId && record.offerBasis.captureSequence === seen?.captureSequence;
       return { id: record.id, roots: record.supply?.consumers ?? [record.consumer], kind: record.rule.kind,
         priority: Math.max(record.rule.priority, record.supply?.priority ?? 0), context: null,
-        readiness: this.#deferral(record) ? 'blocked' : current && authored ? seen.readiness : 'unknown' };
-    }) });
+        readiness: this.#deferral(record) ? 'blocked' : current && (authored || forProgress) ? seen.readiness : 'unknown' };
+    });
+    this.#policy.update({ roots: [...this.#roots], offers });
+    return offers;
   }
   #refreshSupplies() {
     if (!this.#supplies) return;

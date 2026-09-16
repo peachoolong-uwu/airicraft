@@ -17,6 +17,7 @@ public class MinecraftServerTickDebugMixin {
 			callback.cancel();
 		} else {
 			ai.moeru.airicraft.os.NativeProgressRuntime.begin((MinecraftServer) (Object) this);
+			ai.moeru.airicraft.os.NativeAvailabilityRuntime.begin((MinecraftServer) (Object) this);
 		}
 	}
 
@@ -24,5 +25,6 @@ public class MinecraftServerTickDebugMixin {
 	private void airicraft$completeServerTick(BooleanSupplier shouldKeepTicking, CallbackInfo callback) {
 		ServerTickDebugRuntime.completeServerTick();
 		ai.moeru.airicraft.os.NativeProgressRuntime.complete((MinecraftServer) (Object) this);
+		ai.moeru.airicraft.os.NativeAvailabilityRuntime.complete((MinecraftServer) (Object) this);
 	}
 }

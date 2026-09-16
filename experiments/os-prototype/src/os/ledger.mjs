@@ -18,11 +18,13 @@ export class ResourceLedger {
   #supplies = new Map();
   #deliverySequence = 0;
   #supplySequence = 0;
+  #allocationRevision = 0;
 
   get epoch() { return this.#frame?.epoch ?? null; }
   get needsObservation() { return this.#needsObservation; }
   get availableDeliverySlots() { return 256 - this.#deliveries.size; }
-  invalidate() { this.#needsObservation = true; }
+  get allocationRevision() { return this.#allocationRevision; }
+  invalidate() { if (!this.#needsObservation) this.#changed(); this.#needsObservation = true; }
 
   observe(frame) {
     // Trusted native projection only. The three maps remain bounded; guest messages keep their 16 KiB limit.
@@ -34,6 +36,7 @@ export class ResourceLedger {
       if (JSON.stringify(this.#frame) !== JSON.stringify(frame)) throw Error('observation_conflict');
       return;
     }
+    if (!this.#frame || this.#frame.epoch !== frame.epoch || this.#needsObservation) this.#changed();
     this.#frame = frame;
     this.#needsObservation = false;
     const claims = [...this.#claims.values()];
@@ -46,15 +49,20 @@ export class ResourceLedger {
       const lostAsset = Object.entries(claim.assets).some(([asset, durability]) => !Object.hasOwn(frame.assets, asset) || frame.assets[asset] < durability);
       const lostCapacity = Object.keys(claim.capacities).some(space => !Object.hasOwn(frame.capacities, space) ||
         frame.capacities[space] < claims.reduce((sum, other) => sum + count(other.capacities, space), 0));
-      if (claim.epoch !== frame.epoch || lostStock || lostAsset || lostCapacity || claim.targets.some(target => !frame.targets.includes(target)))
+      if (claim.state !== 'reconciling' && (claim.epoch !== frame.epoch || lostStock || lostAsset || lostCapacity || claim.targets.some(target => !frame.targets.includes(target)))) {
+        this.#changed();
         claim.state = 'reconciling';
+      }
     }
   }
   target(consumer, resource, quantity, { priority = 0, waitingSince = 0 } = {}) {
     if (!identity(consumer) || !identity(resource) || !amount(quantity) || !amount(priority) || !amount(waitingSince)) throw Error('invalid_target');
     const key = JSON.stringify([consumer, resource]);
-    if (quantity === 0) { this.#targets.delete(key); return; }
+    if (quantity === 0) { if (this.#targets.has(key)) { this.#changed(); this.#targets.delete(key); } return; }
     if (!this.#targets.has(key) && this.#targets.size >= 1024) throw Error('target_capacity');
+    const previous = this.#targets.get(key);
+    if (previous?.quantity === quantity && previous.priority === priority && previous.waitingSince === waitingSince) return;
+    this.#changed();
     this.#targets.set(key, { consumer, resource, quantity, priority, waitingSince });
   }
   stock(resource) {
@@ -88,6 +96,7 @@ export class ResourceLedger {
     if (!identity(id)) throw Error('invalid_claim');
     const checked = this.assess(consumer, bundle, revision);
     const claim = { id, consumer, ...checked, epoch: this.#frame.epoch, revision, state: 'reserved' };
+    this.#changed();
     this.#claims.set(id, claim);
     return copyMessage(claim);
   }
@@ -140,10 +149,11 @@ export class ResourceLedger {
         throw Error('invalid_consumption_evidence');
     }
     if (evidence.released !== true || evidence.accountingComplete !== true) {
+      if (claim.state !== 'reconciling') this.#changed();
       claim.state = 'reconciling';
       return false;
     }
-    this.#claims.delete(id);
+    this.#changed(); this.#claims.delete(id);
     this.#needsObservation = true;
     return true;
   }
@@ -166,6 +176,7 @@ export class ResourceLedger {
     if (id <= this.#deliverySequence) throw Error('demand_retired');
     if (!this.#frame) throw Error('stale_observation');
     if (this.#deliveries.size >= 256) throw Error('demand_capacity');
+    this.#changed();
     this.#deliveries.set(id, { id, spec, epoch: this.#frame.epoch, credited: 0, state: 'pending', withdrawn: false });
     this.#deliverySequence = id;
     return this.delivery(id);
@@ -179,6 +190,7 @@ export class ResourceLedger {
   pendingDeliveries() { return [...this.#deliveries.values()].filter(demand => demand.state === 'pending').map(demand => this.delivery(demand.id)); }
   cancelDelivery(id) {
     const demand = this.#delivery(id);
+    if (!demand.withdrawn) this.#changed();
     demand.withdrawn = true;
     if (demand.state === 'pending') demand.state = 'cancelled';
     const stoppingSupplies = [];
@@ -198,6 +210,7 @@ export class ResourceLedger {
     const demand = this.#delivery(id);
     if (demand.state === 'pending' || [...this.#supplies.values()].some(supply => supply.state !== 'settled' &&
         supply.allocations.some(allocation => allocation.demandId === id))) throw Error('demand_unsettled');
+    this.#changed();
     this.#deliveries.delete(id);
   }
   beginSupply(id, spec) {
@@ -219,6 +232,7 @@ export class ResourceLedger {
       this.#canJoin(supply, delivery.id, delivery.quantity);
       supply.allocations.push({ demandId: delivery.id, quantity: delivery.quantity, credited: 0 });
     }
+    this.#changed();
     this.#supplies.set(id, supply);
     this.#supplySequence = id;
     return this.supply(id);
@@ -226,6 +240,7 @@ export class ResourceLedger {
   joinSupply(id, demandId, quantity) {
     const supply = this.#supply(id);
     this.#canJoin(supply, demandId, quantity);
+    this.#changed();
     supply.allocations.push({ demandId, quantity, credited: 0 });
     const credits = this.#distribute(supply);
     return { supply: this.supply(id), credits };
@@ -242,6 +257,7 @@ export class ResourceLedger {
       return { credits: [] };
     }
     if (evidence.accountingComplete !== true) return { credits: [], unresolved: true };
+    if (supply.effectId !== evidence.effectId || supply.produced !== evidence.quantity) this.#changed();
     if (evidence.quantity > supply.produced) this.#needsObservation = true;
     supply.effectId = evidence.effectId;
     supply.produced = evidence.quantity;
@@ -252,21 +268,28 @@ export class ResourceLedger {
     evidence = copyMessage(evidence);
     if (supply.state === 'settled') return true;
     if (evidence.released !== true || evidence.accountingComplete !== true) {
+      if (supply.state !== 'reconciling') this.#changed();
       supply.state = 'reconciling';
       return false;
     }
+    this.#changed();
     supply.state = 'settled';
     supply.releaseEvidence = evidence;
     return true;
   }
   closeSupply(id) {
     if (this.#supply(id).state !== 'settled') throw Error('supply_unsettled');
+    this.#changed();
     this.#supplies.delete(id);
   }
   #delivery(id) {
     const demand = this.#deliveries.get(id);
     if (!demand) throw Error('demand_unknown');
     return demand;
+  }
+  #changed() {
+    if (this.#allocationRevision === Number.MAX_SAFE_INTEGER) throw Error('allocation_revision_exhausted');
+    this.#allocationRevision++;
   }
   #supply(id) {
     const supply = this.#supplies.get(id);

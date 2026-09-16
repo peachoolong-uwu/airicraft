@@ -18,6 +18,29 @@ test('read-only bundle assessment shares admission checks without creating or re
 
 const frame = stocks => ({ epoch: 'world-1', revision: 'capture-1', stocks, assets: {}, capacities: {}, targets: [] });
 
+test('allocation continuity distinguishes an intervening reservation or target change from an idempotent refresh', () => {
+  const ledger = new ResourceLedger();
+  ledger.observe(frame({ wheat: 4 }));
+  const initial = ledger.allocationRevision;
+  assert.ok(Number.isSafeInteger(initial));
+  ledger.target('sheep', 'wheat', 2);
+  const protectedStock = ledger.allocationRevision;
+  assert.ok(protectedStock > initial);
+  ledger.target('sheep', 'wheat', 2);
+  ledger.observe({ ...frame({ wheat: 4 }), revision: 'capture-2' });
+  ledger.assess('sheep', { inputs: { wheat: 2 } }, 'capture-2');
+  assert.equal(ledger.allocationRevision, protectedStock);
+  ledger.target('sheep', 'wheat', 0);
+  ledger.target('sheep', 'wheat', 2);
+  assert.ok(ledger.allocationRevision > protectedStock);
+  const beforeClaim = ledger.allocationRevision;
+  ledger.reserve('feeding', 'sheep', { inputs: { wheat: 2 } }, 'capture-2');
+  ledger.settle('feeding', { released: true, accountingComplete: true });
+  ledger.observe({ ...frame({ wheat: 4 }), revision: 'capture-3' });
+  assert.ok(ledger.allocationRevision > beforeClaim);
+  assert.equal(ledger.stock('wheat').quantity, 4);
+});
+
 test('activity claims spend their own stock floors without counting protection twice', () => {
   const ledger = new ResourceLedger();
   ledger.observe(frame({ wheat: 4, seeds: 20 }));
@@ -31,6 +54,38 @@ test('activity claims spend their own stock floors without counting protection t
   assert.throws(() => ledger.reserve('steal', 'sheep-A', { inputs: { wheat: 1 } }, 'capture-1'), /resource_unavailable/);
   ledger.reserve('feed-B', 'sheep-B', { inputs: { wheat: 2 } }, 'capture-1');
   assert.equal(ledger.claim('feed-B').inputs.wheat, 2);
+});
+
+test('shared supply allocation changes break continuity while idempotent retries preserve it', () => {
+  const ledger = new ResourceLedger();
+  ledger.observe(frame({ seeds: 0 }));
+  let revision = ledger.allocationRevision;
+  const changed = () => { assert.ok(ledger.allocationRevision > revision); revision = ledger.allocationRevision; };
+  const request = { consumer: 'farm', resource: 'seeds', quantity: 4, methods: ['chest'] };
+  ledger.requestDelivery(1, request); changed();
+  ledger.requestDelivery(1, request);
+  assert.equal(ledger.allocationRevision, revision);
+  ledger.requestDelivery(2, { ...request, consumer: 'sheep' }); changed();
+  const supply = { epoch: 'world-1', resource: 'seeds', method: 'chest', expected: 8, deliveries: [{ id: 1, quantity: 4 }] };
+  ledger.beginSupply(1, supply); changed();
+  ledger.beginSupply(1, supply);
+  assert.equal(ledger.allocationRevision, revision);
+  ledger.joinSupply(1, 2, 4); changed();
+  ledger.cancelDelivery(2); changed();
+  ledger.cancelDelivery(2);
+  assert.equal(ledger.allocationRevision, revision);
+  const evidence = { effectId: 'native:1', quantity: 4, accountingComplete: true };
+  ledger.creditSupply(1, evidence); changed();
+  ledger.creditSupply(1, evidence);
+  assert.equal(ledger.allocationRevision, revision);
+  ledger.settleSupply(1, { released: false, accountingComplete: false }); changed();
+  ledger.settleSupply(1, { released: false, accountingComplete: false });
+  assert.equal(ledger.allocationRevision, revision);
+  ledger.settleSupply(1, { released: true, accountingComplete: true }); changed();
+  ledger.settleSupply(1, { released: true, accountingComplete: true });
+  assert.equal(ledger.allocationRevision, revision);
+  ledger.closeSupply(1); changed();
+  ledger.closeDelivery(1); changed();
 });
 
 test('items, tools, destination space, and targets are reserved as one atomic bundle', () => {

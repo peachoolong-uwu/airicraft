@@ -8,7 +8,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -425,6 +427,34 @@ class NativeActionRuntimeTest {
 		assertEquals(0, runtime.observe().facts().get("carriedWheat").getAsInt());
 	}
 
+	@Test
+	void availabilityEvidenceIsFencedAtEveryAuthorityAndActivityTransition() {
+		var clock = new AtomicLong();
+		var world = new ChestWorld();
+		var runtime = new NativeActionRuntime(world, clock::get);
+		var observation = runtime.observe();
+		assertNull(world.availabilityLease);
+		var lease = runtime.acquire("host-a", observation.epoch());
+		assertEquals(lease, world.availabilityLease);
+		assertTrue(world.availabilityIdle);
+		clock.set(1_000_000_000L);
+		runtime.heartbeat(lease);
+		assertEquals(1_000_000_000L, world.availabilityHeartbeat);
+		var arguments = new JsonObject(); arguments.addProperty("quantity", 1);
+		var request = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "transfer_container", arguments);
+		runtime.submit(request);
+		assertFalse(world.availabilityIdle);
+		runtime.tick(); runtime.tick();
+		assertTrue(world.availabilityIdle);
+		runtime.interrupt("reflex_takeover");
+		assertNull(world.availabilityLease);
+		lease = runtime.acquire("host-a", observation.epoch());
+		assertEquals(lease, world.availabilityLease);
+		clock.set(6_000_000_000L);
+		runtime.tick();
+		assertNull(world.availabilityLease);
+	}
+
 	/** A deterministic stand-in for Minecraft, the system outside the native action interface. */
 	private static final class ChestWorld implements NativeActionRuntime.Port {
 		private int carried;
@@ -437,6 +467,12 @@ class NativeActionRuntimeTest {
 		private Runnable queued;
 		private boolean alive = true;
 		private boolean busy;
+		private NativeActionRuntime.Lease availabilityLease;
+		private boolean availabilityIdle;
+		private long availabilityHeartbeat;
+		@Override public void availability(NativeActionRuntime.AvailabilityGate gate) {
+			availabilityLease = gate.lease(); availabilityIdle = gate.idle(); availabilityHeartbeat = gate.heartbeatAtNanos();
+		}
 		@Override public NativeActionRuntime.World world() {
 			return new NativeActionRuntime.World("save-a", "minecraft:overworld", loadId, alive, busy, reflex);
 		}

@@ -78,6 +78,7 @@ public final class NativeActionRuntime {
 		if (!Objects.equals(lease, expected) || lease == null) throw new Rejected("stale_fence");
 		lastHeartbeat = nanoTime.getAsLong();
 		if (active != null) active.permit.heartbeat(lastHeartbeat);
+		publishAvailability();
 		return lease;
 	}
 
@@ -230,6 +231,7 @@ public final class NativeActionRuntime {
 			active = null;
 			trimReceipts();
 		}
+		publishAvailability();
 	}
 
 	private void expireLease() {
@@ -244,8 +246,8 @@ public final class NativeActionRuntime {
 		if (current.reflexActive()) revoke("reflex_takeover");
 		if (!current.alive()) revoke("player_unavailable");
 		if (current.controllerBusy()) revoke("external_controller");
-		if (lease == null || nanoTime.getAsLong() - lastHeartbeat < LEASE_NANOS) return;
-		revoke("lease_expired");
+		if (lease != null && nanoTime.getAsLong() - lastHeartbeat >= LEASE_NANOS) revoke("lease_expired");
+		publishAvailability();
 	}
 
 	private void requireAvailablePlayer() {
@@ -264,6 +266,7 @@ public final class NativeActionRuntime {
 			var before = active.receipt;
 			updateReceipt(active, new Receipt(before.id(), State.RECONCILING, false, "cancel_requested", active.cancelReason, before.basis(), before.effects()));
 		}
+		publishAvailability();
 	}
 
 	private void updateReceipt(Entry entry, Receipt receipt) {
@@ -274,10 +277,18 @@ public final class NativeActionRuntime {
 	private void recordEvent(String type, String reason, Lease owner, Receipt receipt) {
 		events.addLast(new Event(++eventSequence, epoch, Long.toString(nanoTime.getAsLong()), type, reason, owner, receipt));
 		if (events.size() > 512) events.removeFirst();
+		publishAvailability();
 	}
+	private void publishAvailability() {
+		if (world != null) port.availability(new AvailabilityGate(world, lease, active == null, lastHeartbeat));
+	}
+
+	public record AvailabilityGate(World world, Lease lease, boolean idle, long heartbeatAtNanos) {}
 
 	public interface Port {
 		World world();
+		/** Client-thread authority notification for passive native availability evidence. */
+		default void availability(AvailabilityGate gate) {}
 		Set<String> operations();
 		JsonObject observe();
 		default JsonObject observe(JsonObject query) {

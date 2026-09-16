@@ -31,6 +31,8 @@ final class MinecraftContainerAccess implements Access {
 	private final CameraController camera;
 	private final BaritoneFacade baritone;
 	private final MinecraftProgressAccess progress = new MinecraftProgressAccess();
+	private final MinecraftAvailabilityAccess availability = new MinecraftAvailabilityAccess();
+	private NativeActionRuntime.AvailabilityGate availabilityGate;
 	private final LinkedHashMap<String, Context> contexts = new LinkedHashMap<>();
 	private Object lastWorld;
 	private Object lastConnection;
@@ -102,6 +104,26 @@ final class MinecraftContainerAccess implements Access {
 		return List.copyOf(slots);
 	}
 	@Override public com.google.gson.JsonObject progress(com.google.gson.JsonArray scopes) { return progress.observe(world(), scopes); }
+	@Override public void availability(NativeActionRuntime.AvailabilityGate gate) {
+		availabilityGate = gate;
+		refreshAvailability();
+	}
+	@Override public com.google.gson.JsonObject availabilityProof(Window window, List<Slot> inventory) {
+		refreshAvailability();
+		return availability.proof(window, inventory);
+	}
+	private void refreshAvailability() {
+		var client = MinecraftClient.getInstance();
+		MinecraftAvailabilityAccess.Binding binding = null;
+		MinecraftAvailabilityAccess.OpenWindow window = null;
+		if (availabilityGate != null && client != null && client.getServer() != null && client.player != null && client.world != null) {
+			binding = new MinecraftAvailabilityAccess.Binding(client.getServer(), client.player.getUuid(), availabilityGate.world().worldId(),
+				availabilityGate.world().dimension(), availabilityGate.world().loadId());
+			if (current != null && current.clientHandler == client.player.currentScreenHandler)
+				window = new MinecraftAvailabilityAccess.OpenWindow(current.id, current.clientHandler.syncId);
+		}
+		availability.update(binding, availabilityGate, window);
+	}
 
 	@Override public void retainWindow(String windowId) {
 		Context context = contexts.get(windowId);
@@ -195,17 +217,22 @@ final class MinecraftContainerAccess implements Access {
 	}
 
 	private static Window window(PlayerEntity player, ScreenHandler handler, String id) {
+		return window(player, handler, id, (slot, container, value) -> stack(player, slot, container, value));
+	}
+
+	@FunctionalInterface interface SlotReader { Slot read(int slot, boolean container, ItemStack value); }
+	static Window window(PlayerEntity player, ScreenHandler handler, String id, SlotReader reader) {
 		var chest = (GenericContainerScreenHandler) handler;
 		var slots = new ArrayList<Slot>();
 		for (var slot : handler.slots) {
 			boolean container = slot.id < chest.getRows() * 9;
 			if (container || (slot.inventory == player.getInventory() && slot.getIndex() < 36))
-				slots.add(stack(player, slot.id, container, slot.getStack()));
+				slots.add(reader.read(slot.id, container, slot.getStack()));
 		}
-		return new Window(true, id, handler.syncId, slots, stack(player, -1, false, handler.getCursorStack()));
+		return new Window(true, id, handler.syncId, slots, reader.read(-1, false, handler.getCursorStack()));
 	}
 
-	private static Slot stack(PlayerEntity player, int slot, boolean container, ItemStack stack) {
+	static Slot stack(PlayerEntity player, int slot, boolean container, ItemStack stack) {
 		if (stack.isEmpty()) return new Slot(slot, container, "", "", 0, 64);
 		var encoded = ItemStack.UNCOUNTED_CODEC.encodeStart(player.getWorld().getRegistryManager().getOps(JsonOps.INSTANCE), stack).getOrThrow();
 		String variant = NativeActionRuntime.fingerprint("components", "item", encoded.getAsJsonObject());

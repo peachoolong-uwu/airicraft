@@ -4,6 +4,7 @@ import { supplyOperations } from './supplies.mjs';
 import { ObservationFrames } from './observations.mjs';
 import { observeInventory } from './item-observation.mjs';
 import { progressScopes as validateProgressScopes, projectProgress } from './progress-observation.mjs';
+import { nativeAvailability } from './availability-observation.mjs';
 
 const text = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -106,6 +107,7 @@ export class NativeObservationFeed {
       observation.targets.push(...seen.targets.filter(target => !observation.targets.includes(target)));
     }
     const projections = this.#project(frame, observation);
+    const availability = nativeAvailability(frame, response.authority);
     // Validate every projection before publishing any part of the capture.
     const validator = new ObservationFrames({ epoch: this.#epoch, scopes: this.#scopeNames, now: this.#now });
     for (const projection of projections) validator.publish(projection);
@@ -117,7 +119,8 @@ export class NativeObservationFeed {
       this.#ledger.observe(observation);
     }
     for (const projection of projections) this.#waits.publish(projection);
-    this.#latest = { frame, authority: copyMessage(response.authority), generation, assessable, assessed: new Set() };
+    this.#latest = { frame, authority: copyMessage(response.authority), generation, assessable, assessed: new Set(),
+      availability, allocationRevision: this.#ledger.allocationRevision };
     this.#assessPending();
     this.#trace?.record('observation.projected', { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence,
       scopes: this.#scopeNames, stockKeys: Object.keys(observation.stocks).length });
@@ -162,6 +165,12 @@ export class NativeObservationFeed {
       this.#assess(request, this.#latest.frame);
       this.#latest.assessed.add(request.id);
     }
+    const latest = this.#latest, frame = latest.frame;
+    this.#work.progress({ proof: latest.allocationRevision === this.#ledger.allocationRevision && this.#effects.canDispatch(latest.authority)
+        ? latest.availability : null, allocationRevision: latest.allocationRevision, generation: latest.generation,
+      captureId: frame.captureId, captureSequence: frame.captureSequence, receivedAtHostMillis: frame.receivedAtHostMillis,
+      ageUpperBoundMillis: frame.captureAgeUpperBoundMillis,
+      operations: [...this.#operations].filter(([, operation]) => operation.availabilitySource === latest.availability?.source).map(([name]) => name) });
   }
   #quiescent() {
     const state = this.#work.state();

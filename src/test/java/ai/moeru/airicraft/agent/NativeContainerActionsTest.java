@@ -11,6 +11,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NativeContainerActionsTest {
 	@Test
+	void anActionLeaseDoesNotInventContinuousAvailabilityEvidence() {
+		var chest = new Chest();
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		assertFalse(observation.facts().getAsJsonObject("availability").get("available").getAsBoolean());
+		runtime.acquire("host", observation.epoch());
+		assertFalse(runtime.observe().facts().getAsJsonObject("availability").get("available").getAsBoolean());
+		assertEquals(20, chest.stored);
+		assertNull(runtime.authority().active());
+	}
+
+	@Test
 	void scopeRegistrationIsPassiveBoundedAndExposedThroughTheNativeObservationFacade() {
 		var chest = new Chest();
 		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
