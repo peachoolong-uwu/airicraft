@@ -1,0 +1,8 @@
+{
+  "schemaVersion":1,"kind":"worker","name":"comment_structure","description":"Interpret only the supplied structure description.",
+  "tags":["reference","worker"],"capabilities":[],"environment":{},"dependencies":{"fallback":"@describe_fallback"},
+  "inputContract":{"type":"object","properties":{"name":{"type":"string","maxLength":128},"description":{"type":"string","maxLength":2048}},"required":["name","description"]},
+  "outputContract":{"type":"string","maxLength":1024},"fallback":"fallback","profile":"default",
+  "prompt":"Briefly describe the supplied structure. Do not invent blocks, occupants or functions that the evidence does not support. Mark uncertainty.",
+  "examples":[{"input":{"name":"sheep pen","description":"A fenced grass area with two sheep."},"result":"A small fenced sheep pen."}]
+}

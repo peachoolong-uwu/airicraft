@@ -1,3 +1,5 @@
+> Historical Node prototype evidence. The active runtime is now the Java/GraalJS mod implementation; see the archived-directory README and docs/embedded-os.md. Results below do not qualify the new execution path.
+
 # Crop/fishing prototype trials — 2026-09-15
 
 These are engineering trials in the user's `OS-Exp` survival world. They are not the planned 30-minute mixed-duty benchmark or a baseline comparison. The client ran in verified external Codex-driver mode. Codex prepared inventory and configured locations before each run; the host performed gameplay during runs. No growth-speed change, item spawning, teleportation, or manual crop-maturity injection was used.

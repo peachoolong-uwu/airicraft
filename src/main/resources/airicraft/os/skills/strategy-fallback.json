@@ -1,0 +1,8 @@
+{
+  "schemaVersion":1,"kind":"behavior","name":"strategy_fallback","description":"Pure defer result; no action is implied.",
+  "tags":["reference","worker"],"capabilities":[],"environment":{},"dependencies":{},
+  "inputContract":{"type":"object","properties":{"failure":{"type":"object","properties":{"fingerprint":{"type":"string","maxLength":256},"reason":{"type":"string","maxLength":512}},"required":["fingerprint","reason"]},"progress":{"type":"string","maxLength":512},"alternatives":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":128},"description":{"type":"string","maxLength":256}},"required":["id","description"]}}},"required":["failure","progress","alternatives"]},
+  "outputContract":{"type":"object","properties":{"action":{"type":"string","enum":["retry","choose_alternative","defer"]},"targetId":{"type":"string","maxLength":128},"explanation":{"type":"string","maxLength":512}},"required":["action","targetId","explanation"]},
+  "mode":"generator","source":"function* main() { return {action:'defer',targetId:'',explanation:'No fresh permitted worker recommendation.'}; }",
+  "examples":[{"input":{"failure":{"fingerprint":"blocked-route","reason":"Route obstructed."},"progress":"No progress.","alternatives":[]},"responses":[],"expected":[{"done":true,"value":{"action":"defer","targetId":"","explanation":"No fresh permitted worker recommendation."}}]}]
+}

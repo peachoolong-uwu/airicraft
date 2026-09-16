@@ -428,6 +428,16 @@ dependencies {
 	implementation "ai.moeru:action-plan-advisor:0.1.0"
 	include "ai.moeru:action-plan-advisor:0.1.0"
 	implementation "org.yaml:snakeyaml:2.4"
+	implementation "org.graalvm.polyglot:polyglot:${project.graaljs_version}"
+	implementation "org.graalvm.polyglot:js-community:${project.graaljs_version}"
+	// Loom's nested-jar include is non-transitive. Keep the engine dependencies
+	// as separate jars so their language/provider service descriptors survive.
+	[
+		"org.graalvm.polyglot:polyglot", "org.graalvm.js:js-language", "org.graalvm.regex:regex",
+		"org.graalvm.truffle:truffle-api", "org.graalvm.truffle:truffle-runtime", "org.graalvm.truffle:truffle-compiler",
+		"org.graalvm.sdk:collections", "org.graalvm.sdk:nativeimage", "org.graalvm.sdk:word", "org.graalvm.sdk:jniutils",
+		"org.graalvm.shadowed:icu4j", "org.graalvm.shadowed:xz"
+	].each { coordinate -> include("${coordinate}:${project.graaljs_version}") { transitive = false } }
 	implementation "io.opentelemetry:opentelemetry-api:1.60.1"
 	implementation "io.opentelemetry:opentelemetry-sdk:1.60.1"
 	implementation "io.opentelemetry:opentelemetry-exporter-otlp:1.60.1"

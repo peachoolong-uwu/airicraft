@@ -2,6 +2,8 @@
 
 Airicraft is a Fabric mod that exposes an in-game agent bridge and a CLI for automating common tasks. It targets Minecraft `1.21.8` with Java `21`, plus a `wrapper/` CLI subproject.
 
+The experimental [Airicraft OS](docs/embedded-os.md) runs its scheduler and skill library in Java inside the mod, with embedded GraalJS for behavior code. It uses the normal Gradle build and Codex driver controls; no npm runtime is required.
+
 
 ## Development And Verification
 

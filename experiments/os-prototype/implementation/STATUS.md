@@ -1,3 +1,5 @@
+> Historical Node prototype evidence. The active runtime is now the Java/GraalJS mod implementation; see the archived-directory README and docs/embedded-os.md. Results below do not qualify the new execution path.
+
 # Airicraft OS implementation status
 
 This follows the settled [implementation handoff](../design/implementation-handoff.md). Work is on `os-exp`. The existing prototype and unrelated JourneyMap edits were preserved in `run/os-implementation/baseline-20260915-233217` before implementation began.

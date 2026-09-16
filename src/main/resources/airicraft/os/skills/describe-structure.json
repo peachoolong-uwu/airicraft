@@ -1,0 +1,7 @@
+{
+  "schemaVersion":1,"kind":"behavior","name":"describe_structure","description":"Call the pinned structure interpretation worker and return its result.",
+  "tags":["reference","worker"],"capabilities":[],"environment":{},"dependencies":{"comment":"@comment_structure"},
+  "inputContract":{"type":"object","properties":{"name":{"type":"string","maxLength":128},"description":{"type":"string","maxLength":2048}},"required":["name","description"]},
+  "outputContract":true,"mode":"generator","source":"function* main(os,input) { return yield os.worker('comment',input); }",
+  "examples":[{"input":{"name":"pen","description":"Two sheep."},"responses":[{"status":"fallback","reason":"worker_unconfigured","value":"Structure description unavailable."}],"expected":[{"done":false,"value":{"kind":"worker","definition":"comment","input":{"name":"pen","description":"Two sheep."}}},{"done":true,"value":{"status":"fallback","reason":"worker_unconfigured","value":"Structure description unavailable."}}]}]
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion":1,"kind":"worker","name":"interpret_strategy","description":"Interpret a failure and bounded candidate set.",
+  "tags":["reference","worker"],"capabilities":[],"environment":{},"dependencies":{"fallback":"@strategy_fallback"},
+  "inputContract":{"type":"object","properties":{"failure":{"type":"object","properties":{"fingerprint":{"type":"string","maxLength":256},"reason":{"type":"string","maxLength":512}},"required":["fingerprint","reason"]},"progress":{"type":"string","maxLength":512},"alternatives":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":128},"description":{"type":"string","maxLength":256}},"required":["id","description"]}}},"required":["failure","progress","alternatives"]},
+  "outputContract":{"type":"object","properties":{"action":{"type":"string","enum":["retry","choose_alternative","defer"]},"targetId":{"type":"string","maxLength":128},"explanation":{"type":"string","maxLength":512}},"required":["action","targetId","explanation"]},
+  "fallback":"fallback","profile":"default","reconsideration":{"fingerprint":["failure","fingerprint"]},
+  "prompt":"Choose retry, choose_alternative or defer from the supplied failure and progress evidence. For choose_alternative, targetId must exactly match a supplied alternative id. Otherwise targetId must be empty. Explain briefly. This is advice only; the OS must recheck eligibility before any action.",
+  "examples":[{"input":{"failure":{"fingerprint":"blocked-route","reason":"Route obstructed."},"progress":"No progress.","alternatives":[]},"result":{"action":"defer","targetId":"","explanation":"No fresh permitted worker recommendation."}}]
+}

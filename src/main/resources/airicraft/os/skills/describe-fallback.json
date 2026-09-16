@@ -1,0 +1,8 @@
+{
+  "schemaVersion":1,"kind":"behavior","name":"describe_fallback","description":"Pure unavailable-description result.",
+  "tags":["reference","worker"],"capabilities":[],"environment":{},"dependencies":{},
+  "inputContract":{"type":"object","properties":{"name":{"type":"string","maxLength":128},"description":{"type":"string","maxLength":2048}},"required":["name","description"]},
+  "outputContract":{"type":"string","maxLength":1024},"mode":"generator",
+  "source":"function* main() { return 'Structure description unavailable.'; }",
+  "examples":[{"input":{"name":"sheep pen","description":"A fenced grass area with two sheep."},"responses":[],"expected":[{"done":true,"value":"Structure description unavailable."}]}]
+}

@@ -30,7 +30,7 @@ public final class NativeDriverService {
 	}
 	public static boolean handles(String name) { return NAMES.contains(name); }
 	public void tick() { runtime.tick(); }
-	public boolean ownsPlayer() { return runtime.blocksOrdinaryActions(); }
+	public boolean ownsPlayer() { return runtime.blocksOrdinaryActions() || EmbeddedOsController.cleanupPending(); }
 	public boolean activated() { return activated; }
 	public void interrupt(String reason) { runtime.interrupt(reason); }
 	public boolean allowsOrdinaryTool(String name) {

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1, "kind": "behavior", "name": "observe_inventory", "description": "Read one granted inventory view and return it.",
+  "tags": ["reference", "observe"], "capabilities": ["observe:inventory"], "environment": {}, "dependencies": {},
+  "inputContract": {"type":"null"}, "outputContract": true, "mode": "generator",
+  "source": "function* main(os) { return yield os.observe({scopes:['inventory']}); }",
+  "examples": [{"input":null,"responses":[{"scopes":[]}],"expected":[{"done":false,"value":{"kind":"observe","query":{"scopes":["inventory"]}}},{"done":true,"value":{"scopes":[]}}]}]
+}

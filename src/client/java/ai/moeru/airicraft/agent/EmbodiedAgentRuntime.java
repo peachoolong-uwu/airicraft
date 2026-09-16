@@ -267,6 +267,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final MinecraftBlockAcquisitionKnowledgeService blockAcquisitionKnowledgeService = new MinecraftBlockAcquisitionKnowledgeService();
 	private final boolean codexDriverActive;
 	private final NativeDriverService nativeDriver;
+	private final EmbeddedOsController embeddedOs;
 
 	private boolean initialized;
 	private volatile long tickCount;
@@ -363,6 +364,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					|| !worldTaskExecutor.released() || survivalReflexRuntime.snapshot().holdsNormalTasks(),
 				() -> survivalReflexRuntime.snapshot().ownsActuation(), effectiveCameraController, baritoneFacade), System::nanoTime), System::nanoTime),
 			System::nanoTime, () -> tickCount, EmbodiedAgentRuntime::integratedServerTick) : null;
+		this.embeddedOs = nativeDriver == null ? null : new EmbeddedOsController(nativeDriver);
 	}
 
 	static EmbodiedAgentRuntime createForTests(WorldTaskExecutor worldTaskExecutor) {
@@ -410,6 +412,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	public void onWorldLeave() {
 		if (nativeDriver != null) nativeDriver.interrupt("world_left");
+		if (embeddedOs != null) embeddedOs.stop();
 		sessionRuntime.onWorldLeave(tickCount, eventBuffer);
 		sessionSnapshot = sessionRuntime.snapshot();
 		autoLanOpenState.clear();
@@ -925,6 +928,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	public void shutdown() {
 		if (nativeDriver != null) nativeDriver.interrupt("runtime_shutdown");
+		if (embeddedOs != null) embeddedOs.close();
 		initialized = false;
 		tickCount = 0L;
 		worldLoadTick = -1L;
@@ -1231,6 +1235,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		requireCodexDriverActive();
 		var tools = new ArrayList<>(dialogueRuntime.allAvailableTools());
 		tools.addAll(NativeDriverService.tools());
+		tools.addAll(EmbeddedOsController.tools());
 		return List.copyOf(tools);
 	}
 
@@ -1238,6 +1243,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		requireCodexDriverActive();
 		String callId = UUID.randomUUID().toString();
 		try {
+			if (EmbeddedOsController.handles(name)) {
+				return embeddedOs.execute(name, arguments).thenApply(result -> new ExternalPlannerToolResult(name, result.toString(), null));
+			}
 			if (NativeDriverService.handles(name)) NativeDriverService.validateEnvelope(arguments);
 			debugRecorder.recordExternalTool(tickCount, callId, name, "requested", arguments == null ? Map.of() : arguments.deepCopy());
 			if (NativeDriverService.handles(name)) {

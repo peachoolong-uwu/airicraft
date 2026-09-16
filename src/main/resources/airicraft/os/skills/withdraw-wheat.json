@@ -1,0 +1,7 @@
+{
+  "schemaVersion":1,"kind":"behavior","name":"withdraw_wheat","description":"Request a bounded withdrawal from the configured home chest context.",
+  "tags":["reference","container"],"capabilities":["container:home"],"environment":{},"dependencies":{},
+  "inputContract":{"type":"integer","minimum":1,"maximum":64},"outputContract":true,"mode":"generator",
+  "source":"function* main(os, quantity) { return yield os.work('chest', {direction:'withdraw',itemId:'minecraft:wheat',quantity}, 'container:home'); }",
+  "examples":[{"input":1,"responses":[{"status":"success"}],"expected":[{"done":false,"value":{"kind":"work","operation":"chest","arguments":{"direction":"withdraw","itemId":"minecraft:wheat","quantity":1},"context":"container:home"}},{"done":true,"value":{"status":"success"}}]}]
+}
