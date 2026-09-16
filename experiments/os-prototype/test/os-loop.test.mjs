@@ -69,13 +69,14 @@ async function fixture(run, { workEnabled = false, suppliesEnabled = false, feed
     clientTick: sequence, serverTick: sequence, receivedAtHostMillis: 0, captureAgeUpperBoundMillis: 0,
     coverage: { available: true, complete: true, truncated: false }, facts: [{ path: ['mature'], known: true, value: mature }],
     progress: { clockId: scope, eligibleTicks: sequence } });
-  const until = async predicate => {
+  const until = async (predicate, { dispatch = true } = {}) => {
     const deadline = performance.now() + 5000;
     while (!predicate()) {
       loop.tick();
       feed?.tick();
-      work?.tick({ authority: feed ? feed.availability() : 'available' });
-      if (performance.now() > deadline) assert.fail(`loop stalled: ${JSON.stringify(loop.state())}`);
+      if (dispatch) work?.tick({ authority: feed ? feed.availability() : 'available' });
+      if (performance.now() > deadline) assert.fail(`loop stalled: ${JSON.stringify({ loop: loop.state(),
+        owners: loop.state().roots.map(id => ({ invocation: invocations.inspect(id), runner: runners.state(id) })) })}`);
       await delay(5);
     }
   };
@@ -342,9 +343,11 @@ test('a failed offer batch stays within its root while an ungranted observation 
   assert.equal(workNative.submissions, 0);
 }, { workEnabled: true, feedEnabled: true }));
 
-test('real installed generators receive automatic supplies and observed stock through the native feed', async () => fixture(async ({ definition, install, until, workNative, workJournal, invocations, feed }) => {
+test('real installed generators receive automatic supplies and observed stock through the native feed', async () => fixture(async ({ definition, install, until, workNative, workJournal, invocations, feed, resources }) => {
   const revision = await definition('function* main(os) { const delivered = yield os.demand("wheat",2,["chest"]); const observed = yield os.wait({scope:"wheat",path:["stock","wheat"],atLeast:4}); return {delivered:delivered.credited,observed:observed.status}; }');
   const a = await install(revision), b = await install(revision);
+  // Batching applies to demands already declared at admission; independent VM responses need not arrive together.
+  await until(() => resources.pending().length === 2, { dispatch: false });
   await until(() => workNative.submissions === 1);
   assert.deepEqual(new Set(invocations.activity().subscribers), new Set([a.rootId, b.rootId]));
   workNative.progress(4, 4, true); workNative.playerQuantity = 4; workNative.quantity = 0; workNative.windowOpen = false;

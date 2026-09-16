@@ -3,6 +3,7 @@ import { copyMessage } from './value.mjs';
 import { compileContract } from './contracts.mjs';
 import { contentDigest } from './content.mjs';
 import { executionPolicy } from './execution-policy.mjs';
+import { DEFINITION_BYTES } from './definition.mjs';
 
 /** Pins source and input identity; the invocation broker remains the authority for physical retirement. */
 export class InstallationHost {
@@ -68,6 +69,15 @@ export class InstallationHost {
   describe(id, alias = null) {
     const { digest, definition } = alias === null ? this.#lookup(id) : this.#dependency(id, alias);
     return { digest, kind: definition.kind, mode: definition.mode ?? null };
+  }
+  workerDefinition(id, alias) {
+    const worker = this.#dependency(id, alias);
+    if (worker.definition.kind !== 'worker') throw Error('worker_definition_required');
+    const digest = worker.definition.dependencies[worker.definition.fallback];
+    const fallback = this.#lookup(id).record.closure.get(digest);
+    if (worker.definition.capabilities.length || fallback.definition.capabilities.length || fallback.definition.mode !== 'generator')
+      throw Error('worker_effects_forbidden');
+    return copyMessage({ ...worker, fallback: { digest, definition: fallback.definition } }, DEFINITION_BYTES * 2);
   }
   async spawn(parentId, alias, input, options = {}) {
     const { digest, definition } = this.#dependency(parentId, alias);

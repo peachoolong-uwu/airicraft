@@ -25,7 +25,7 @@ Behavior source defines `function* main(os, input)` or `function offers(os, inpu
 | `os.spawn(definition, input, options)` / `os.join(handle)` | Request an owned child or consume its result. |
 | `os.target(resource, quantity)` / `os.demand(resource, quantity, methods)` | Declare maintained stock or finite delivery demand. |
 | `os.work(operation, arguments, context)` | Offer bounded physical work for host admission. |
-| `os.worker(definition, input)` | Request inference-only judgment through the later worker service. |
+| `os.worker(definition, input)` | Request inference-only judgment through the optional [worker service](worker-api.md). |
 
 These constructors do not invoke host callbacks. The host validates copied declarations again. Additional authority fields such as a caller-selected owner are rejected. The VM has no Node objects, filesystem, network, subprocess, package loader or provider credentials. Async generators and arbitrary promise-job pumping are not part of execution.
 

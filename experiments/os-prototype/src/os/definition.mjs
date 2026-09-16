@@ -12,7 +12,8 @@ const object = value => value !== null && typeof value === 'object' && !Array.is
 export function definitionValue(value) {
   value = copyMessage(value, DEFINITION_BYTES);
   const common = ['schemaVersion', 'kind', 'name', 'description', 'tags', 'capabilities', 'environment', 'dependencies', 'inputContract', 'outputContract', 'examples'];
-  const fields = [...common, ...(value?.kind === 'behavior' ? ['mode', 'source'] : ['prompt', 'profile', 'fallback'])];
+  const fields = [...common, ...(value?.kind === 'behavior' ? ['mode', 'source'] : ['prompt', 'profile', 'fallback']),
+    ...(value?.kind === 'worker' && Object.hasOwn(value, 'reconsideration') ? ['reconsideration'] : [])];
   if (!object(value) || value.schemaVersion !== 1 || !['behavior', 'worker'].includes(value.kind) ||
       Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key)) ||
       !text(value.name, 128) || !text(value.description, 2048)) throw Error('invalid_definition');
@@ -24,6 +25,11 @@ export function definitionValue(value) {
   }
   if (Object.values(value.environment).some(item => !text(item)) || Object.values(value.dependencies).some(item => !isDigest(item))) throw Error('invalid_definition');
   compileContract(value.inputContract); compileContract(value.outputContract);
+  if (Object.hasOwn(value, 'reconsideration')) {
+    const rule = value.reconsideration;
+    if (!object(rule) || Object.keys(rule).length !== 1 || !Array.isArray(rule.fingerprint) || !rule.fingerprint.length || rule.fingerprint.length > 8 ||
+        rule.fingerprint.some(key => typeof key !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key))) throw Error('invalid_worker_reconsideration');
+  }
   if (!Array.isArray(value.examples) || value.examples.length > 32) throw Error('invalid_definition');
   if (value.kind === 'behavior') {
     if (!['generator', 'offers'].includes(value.mode) || typeof value.source !== 'string' || Buffer.byteLength(value.source) > executionPolicy.sourceBytes) throw Error('invalid_definition');

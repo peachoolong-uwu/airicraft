@@ -92,6 +92,19 @@ test('one native inventory capture drives passive waits and automatic shared sup
   assert.equal(work.state().fault, null);
 }));
 
+test('worker evidence follows fresh granted material facts without treating capture ticks or inaccessible stock as changes', async () => fixture(async ({ feed, native, invocations, time }) => {
+  const owner = invocations.install({ definition: 'worker-evidence', grants: ['observe:carried'] });
+  assert.equal(feed.workerEvidence(owner), null);
+  await feed.refresh(); const first = feed.workerEvidence(owner);
+  assert.equal(first.epoch, 'world'); assert.equal(first.progress, null);
+  native.quantity = 17; await feed.refresh(); const second = feed.workerEvidence(owner);
+  assert.equal(first.signature, second.signature, 'ungranted chest contents are irrelevant');
+  assert.notDeepEqual(first.captures, second.captures);
+  native.playerQuantity = 2; await feed.refresh();
+  assert.notEqual(feed.workerEvidence(owner).signature, second.signature);
+  time(2000); assert.equal(feed.workerEvidence(owner), null);
+}));
+
 test('native covered availability ages one root once across duplicate offers and selects overdue work', async () => fixture(async ({ feed, native, work, root, pulse }) => {
   const owner = root(), proof = availability(native);
   work.request(owner, 1, transferRequest);

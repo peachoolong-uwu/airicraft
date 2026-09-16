@@ -68,6 +68,16 @@ export class NativeObservationFeed {
       scope.frame?.captureSequence !== frame.captureSequence)) return null;
     return { basis: { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence, generation }, view };
   }
+  workerEvidence(owner) {
+    const observation = this.offerView(owner);
+    if (!observation) return null;
+    const { view, basis } = observation;
+    const material = view.scopes.map(({ scope, frame }) => ({ scope, coverage: frame.coverage, facts: frame.facts }));
+    const clocks = view.scopes.filter(scope => scope.current && scope.frame.progress.eligibleTicks !== null);
+    return { epoch: basis.epoch, signature: contentDigest(material), captures: [basis.captureId],
+      // Multiple unrelated clocks cannot be collapsed into a single eligibility guarantee.
+      progress: clocks.length === 1 ? copyMessage(clocks[0].frame.progress) : null };
+  }
   isCurrentOfferBasis(basis) {
     return this.#current() && basis.epoch === this.#epoch && basis.generation === this.#latest.generation &&
       basis.captureId === this.#latest.frame.captureId && basis.captureSequence === this.#latest.frame.captureSequence;

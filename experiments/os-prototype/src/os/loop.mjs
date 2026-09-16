@@ -12,7 +12,9 @@ const rejections = new Set([
   'child_result_capacity', 'live_invocation_capacity', 'invocation_depth', 'message_limit', 'resource_unknown',
   'supply_method_unavailable', 'invalid_target', 'invalid_demand', 'target_capacity', 'demand_capacity',
   'invocation_demand_capacity', 'demand_conflict', 'demand_retired', 'stale_observation',
-  'invalid_work', 'operation_unknown', 'work_conflict', 'work_retired', 'work_capacity', 'invocation_work_capacity'
+  'invalid_work', 'operation_unknown', 'work_conflict', 'work_retired', 'work_capacity', 'invocation_work_capacity',
+  'worker_definition_required', 'worker_effects_forbidden', 'invalid_worker_request', 'worker_request_conflict',
+  'worker_request_retired', 'worker_outstanding', 'worker_evidence_unavailable', 'invalid_worker_fingerprint'
 ]);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -25,15 +27,17 @@ export class BehaviorLoop {
   #resources;
   #work;
   #observations;
+  #workers;
   #trace;
   #states = new Map();
   #roots = new Set();
   #jobs = new Set();
   #closed = false;
 
-  constructor({ installations, invocations, runners, waits, resources, work, observations, trace }) {
+  constructor({ installations, invocations, runners, waits, resources, work, observations, workers, trace }) {
     this.#host = installations; this.#invocations = invocations; this.#runners = runners; this.#waits = waits; this.#resources = resources; this.#work = work; this.#trace = trace;
     this.#observations = observations;
+    this.#workers = workers;
   }
   attach(id) {
     if (this.#closed) throw Error('execution_closed');
@@ -58,7 +62,7 @@ export class BehaviorLoop {
           delete state.yielded;
           this.#dispatch(state, effect);
         }
-        if (['waiting', 'joining', 'delivery', 'working'].includes(state.phase)) this.#poll(state);
+        if (['waiting', 'joining', 'delivery', 'working', 'worker'].includes(state.phase)) this.#poll(state);
         if (this.#jobs.size < policy.invocations) {
           if (state.phase === 'ready') this.#resume(state);
           else if (state.phase === 'spawn_ready') this.#spawn(state);
@@ -135,6 +139,9 @@ export class BehaviorLoop {
     } else if (effect.kind === 'work' && this.#work) {
       state.workId = this.#work.request(state.id, state.sequence, { operation: effect.operation, arguments: effect.arguments, context: effect.context });
       state.phase = 'working'; this.#poll(state);
+    } else if (effect.kind === 'worker' && this.#workers) {
+      state.workerId = this.#workers.request(state.id, state.sequence, effect.definition, effect.input);
+      state.phase = 'worker'; this.#poll(state);
     } else this.#ready(state, { status: 'rejected', reason: 'service_unavailable', service: effect.kind });
   }
   #spawn(state) {
@@ -151,6 +158,7 @@ export class BehaviorLoop {
     if (state.phase === 'waiting') result = this.#waits.take(state.id, state.waitId);
     else if (state.phase === 'delivery') result = this.#resources.take(state.id, state.demandId);
     else if (state.phase === 'working') result = this.#work.take(state.id, state.workId);
+    else if (state.phase === 'worker') result = this.#workers.take(state.id, state.workerId);
     else result = this.#host.join(state.id, state.effect.handle);
     if (result.status !== 'pending') this.#ready(state, result);
   }
@@ -165,7 +173,7 @@ export class BehaviorLoop {
       input = { status: 'rejected', reason: 'effect_response_limit' };
     }
     this.#trace?.record('execution.response', { owner: state.id, sequence: state.sequence, kind: state.effect.kind, digest: contentDigest(input) });
-    state.input = input; state.phase = 'ready'; delete state.waitId; delete state.demandId; delete state.workId;
+    state.input = input; state.phase = 'ready'; delete state.waitId; delete state.demandId; delete state.workId; delete state.workerId;
   }
   #launch(state, operation, completed, canReject = false) {
     const job = Promise.resolve().then(() => {
@@ -194,7 +202,7 @@ export class BehaviorLoop {
     if (this.#running(state.id)) this.#runners.fail(state.id, String(error.message ?? 'execution_failed').slice(0, 256));
     this.#pollPassive();
   }
-  #pollPassive() { this.#waits.poll(); this.#resources?.poll(); this.#work?.poll(); }
+  #pollPassive() { this.#waits.poll(); this.#resources?.poll(); this.#work?.poll(); this.#workers?.poll(); }
   #current(state) { return !this.#closed && this.#states.get(state.id) === state; }
   #exists(id) {
     try { this.#invocations.execution(id); return true; }
