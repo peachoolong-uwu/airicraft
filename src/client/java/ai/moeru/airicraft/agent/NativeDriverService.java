@@ -169,9 +169,13 @@ public final class NativeDriverService {
 		var id = schema(Map.of("epoch", text, "generation", number, "sequence", number));
 		var lease = schema(Map.of("epoch", text, "generation", number, "hostId", text));
 		var bounded = Map.<String, Object>of("type", "integer", "minimum", 1, "maximum", 64);
-		var transfer = schema(Map.of("windowId", text, "syncId", Map.of("type", "integer", "minimum", 0),
+		var binding = schema(Map.of("windowId", text, "syncId", Map.of("type", "integer", "minimum", 0)));
+		var transferProperties = new java.util.LinkedHashMap<String, Object>(Map.of("windowId", text, "syncId", Map.of("type", "integer", "minimum", 0),
 			"direction", Map.of("type", "string", "enum", List.of("deposit", "withdraw")), "itemId", text, "quantity", bounded,
 			"allowance", schema(Map.of("sourceItems", bounded, "destinationItems", bounded))));
+		var requiredTransfer = transferProperties.keySet().stream().sorted().toList();
+		transferProperties.put("contextId", text);
+		var transfer = Map.of("type", "object", "properties", transferProperties, "required", requiredTransfer, "additionalProperties", false);
 		return List.of(
 			PlannerToolCatalog.toolForProvider("os_observe", "Read passive inventory, the current open container, native authority and registered progress counters. Optional progressScopes replaces up to 32 scoped chunk/entity clocks; omitted retains them. Never opens a GUI or forces chunks to load.",
 				Map.of("progressScopes", Map.of("type", "array", "maxItems", 32, "items", Map.of("type", "object", "properties", Map.of(
@@ -179,12 +183,12 @@ public final class NativeDriverService {
 					"entities", Map.of("type", "array", "minItems", 1, "maxItems", 16, "items", text)), "required", List.of("scope"), "additionalProperties", false))), List.of()),
 			PlannerToolCatalog.toolForProvider("os_lease", "Acquire the free player, renew each second, or request release. Five seconds without renewal revokes the fence; cleanup must still settle.",
 				Map.of("action", Map.of("type", "string", "enum", List.of("acquire", "heartbeat", "release")), "hostId", text, "epoch", text, "lease", lease), List.of("action")),
-			PlannerToolCatalog.toolForProvider("os_submit", "Admit one identified bounded transfer in an already-open container. Query the same ID after a lost response. Acceptance is not completion.",
-				Map.of("schemaVersion", Map.of("type", "integer", "const", 1), "id", id, "captureId", text, "operation", Map.of("type", "string", "enum", List.of("transfer_container")),
-					"arguments", transfer, "payloadHash", text), List.of("schemaVersion", "id", "captureId", "operation", "arguments", "payloadHash")),
+			PlannerToolCatalog.toolForProvider("os_submit", "Admit a bounded transfer or retain an already-open container. Retained transfers require the returned contextId. A released transfer does not release its retained context; cancel the context ID to close it. Query the same request ID after a lost response. Acceptance is not completion.",
+				Map.of("schemaVersion", Map.of("type", "integer", "const", 1), "id", id, "captureId", text, "operation", Map.of("type", "string", "enum", List.of("transfer_container", "retain_container")),
+					"arguments", Map.of("oneOf", List.of(binding, transfer)), "payloadHash", text), List.of("schemaVersion", "id", "captureId", "operation", "arguments", "payloadHash")),
 			PlannerToolCatalog.toolForProvider("os_inspect", "Query either an exact id, or ordered history with sessionId, sinceSeqNo and optional limit (default 16, max 32). Gaps and outcome_unknown never authorize replay.",
 				Map.of("id", id, "sessionId", text, "sinceSeqNo", Map.of("type", "integer", "minimum", 0), "limit", Map.of("type", "integer", "minimum", 1, "maximum", 32)), List.of()),
-			PlannerToolCatalog.toolForProvider("os_cancel", "Cancel an exact request. Retain ownership until released=true; partial effects remain in the world.", Map.of("lease", lease, "id", id), List.of("lease", "id"))
+			PlannerToolCatalog.toolForProvider("os_cancel", "Cancel an exact operation or retained context. Context cancellation drains its current operation before closing. Retain ownership until every owned receipt has released=true; partial effects remain in the world.", Map.of("lease", lease, "id", id), List.of("lease", "id"))
 		);
 	}
 	private static Map<String, Object> schema(Map<String, Object> properties) {

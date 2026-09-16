@@ -40,7 +40,7 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 	@Override public void availability(AvailabilityGate gate) {
 		access.availability(gate);
 	}
-	@Override public Set<String> operations() { return access.available() ? Set.of("transfer_container") : Set.of(); }
+	@Override public Set<String> operations() { return access.available() ? Set.of("transfer_container", "retain_container") : Set.of(); }
 	@Override public JsonObject observe() {
 		return observe(new JsonObject());
 	}
@@ -62,10 +62,17 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		return result;
 	}
 	@Override public Operation prepare(String name, JsonObject args, JsonObject observation, EffectPermit permit) {
+		if (name.equals("retain_container")) {
+			if (!args.keySet().equals(Set.of("windowId", "syncId"))) throw new Rejected("invalid_context_request");
+			Window basis = requireBoundWindow(args, observation).observed();
+			return new RetainedWindow(new Window(true, basis.windowId(), basis.syncId(), List.of(), basis.cursor()), permit);
+		}
+		if (!name.equals("transfer_container")) throw new Rejected("operation_not_granted");
+		return prepareTransfer(args, observation, permit, WindowUse.STANDALONE);
+	}
+	private Operation prepareTransfer(JsonObject args, JsonObject observation, EffectPermit permit, WindowUse use) {
 		if (!args.keySet().equals(Set.of("windowId", "syncId", "direction", "itemId", "quantity", "allowance")))
 			throw new Rejected("invalid_transfer_request");
-		String windowId = string(args, "windowId");
-		int syncId = integer(args, "syncId", 0, Integer.MAX_VALUE);
 		String direction = string(args, "direction");
 		String itemId = string(args, "itemId");
 		if (!SUPPORTED_ITEMS.contains(itemId)) throw new Rejected("unsupported_transfer_item");
@@ -76,18 +83,93 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		if (!allowance.keySet().equals(Set.of("sourceItems", "destinationItems"))) throw new Rejected("invalid_transfer_request");
 		if (integer(allowance, "sourceItems", 1, 64) < quantity || integer(allowance, "destinationItems", 1, 64) < quantity)
 			throw new Rejected("allowance_exceeded");
-		Window basis = JSON.fromJson(observation.get("window"), Window.class);
-		Window current = access.capture();
-		if (!current.open() || !basis.open() || !current.windowId().equals(windowId) || !basis.windowId().equals(windowId)
-			|| current.syncId() != syncId || basis.syncId() != syncId) throw new Rejected("container_changed");
-		if (current.cursor().count() != 0 || basis.cursor().count() != 0) throw new Rejected("cursor_not_empty");
+		var windows = requireBoundWindow(args, observation);
+		Window basis = windows.observed();
 		var moves = ContainerInventoryController.plan(basis.slots().stream().map(slot ->
 			new ContainerInventoryController.Slot(slot.id(), slot.container(), slot.itemId(), slot.variant(), slot.count(), slot.maxCount())).toList(),
 			direction, itemId, quantity);
 		var affected = moves.stream().flatMap(move -> java.util.stream.Stream.of(move.source(), move.target())).collect(java.util.stream.Collectors.toSet());
-		var guarded = new Window(true, windowId, syncId, basis.slots().stream().filter(slot -> affected.contains(slot.id())).toList(), basis.cursor());
-		if (!guarded.matches(current)) throw new Rejected("container_changed");
-		return new Transfer(guarded, moves, quantity, permit);
+		var guarded = new Window(true, basis.windowId(), basis.syncId(), basis.slots().stream().filter(slot -> affected.contains(slot.id())).toList(), basis.cursor());
+		if (!guarded.matches(windows.current())) throw new Rejected("container_changed");
+		return new Transfer(guarded, moves, quantity, permit, use);
+	}
+	private BoundWindow requireBoundWindow(JsonObject args, JsonObject observation) {
+		String windowId = string(args, "windowId");
+		int syncId = integer(args, "syncId", 0, Integer.MAX_VALUE);
+		Window basis = JSON.fromJson(observation.get("window"), Window.class);
+		Window current = access.capture();
+		if (!basis.open() || !current.open() || !basis.windowId().equals(windowId) || !current.windowId().equals(windowId)
+			|| basis.syncId() != syncId || current.syncId() != syncId) throw new Rejected("container_changed");
+		if (basis.cursor().count() != 0 || current.cursor().count() != 0) throw new Rejected("cursor_not_empty");
+		return new BoundWindow(basis, current);
+	}
+	private record BoundWindow(Window observed, Window current) {}
+
+	private enum WindowUse { STANDALONE, CONTEXT_STEP, CONTEXT_CLEANUP }
+
+	private final class RetainedWindow implements ContextOperation {
+		private final Window binding;
+		private final EffectPermit permit;
+		private CompletableFuture<Window> pending;
+		private boolean retained;
+		private boolean ready;
+		private Transfer cleanup;
+		private long phaseSince;
+
+		private RetainedWindow(Window binding, EffectPermit permit) {
+			this.binding = binding; this.permit = permit; phaseSince = clock.getAsLong();
+		}
+		@Override public boolean ready() { return ready; }
+		@Override public Operation prepare(String name, JsonObject args, JsonObject observation, EffectPermit stepPermit) {
+			if (!ready || !name.equals("transfer_container")) throw new Rejected("context_operation_not_granted");
+			if (!binding.windowId().equals(string(args, "windowId")) || binding.syncId() != integer(args, "syncId", 0, Integer.MAX_VALUE))
+				throw new Rejected("container_changed");
+			return prepareTransfer(args, observation, stepPermit, WindowUse.CONTEXT_STEP);
+		}
+		@Override public Progress tick(Permission permission) {
+			if (permission == Permission.OBSERVE) {
+				if (!ready && clock.getAsLong() - phaseSince >= CONFIRMATION_TIMEOUT_NANOS)
+					return progress(State.FAILED, "awaiting_handback", cleanup == null ? "context_entry_timeout" : "context_exit_timeout");
+				return progress(State.RECONCILING, "awaiting_handback", "");
+			}
+			if (!retained) { access.retainWindow(binding.windowId()); retained = true; }
+			if (permission == Permission.CLEANUP && cleanup == null) {
+				ready = false; phaseSince = clock.getAsLong();
+				cleanup = new Transfer(binding, List.of(), 0, permit, WindowUse.CONTEXT_CLEANUP);
+			}
+			if (cleanup != null) {
+				var result = cleanup.tick(permission);
+				// Retention/closure perform no item clicks. Child inventory uncertainty stays on its own receipt.
+				var effects = Map.<String, Object>of("windowId", binding.windowId(), "accountingComplete", true,
+					"releaseEvidence", result.effects().get("releaseEvidence"));
+				if (!result.released() && clock.getAsLong() - phaseSince >= CONFIRMATION_TIMEOUT_NANOS)
+					return new Progress(State.FAILED, false, result.phase(), "context_exit_timeout", effects);
+				return new Progress(result.state(), result.released(), result.phase(), result.reason(), effects);
+			}
+			if (ready) {
+				if (!binding.matches(access.capture()) || !access.contextControlsReady(binding.windowId())) {
+					ready = false;
+					return progress(State.FAILED, "context_changed", "context_changed");
+				}
+				return progress(State.RUNNING, "context_ready", "");
+			}
+			if (pending == null) pending = access.confirm(binding.windowId());
+			if (pending.isDone()) {
+				Window confirmed = pending.join();
+				pending = null;
+				if (binding.matches(confirmed) && binding.matches(access.capture()) && access.contextControlsReady(binding.windowId())) {
+					ready = true;
+					return progress(State.RUNNING, "context_ready", "");
+				}
+			}
+			if (clock.getAsLong() - phaseSince >= CONFIRMATION_TIMEOUT_NANOS)
+				return progress(State.FAILED, "verifying_context", "context_entry_timeout");
+			return progress(State.RUNNING, "verifying_context", "");
+		}
+		private Progress progress(State state, String phase, String reason) {
+			return new Progress(state, false, phase, reason, Map.of("windowId", binding.windowId(), "accountingComplete", true,
+				"releaseEvidence", Map.of("verified", false)));
+		}
 	}
 
 	private static String string(JsonObject args, String key) {
@@ -124,12 +206,14 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		private boolean accountingComplete = true;
 		private Map<String, Object> releaseEvidence = Map.of("verified", false);
 		private long waitSince;
+		private final WindowUse use;
 
-		private Transfer(Window initial, List<ContainerInventoryController.Move> moves, int quantity, EffectPermit permit) {
+		private Transfer(Window initial, List<ContainerInventoryController.Move> moves, int quantity, EffectPermit permit, WindowUse use) {
 			windowId = initial.windowId();
 			syncId = initial.syncId();
 			this.quantity = quantity;
 			this.permit = permit;
+			this.use = use;
 			expected = initial;
 			Window planned = initial;
 			for (var move : moves) {
@@ -137,7 +221,7 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 				for (int i = 0; i < move.count(); i++) planned = addClick(planned, move.target(), 1, 1);
 				if (planned.cursor().count() > 0) planned = addClick(planned, move.source(), 0, 0);
 			}
-			access.retainWindow(windowId);
+			if (use == WindowUse.STANDALONE) access.retainWindow(windowId);
 		}
 		private Window addClick(Window before, int slot, int button, int credit) {
 			Window after = clicked(before, slot, button);
@@ -179,7 +263,7 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 					pending = access.confirm(windowId);
 					return waiting("verifying_close");
 				}
-				access.releaseWindow(windowId);
+				if (use != WindowUse.CONTEXT_STEP) access.releaseWindow(windowId);
 				return closing ? progress(State.SUCCEEDED, true, "released")
 					: new Progress(State.FAILED, true, "released", "container_closed", progress(State.FAILED, true, "released").effects());
 			}
@@ -208,6 +292,12 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 				}
 			}
 			if (nextClick == clicks.size()) {
+				if (use == WindowUse.CONTEXT_STEP) {
+					boolean released = expected.cursor().count() == 0 && access.contextControlsReady(windowId);
+					releaseEvidence = Map.of("verified", released, "source", "server_handler_and_context", "windowId", windowId,
+						"windowRetained", true, "cursorEmpty", expected.cursor().count() == 0, "controlsFree", released);
+					return released ? progress(State.SUCCEEDED, true, "context_boundary") : waiting("verifying_context_boundary");
+				}
 				beforePending = expected;
 				waitSince = clock.getAsLong();
 				pending = access.close(expected, permit, permission);
@@ -293,5 +383,7 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		CompletableFuture<Window> click(Window expected, int slot, int button, EffectPermit permit, Permission permission);
 		CompletableFuture<Window> close(Window expected, EffectPermit permit, Permission permission);
 		boolean controlsReleased();
+		/** Quiescent controls may include this context's own visible container screen. */
+		default boolean contextControlsReady(String windowId) { return controlsReleased(); }
 	}
 }

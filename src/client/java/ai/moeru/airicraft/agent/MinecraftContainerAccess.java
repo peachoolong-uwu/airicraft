@@ -196,6 +196,14 @@ final class MinecraftContainerAccess implements Access {
 		var client = MinecraftClient.getInstance();
 		return actuatorsFree(client) && client.currentScreen == null && !ordinaryBusy.getAsBoolean() && !reflexOwns.getAsBoolean();
 	}
+	@Override public boolean contextControlsReady(String windowId) {
+		var client = MinecraftClient.getInstance();
+		var context = contexts.get(windowId);
+		return context != null && client != null && client.player != null && client.player.currentScreenHandler == context.clientHandler
+			&& (client.currentScreen == null || client.currentScreen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?> screen
+				&& screen.getScreenHandler() == context.clientHandler)
+			&& actuatorsFree(client) && !ordinaryBusy.getAsBoolean() && !reflexOwns.getAsBoolean();
+	}
 
 	private MinecraftClient requireOwnedWindow(String id, int syncId) {
 		var client = MinecraftClient.getInstance();

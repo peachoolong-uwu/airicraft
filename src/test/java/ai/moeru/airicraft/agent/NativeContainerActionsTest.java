@@ -11,6 +11,357 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NativeContainerActionsTest {
 	@Test
+	void contextExitWatchdogStillReportsFailureWhileAReflexOwnsThePlayer() {
+		var clock = new java.util.concurrent.atomic.AtomicLong();
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, clock::get), clock::get);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		chest.deferClose = true;
+		runtime.cancel(lease, context.id());
+		runtime.tick(); runtime.tick();
+		chest.reflex = true;
+		runtime.interrupt("reflex_takeover");
+		chest.queuedClose.run();
+		clock.set(30_000_000_000L);
+		runtime.tick();
+		assertEquals("context_exit_timeout", runtime.inspect(context.id()).effects().get("cleanupFailure"));
+		assertFalse(runtime.inspect(context.id()).released());
+		assertTrue(runtime.blocksOrdinaryActions());
+		assertTrue(chest.open);
+		assertEquals(0, chest.closures, "watchdog reporting must not authorize an effect during the hold");
+		chest.reflex = false;
+		chest.deferClose = false;
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(context.id()).released());
+		assertEquals(NativeActionRuntime.State.FAILED, runtime.inspect(context.id()).state());
+		assertEquals("context_exit_timeout", runtime.inspect(context.id()).effects().get("cleanupFailure"));
+		assertEquals(1, chest.closures);
+		assertFalse(runtime.blocksOrdinaryActions());
+	}
+
+	@Test
+	void contextCancellationPreservesAChildFailureThatFinishesCleanupLater() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		var args = transfer(1);
+		args.addProperty("contextId", (String) runtime.inspect(context.id()).effects().get("contextId"));
+		var request = NativeActionRuntime.Request.create(lease, 2, runtime.observe().captureId(), "transfer_container", args);
+		runtime.submit(request);
+		chest.rejectClick = true;
+		for (int i = 0; i < 3; i++) runtime.tick();
+		assertEquals("container_changed", runtime.inspect(request.id()).reason());
+		assertFalse(runtime.inspect(request.id()).released());
+		runtime.cancel(lease, context.id());
+		chest.rejectClick = false;
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertEquals(NativeActionRuntime.State.FAILED, runtime.inspect(request.id()).state());
+		assertTrue(runtime.inspect(context.id()).released());
+		assertEquals("cancelled", runtime.inspect(context.id()).reason(), "the first stop reason remains available");
+		assertEquals(NativeActionRuntime.State.FAILED, runtime.inspect(context.id()).state());
+		assertEquals(20, chest.stored);
+		assertEquals(0, chest.carried);
+	}
+
+	@Test
+	void contextEntryTimeoutDoesNotClaimTheUnconfirmedWindowWasReleased() {
+		var clock = new java.util.concurrent.atomic.AtomicLong();
+		var chest = new Chest();
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, clock::get), clock::get);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		for (int second = 1; second <= 30; second++) {
+			clock.set(second * 1_000_000_000L);
+			runtime.heartbeat(lease);
+			runtime.tick();
+		}
+		assertFalse(runtime.inspect(context.id()).released());
+		assertEquals("context_entry_timeout", runtime.inspect(context.id()).reason());
+		assertEquals(false, runtime.inspect(context.id()).effects().get("contextReady"));
+		chest.confirmation.complete(chest.capture());
+		chest.delayConfirmation = false;
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(context.id()).released());
+		assertEquals(NativeActionRuntime.State.FAILED, runtime.inspect(context.id()).state());
+		assertEquals(20, chest.stored);
+	}
+
+	@Test
+	void receiptPressureCannotEvictARetainedContextOrItsCurrentOperation() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		var args = transfer(1);
+		args.addProperty("contextId", (String) runtime.inspect(context.id()).effects().get("contextId"));
+		var request = NativeActionRuntime.Request.create(lease, 2, runtime.observe().captureId(), "transfer_container", args);
+		runtime.submit(request);
+		for (int sequence = 3; sequence < 270; sequence++)
+			assertEquals("player_owned", runtime.submit(NativeActionRuntime.Request.create(lease, sequence,
+				runtime.observe().captureId(), "transfer_container", args)).reason());
+		assertFalse(runtime.inspect(context.id()).released());
+		assertFalse(runtime.inspect(request.id()).released());
+		assertEquals("outcome_unknown", assertThrows(NativeActionRuntime.Rejected.class,
+			() -> runtime.inspect(new NativeActionRuntime.Id(lease.epoch(), lease.generation(), 3))).code());
+		for (int i = 0; i < 20 && !runtime.inspect(request.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(request.id()).released());
+		runtime.cancel(lease, context.id());
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(context.id()).released());
+		assertEquals(1, chest.carried);
+	}
+
+	@Test
+	void anUnexpectedContextCleanupExceptionRemainsVisibleAfterRecovery() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		chest.failClose = true;
+		runtime.cancel(lease, context.id());
+		runtime.tick(); runtime.tick();
+		assertFalse(runtime.inspect(context.id()).released());
+		assertEquals("executor_exception", runtime.inspect(context.id()).effects().get("cleanupFailure"));
+		chest.failClose = false;
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(context.id()).released());
+		assertEquals(NativeActionRuntime.State.FAILED, runtime.inspect(context.id()).state());
+		assertEquals("executor_exception", runtime.inspect(context.id()).effects().get("cleanupFailure"));
+		assertEquals(1, chest.closures);
+	}
+
+	@Test
+	void reflexTakeoverFencesAQueuedContextCloseAndCleanupResumesAfterHandback() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		chest.deferClose = true;
+		runtime.cancel(lease, context.id());
+		runtime.tick(); runtime.tick();
+		chest.reflex = true;
+		runtime.interrupt("reflex_takeover");
+		chest.queuedClose.run();
+		assertTrue(chest.open, "already-queued cleanup must obey immediate revocation");
+		runtime.tick();
+		assertFalse(runtime.inspect(context.id()).released());
+		assertTrue(runtime.blocksOrdinaryActions());
+		chest.reflex = false;
+		chest.deferClose = false;
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		var completed = runtime.inspect(context.id());
+		assertTrue(completed.released());
+		assertEquals(NativeActionRuntime.State.CANCELLED, completed.state());
+		assertFalse(completed.effects().containsKey("cleanupFailure"));
+		assertEquals(1, chest.closures);
+		assertFalse(runtime.blocksOrdinaryActions());
+	}
+
+	@Test
+	void anExternallyClosedIdleContextDoesNotInventUnknownItemEffects() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context);
+		runtime.tick();
+		chest.open = false;
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		var result = runtime.inspect(context.id());
+		assertTrue(result.released());
+		assertEquals(NativeActionRuntime.State.FAILED, result.state());
+		assertEquals("context_changed", result.reason());
+		assertEquals(true, result.effects().get("accountingComplete"));
+		assertEquals(20, chest.stored);
+		assertEquals(0, chest.carried);
+		assertEquals(0, chest.closures);
+		assertEquals(1, chest.releases);
+	}
+
+	@Test
+	void aRetainedContextRequiresItsExactIdentityAndConfirmedSetupForEveryOperation() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		String id = (String) runtime.submit(context).effects().get("contextId");
+		var args = transfer(1);
+		args.addProperty("contextId", id);
+		var tooEarly = NativeActionRuntime.Request.create(lease, 2, runtime.observe().captureId(), "transfer_container", args);
+		assertEquals("context_not_ready", runtime.submit(tooEarly).reason());
+		assertEquals(0, chest.retentions, "admission performs no context entry effects");
+		runtime.tick();
+		var missing = NativeActionRuntime.Request.create(lease, 3, runtime.observe().captureId(), "transfer_container", transfer(1));
+		assertEquals("context_required", runtime.submit(missing).reason());
+		args.addProperty("contextId", "different-visit");
+		var wrong = NativeActionRuntime.Request.create(lease, 4, runtime.observe().captureId(), "transfer_container", args);
+		assertEquals("context_required", runtime.submit(wrong).reason());
+		args.addProperty("contextId", id);
+		runtime.cancel(lease, context.id());
+		var closing = NativeActionRuntime.Request.create(lease, 5, runtime.observe().captureId(), "transfer_container", args);
+		assertEquals("context_not_ready", runtime.submit(closing).reason());
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		var stale = NativeActionRuntime.Request.create(lease, 6, runtime.observe().captureId(), "transfer_container", args);
+		assertEquals("context_unknown", runtime.submit(stale).reason());
+		assertEquals(runtime.inspect(stale.id()), runtime.submit(stale), "a rejected retry cannot create another admission");
+		assertEquals(20, chest.stored);
+		assertEquals(0, chest.carried);
+	}
+
+	@Test
+	void hostExpiryDrainsTheCurrentTransferBeforeClosingItsRetainedContext() {
+		var clock = new java.util.concurrent.atomic.AtomicLong();
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, clock::get), clock::get);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host-before-crash", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context);
+		runtime.tick();
+		var args = transfer(6);
+		args.addProperty("contextId", (String) runtime.inspect(context.id()).effects().get("contextId"));
+		var transfer = NativeActionRuntime.Request.create(lease, 2, runtime.observe().captureId(), "transfer_container", args);
+		runtime.submit(transfer);
+		for (int i = 0; i < 20 && chest.carried < 2; i++) runtime.tick();
+		assertEquals(2, chest.carried);
+		chest.closeAcknowledged = false;
+		clock.set(5_000_000_000L);
+		for (int i = 0; i < 20; i++) runtime.tick();
+		var partial = runtime.inspect(transfer.id());
+		assertTrue(partial.released());
+		assertEquals(NativeActionRuntime.State.CANCELLED, partial.state());
+		assertEquals("lease_expired", partial.reason());
+		assertEquals(2, partial.effects().get("transferred"));
+		assertEquals(18, chest.stored);
+		assertEquals(0, chest.cursor);
+		assertFalse(runtime.inspect(context.id()).released());
+		assertNotNull(runtime.authority().context());
+		assertEquals("unresolved_release", assertThrows(NativeActionRuntime.Rejected.class,
+			() -> runtime.acquire("replacement", observation.epoch())).code());
+		assertTrue(runtime.blocksOrdinaryActions());
+		chest.closeAcknowledged = true;
+		for (int i = 0; i < 10 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(context.id()).released());
+		assertNull(runtime.authority().context());
+		assertEquals(1, chest.closures);
+		var replacement = runtime.acquire("replacement", observation.epoch());
+		assertTrue(replacement.generation() > lease.generation());
+		assertEquals("stale_fence", assertThrows(NativeActionRuntime.Rejected.class, () -> runtime.submit(transfer)).code());
+	}
+
+	@Test
+	void aContextExitTimeoutRemainsAnExplicitFailureUntilTheOwnedWindowIsReleased() {
+		var clock = new java.util.concurrent.atomic.AtomicLong();
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, clock::get), clock::get);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context);
+		runtime.tick();
+		assertEquals("context_ready", runtime.inspect(context.id()).phase());
+		chest.deferClose = true;
+		runtime.cancel(lease, context.id());
+		runtime.tick(); runtime.tick();
+		for (int second = 1; second <= 30; second++) {
+			clock.set(second * 1_000_000_000L);
+			runtime.heartbeat(lease);
+			runtime.tick();
+		}
+		var unresolved = runtime.inspect(context.id());
+		assertFalse(unresolved.released());
+		assertTrue(runtime.blocksOrdinaryActions());
+		assertEquals("context_exit_timeout", unresolved.effects().get("cleanupFailure"));
+		chest.queuedClose.run();
+		runtime.tick();
+		var completed = runtime.inspect(context.id());
+		assertTrue(completed.released());
+		assertEquals(NativeActionRuntime.State.FAILED, completed.state());
+		assertEquals("context_exit_timeout", completed.effects().get("cleanupFailure"));
+	}
+
+	@Test
+	void independentBoundedTransfersReuseOneNativeContextUntilItsVerifiedClosure() {
+		var chest = new Chest();
+		chest.delayConfirmation = false;
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		var binding = new JsonObject();
+		binding.addProperty("windowId", "window-a");
+		binding.addProperty("syncId", 7);
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		assertEquals(NativeActionRuntime.State.ACCEPTED, runtime.submit(context).state());
+		for (int i = 0; i < 10 && !runtime.inspect(context.id()).phase().equals("context_ready"); i++) runtime.tick();
+		assertEquals("context_ready", runtime.inspect(context.id()).phase());
+		String contextId = (String) runtime.inspect(context.id()).effects().get("contextId");
+		int sequence = 1;
+		for (int quantity : new int[] {2, 3}) {
+			var args = transfer(quantity);
+			args.addProperty("contextId", contextId);
+			var request = NativeActionRuntime.Request.create(lease, ++sequence, runtime.observe().captureId(), "transfer_container", args);
+			assertEquals(NativeActionRuntime.State.ACCEPTED, runtime.submit(request).state());
+			for (int i = 0; i < 30 && !runtime.inspect(request.id()).released(); i++) runtime.tick();
+			var completed = runtime.inspect(request.id());
+			assertEquals(NativeActionRuntime.State.SUCCEEDED, completed.state());
+			assertTrue(completed.released());
+			assertEquals(quantity, completed.effects().get("transferred"));
+			assertEquals(contextId, completed.effects().get("contextId"));
+			assertFalse(runtime.inspect(context.id()).released());
+			assertTrue(chest.open);
+			assertEquals(0, chest.cursor);
+		}
+		assertEquals(15, chest.stored);
+		assertEquals(5, chest.carried);
+		assertEquals(1, chest.retentions);
+		assertEquals(0, chest.closures);
+		runtime.cancel(lease, context.id());
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) runtime.tick();
+		assertTrue(runtime.inspect(context.id()).released());
+		assertEquals(NativeActionRuntime.State.CANCELLED, runtime.inspect(context.id()).state());
+		assertFalse(chest.open);
+		assertEquals(1, chest.closures);
+		assertEquals(1, chest.releases);
+		runtime.release(lease);
+		assertFalse(runtime.blocksOrdinaryActions());
+	}
+
+	@Test
 	void anActionLeaseDoesNotInventContinuousAvailabilityEvidence() {
 		var chest = new Chest();
 		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
@@ -394,6 +745,9 @@ class NativeContainerActionsTest {
 		private int carried;
 		private int cursor;
 		private int unrelatedItems;
+		private int retentions;
+		private int releases;
+		private int closures;
 		private boolean open = true;
 		private boolean delayConfirmation = true;
 		private boolean closeAcknowledged = true;
@@ -401,8 +755,11 @@ class NativeContainerActionsTest {
 		private boolean reflex;
 		private boolean rejectClick;
 		private boolean deferClose;
+		private boolean failClose;
 		private Runnable queuedClose;
 		private CompletableFuture<NativeContainerActions.Window> confirmation;
+		@Override public void retainWindow(String id) { retentions++; }
+		@Override public void releaseWindow(String id) { releases++; }
 		@Override public NativeActionRuntime.World world() {
 			return new NativeActionRuntime.World("save", "minecraft:overworld", "load", true, false, reflex);
 		}
@@ -433,10 +790,11 @@ class NativeContainerActionsTest {
 		}
 		@Override public CompletableFuture<NativeContainerActions.Window> close(NativeContainerActions.Window expected,
 			NativeActionRuntime.EffectPermit permit, NativeActionRuntime.Permission permission) {
+			if (failClose) throw new IllegalStateException("injected context close failure");
 			var future = new CompletableFuture<NativeContainerActions.Window>();
 			queuedClose = () -> {
 				try {
-					permit.perform(permission, () -> { assertEquals(0, cursor); open = false; });
+					permit.perform(permission, () -> { assertEquals(0, cursor); open = false; closures++; });
 					future.complete(confirm(expected.windowId()).join());
 				} catch (RuntimeException exception) { future.completeExceptionally(exception); }
 			};

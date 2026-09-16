@@ -40,6 +40,7 @@ public final class NativeActionRuntime {
 	private long lastHeartbeat;
 	private Lease lease;
 	private Entry active;
+	private Entry context;
 
 	public NativeActionRuntime(Port port, LongSupplier nanoTime) {
 		this.port = Objects.requireNonNull(port);
@@ -61,7 +62,7 @@ public final class NativeActionRuntime {
 		expireLease();
 		requireAvailablePlayer();
 		if (!epoch.equals(expectedEpoch)) throw new Rejected("stale_epoch");
-		if (active != null && lease == null) throw new Rejected("unresolved_release");
+		if ((active != null || context != null) && lease == null) throw new Rejected("unresolved_release");
 		if (lease != null) {
 			if (lease.hostId().equals(hostId)) return lease;
 			throw new Rejected("player_owned");
@@ -78,6 +79,7 @@ public final class NativeActionRuntime {
 		if (!Objects.equals(lease, expected) || lease == null) throw new Rejected("stale_fence");
 		lastHeartbeat = nanoTime.getAsLong();
 		if (active != null) active.permit.heartbeat(lastHeartbeat);
+		if (context != null) context.permit.heartbeat(lastHeartbeat);
 		publishAvailability();
 		return lease;
 	}
@@ -106,16 +108,33 @@ public final class NativeActionRuntime {
 			if (basis == null) throw new Rejected("observation_unknown");
 			if (basis.effectRevision() != effectRevision || nanoTime.getAsLong() - basis.capturedAtNanos() >= 2_000_000_000L)
 				throw new Rejected("observation_stale");
-			operation = port.prepare(request.operation(), request.arguments(), basis.facts(), permit);
+			var arguments = request.arguments();
+			if (context != null) {
+				var supplied = arguments.remove("contextId");
+				if (supplied == null || !supplied.isJsonPrimitive() || !supplied.getAsJsonPrimitive().isString()
+					|| !context.contextId.equals(supplied.getAsString())) throw new Rejected("context_required");
+				if (!contextReady(context)) throw new Rejected("context_not_ready");
+				operation = ((ContextOperation) context.operation).prepare(request.operation(), arguments, basis.facts(), permit);
+				if (operation instanceof ContextOperation) throw new Rejected("nested_context");
+			} else {
+				if (arguments.has("contextId")) throw new Rejected("context_unknown");
+				operation = port.prepare(request.operation(), arguments, basis.facts(), permit);
+			}
 		} catch (Rejected rejected) {
 			return retainRejection(request, rejected.code(), permit);
 		} catch (IllegalArgumentException | IllegalStateException invalid) {
 			return retainRejection(request, "invalid_request", permit);
 		}
+		String contextId = operation instanceof ContextOperation
+			? request.id().epoch() + "/" + request.id().generation() + "/" + request.id().sequence()
+			: context == null ? null : context.contextId;
 		var receipt = new Receipt(request.id(), State.ACCEPTED, false, "accepted", "",
-			new Basis(1, request.operation(), request.captureId(), request.payloadHash()), Map.of());
-		active = new Entry(request.payloadHash(), operation, receipt, permit);
-		requests.put(request.id(), active);
+			new Basis(1, request.operation(), request.captureId(), request.payloadHash()), contextId == null ? Map.of() : Map.of("contextId", contextId));
+		var entry = new Entry(request.payloadHash(), operation, receipt, permit);
+		entry.contextId = contextId;
+		if (operation instanceof ContextOperation) context = entry;
+		else active = entry;
+		requests.put(request.id(), entry);
 		recordEvent("receipt", "", lease, receipt);
 		return receipt;
 	}
@@ -134,8 +153,9 @@ public final class NativeActionRuntime {
 
 	private void trimReceipts() {
 		var iterator = requests.entrySet().iterator();
-		while (requests.size() > RETAINED_RECEIPTS + (active == null ? 0 : 1) && iterator.hasNext()) {
-			if (iterator.next().getValue() != active) iterator.remove();
+		while (requests.size() > RETAINED_RECEIPTS + (active == null ? 0 : 1) + (context == null ? 0 : 1) && iterator.hasNext()) {
+			var entry = iterator.next().getValue();
+			if (entry != active && entry != context) iterator.remove();
 		}
 	}
 
@@ -153,12 +173,13 @@ public final class NativeActionRuntime {
 
 	public boolean blocksOrdinaryActions() {
 		expireLease();
-		return lease != null || active != null;
+		return lease != null || active != null || context != null;
 	}
 
 	public Authority authority() {
 		expireLease();
-		return new Authority(sessionId, epoch, leaseGeneration, lease, active == null ? null : active.receipt, admissionSequence);
+		return new Authority(sessionId, epoch, leaseGeneration, lease, active == null ? null : active.receipt,
+			context == null ? null : context.receipt, admissionSequence);
 	}
 
 	public Receipt inspect(Id id) {
@@ -183,55 +204,97 @@ public final class NativeActionRuntime {
 			throw new Rejected("stale_fence");
 		Entry entry = requests.get(id);
 		if (entry == null) throw new Rejected("outcome_unknown");
-		if (!entry.receipt.released() && entry.cancelReason.isEmpty()) {
-			entry.permit.update(Permission.OBSERVE, lastHeartbeat);
-			entry.cancelReason = "cancelled";
-			var before = entry.receipt;
-			updateReceipt(entry, new Receipt(id, State.RECONCILING, false, "cancel_requested", entry.cancelReason, before.basis(), before.effects()));
-		}
+		requestCancellation(entry, "cancelled", false);
 		return entry.receipt;
 	}
 
 	public void tick() {
 		expireLease();
-		if (active == null) return;
-		boolean cancelling = !active.cancelReason.isEmpty();
+		// A context cannot enter/exit while one of its operations still owns cleanup.
+		if (active != null) tickEntry(active);
+		else if (context != null) tickEntry(context);
+		publishAvailability();
+	}
+
+	private boolean contextReady(Entry entry) {
+		return entry.cancelReason.isEmpty() && ((ContextOperation) entry.operation).ready();
+	}
+
+	private Map<String, Object> effects(Entry entry, Map<String, Object> effects) {
+		if (entry.contextId == null) return effects;
+		var result = new LinkedHashMap<>(effects);
+		result.put("contextId", entry.contextId);
+		if (entry == context) {
+			result.put("contextReady", contextReady(entry));
+			result.put("completedOperations", entry.completedOperations);
+			if (entry.cleanupFailure != null) result.put("cleanupFailure", entry.cleanupFailure);
+		}
+		return result;
+	}
+
+	private void tickEntry(Entry entry) {
+		boolean cancelling = !entry.cancelReason.isEmpty();
 		Permission permission = world.reflexActive() || world.controllerBusy() ? Permission.OBSERVE : cancelling ? Permission.CLEANUP : Permission.RUN;
-		active.permit.update(permission, lastHeartbeat);
-		if (permission != Permission.OBSERVE) effectRevision++;
+		entry.permit.update(permission, lastHeartbeat);
+		// An idle, ready visit performs no effects; its fresh capture remains usable for the next operation.
+		if (permission != Permission.OBSERVE && (entry != context || !contextReady(entry))) effectRevision++;
 		Progress progress;
 		try {
-			progress = active.operation.tick(permission);
+			progress = entry.operation.tick(permission);
 		} catch (RuntimeException exception) {
-			active.permit.update(Permission.OBSERVE, lastHeartbeat);
-			if (active.cancelReason.isEmpty()) {
-				active.cancelReason = "executor_exception";
-				active.failed = true;
+			if (entry == context && permission == Permission.CLEANUP) {
+				entry.failed = true;
+				if (entry.cleanupFailure == null) entry.cleanupFailure = "executor_exception";
 			}
-			var before = active.receipt;
-			updateReceipt(active, new Receipt(before.id(), State.RECONCILING, false, "cleanup_required", active.cancelReason, before.basis(), before.effects()));
+			requestCancellation(entry, "executor_exception", true);
 			return;
 		}
+		if (entry == context && cancelling && progress.state() == State.FAILED
+			&& !progress.released() && !progress.reason().equals("effect_fenced")) {
+			entry.failed = true;
+			if (entry.cleanupFailure == null) entry.cleanupFailure = progress.reason().isEmpty() ? "context_cleanup_failed" : progress.reason();
+		}
 		if (!cancelling && (progress.state() == State.FAILED || progress.state() == State.CANCELLED)) {
-			active.permit.update(Permission.OBSERVE, lastHeartbeat);
-			active.cancelReason = progress.reason().isEmpty() ? "executor_stopped" : progress.reason();
-			active.failed = progress.state() == State.FAILED;
+			requestCancellation(entry, progress.reason().isEmpty() ? "executor_stopped" : progress.reason(), progress.state() == State.FAILED);
 			cancelling = true;
 		}
-		State state = cancelling ? (progress.released() ? (active.failed ? State.FAILED : State.CANCELLED) : State.RECONCILING) : progress.state();
+		State state = cancelling ? (progress.released() ? (entry.failed ? State.FAILED : State.CANCELLED) : State.RECONCILING) : progress.state();
 		if (!progress.released() && state == State.SUCCEEDED) state = State.RECONCILING;
-		updateReceipt(active, new Receipt(active.receipt.id(), state, progress.released(), progress.released() ? "released" : progress.phase(),
-			cancelling ? active.cancelReason : progress.reason(), active.receipt.basis(), progress.effects()));
+		updateReceipt(entry, new Receipt(entry.receipt.id(), state, progress.released(), progress.released() ? "released" : progress.phase(),
+			cancelling ? entry.cancelReason : progress.reason(), entry.receipt.basis(), effects(entry, progress.effects())));
 		if (progress.released()) {
-			active.permit.update(Permission.OBSERVE, lastHeartbeat);
-			active.operation = null;
+			entry.permit.update(Permission.OBSERVE, lastHeartbeat);
+			entry.operation = null;
 			// Retention is ordered by settlement; a long-lived active request may predate rejected requests.
-			requests.remove(active.receipt.id());
-			requests.put(active.receipt.id(), active);
-			active = null;
+			requests.remove(entry.receipt.id());
+			requests.put(entry.receipt.id(), entry);
+			if (entry == context) context = null;
+			else {
+				active = null;
+				if (context != null) {
+					context.completedOperations++;
+					if (state == State.FAILED || !Boolean.TRUE.equals(progress.effects().get("accountingComplete")))
+						requestCancellation(context, "context_operation_failed", true);
+					var before = context.receipt;
+					updateReceipt(context, new Receipt(before.id(), before.state(), false, before.phase(), before.reason(), before.basis(), effects(context, before.effects())));
+				}
+			}
 			trimReceipts();
 		}
-		publishAvailability();
+	}
+
+	private void requestCancellation(Entry entry, String reason, boolean failed) {
+		if (entry.receipt.released()) return;
+		entry.permit.update(Permission.OBSERVE, lastHeartbeat);
+		boolean first = entry.cancelReason.isEmpty();
+		entry.failed |= failed;
+		if (first) {
+			entry.cancelReason = reason;
+		}
+		var before = entry.receipt;
+		updateReceipt(entry, new Receipt(before.id(), State.RECONCILING, false, first ? "cancel_requested" : before.phase(),
+			entry.cancelReason, before.basis(), effects(entry, before.effects())));
+		if (entry == context && active != null) requestCancellation(active, reason, failed);
 	}
 
 	private void expireLease() {
@@ -260,12 +323,8 @@ public final class NativeActionRuntime {
 		Lease revoked = lease;
 		lease = null;
 		if (revoked != null) recordEvent("lease_revoked", reason, revoked, active == null ? null : active.receipt);
-		if (active != null) active.permit.update(Permission.OBSERVE, lastHeartbeat);
-		if (active != null && active.cancelReason.isEmpty()) {
-			active.cancelReason = reason;
-			var before = active.receipt;
-			updateReceipt(active, new Receipt(before.id(), State.RECONCILING, false, "cancel_requested", active.cancelReason, before.basis(), before.effects()));
-		}
+		if (context != null) requestCancellation(context, reason, false);
+		if (active != null) requestCancellation(active, reason, false);
 		publishAvailability();
 	}
 
@@ -280,7 +339,7 @@ public final class NativeActionRuntime {
 		publishAvailability();
 	}
 	private void publishAvailability() {
-		if (world != null) port.availability(new AvailabilityGate(world, lease, active == null, lastHeartbeat));
+		if (world != null) port.availability(new AvailabilityGate(world, lease, active == null && context == null, lastHeartbeat));
 	}
 
 	public record AvailabilityGate(World world, Lease lease, boolean idle, long heartbeatAtNanos) {}
@@ -301,6 +360,12 @@ public final class NativeActionRuntime {
 
 	public interface Operation {
 		Progress tick(Permission permission);
+	}
+
+	/** Retained setup owns a separate admission until cleanup, across independently identified operations. */
+	public interface ContextOperation extends Operation {
+		boolean ready();
+		Operation prepare(String operation, JsonObject arguments, JsonObject observation, EffectPermit permit);
 	}
 
 	/** Effect threads recheck this permit at the actual mutation, not merely when it was queued. */
@@ -327,7 +392,7 @@ public final class NativeActionRuntime {
 	public enum State { ACCEPTED, RUNNING, RECONCILING, SUCCEEDED, FAILED, CANCELLED }
 	public record World(String worldId, String dimension, String loadId, boolean alive, boolean controllerBusy, boolean reflexActive) {}
 	public record Lease(String epoch, long generation, String hostId) {}
-	public record Authority(String sessionId, String epoch, long generation, Lease lease, Receipt active, long admissionSequence) {}
+	public record Authority(String sessionId, String epoch, long generation, Lease lease, Receipt active, Receipt context, long admissionSequence) {}
 	public record Id(String epoch, long generation, long sequence) {}
 	public record Event(long seqNo, String epoch, String capturedAtNanos, String type, String reason, Lease lease, Receipt receipt) {}
 	public record History(long oldestSeqNo, long latestSeqNo, long nextSeqNo, boolean gap, List<Event> events) {}
@@ -396,6 +461,9 @@ public final class NativeActionRuntime {
 		private String cancelReason = "";
 		private boolean failed;
 		private final EffectPermit permit;
+		private String contextId;
+		private int completedOperations;
+		private String cleanupFailure;
 		private Entry(String payloadHash, Operation operation, Receipt receipt, EffectPermit permit) {
 			this.payloadHash = payloadHash;
 			this.operation = operation;

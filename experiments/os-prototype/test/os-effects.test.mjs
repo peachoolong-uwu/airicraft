@@ -12,6 +12,7 @@ class NativeFixture {
   generation = 0;
   admissionSequence = 0;
   lease = null;
+  context = null;
   transferred = 0;
   receipts = new Map();
   beforeSubmit = async () => {};
@@ -21,7 +22,7 @@ class NativeFixture {
   loseResponse = false;
   heartbeatCount = 0;
   rejectHeartbeat = false;
-  authority() { return JSON.parse(JSON.stringify({ sessionId: this.sessionId, epoch: this.epoch, generation: this.generation, admissionSequence: this.admissionSequence, lease: this.lease, active: null })); }
+  authority() { return JSON.parse(JSON.stringify({ sessionId: this.sessionId, epoch: this.epoch, generation: this.generation, admissionSequence: this.admissionSequence, lease: this.lease, active: null, context: this.context })); }
   async call(name, args = {}) {
     let result = {};
     if (name === 'os_observe') result.frame = { sessionId: this.sessionId, epoch: this.epoch, captureId: 'capture-1',
@@ -109,14 +110,20 @@ test('missing receipts under advanced, changed, live or incomplete authority nev
     native => { native.generation = 2; },
     native => { native.epoch = 'world-2'; },
     native => { native.lease = { epoch: 'world-1', generation: 1, hostId: 'old-host' }; },
-    native => { native.lease = undefined; }
+    native => { native.lease = undefined; },
+    (native, intent) => {
+      intent.id.sequence = 2;
+      native.admissionSequence = 1;
+      native.context = { id: { epoch: native.epoch, generation: 1, sequence: 1 }, state: 'RECONCILING', released: false };
+    }
   ]) {
     const directory = await mkdtemp(join(tmpdir(), 'airicraft-effects-'));
     let journal, broker;
     try {
       journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
-      await journal.record(unfinishedIntent());
-      const native = new NativeFixture(); native.generation = 1; change(native);
+      const intent = unfinishedIntent();
+      const native = new NativeFixture(); native.generation = 1; change(native, intent);
+      await journal.record(intent);
       broker = new EffectBroker({ native, journal, expectedWorld: 'fixture' });
       await assert.rejects(broker.start(), /reconciliation_required/);
       assert.equal((await journal.unfinished()).length, 1);
@@ -124,6 +131,31 @@ test('missing receipts under advanced, changed, live or incomplete authority nev
       assert.equal((await broker.stop()).released, false);
     } finally { await journal?.close(); await rm(directory, { recursive: true, force: true }); }
   }
+});
+
+test('a retained native context is not free authority for an unrelated standalone activity', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'airicraft-effects-'));
+  let journal, broker;
+  try {
+    journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
+    const native = new NativeFixture();
+    broker = new EffectBroker({ native, journal, expectedWorld: 'fixture' });
+    await broker.start();
+    assert.equal(broker.canDispatch(native.authority()), true);
+    native.admissionSequence = 1;
+    native.context = { id: { epoch: native.epoch, generation: native.generation, sequence: 1 }, state: 'RUNNING', released: false,
+      basis: { operation: 'retain_container', captureId: 'capture-1', payloadHash: 'a'.repeat(64) }, effects: {} };
+    const key = JSON.stringify(native.context.id);
+    native.receipts.set(key, native.context);
+    assert.equal(broker.canDispatch(native.authority()), false);
+    assert.equal((await broker.stop()).released, false, 'revoking the lease does not release the retained context');
+    assert.equal(broker.state().unresolved, true);
+    native.receipts.set(key, { ...native.context, state: 'CANCELLED', released: true,
+      effects: { accountingComplete: true, releaseEvidence: { verified: true } } });
+    native.context = null;
+    assert.equal((await broker.stop()).released, true);
+    assert.equal(broker.state().unresolved, false);
+  } finally { await broker?.stop(); await journal?.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test('restart reconciles a retained completed transfer without performing it again', async () => {
