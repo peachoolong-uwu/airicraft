@@ -15,11 +15,14 @@ public class MinecraftServerTickDebugMixin {
 	private void airicraft$gateServerTick(BooleanSupplier shouldKeepTicking, CallbackInfo callback) {
 		if (!ServerTickDebugRuntime.beginServerTick()) {
 			callback.cancel();
+		} else {
+			ai.moeru.airicraft.os.NativeProgressRuntime.begin((MinecraftServer) (Object) this);
 		}
 	}
 
 	@Inject(method = "tick", at = @At("TAIL"))
 	private void airicraft$completeServerTick(BooleanSupplier shouldKeepTicking, CallbackInfo callback) {
 		ServerTickDebugRuntime.completeServerTick();
+		ai.moeru.airicraft.os.NativeProgressRuntime.complete((MinecraftServer) (Object) this);
 	}
 }

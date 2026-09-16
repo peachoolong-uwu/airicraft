@@ -49,8 +49,8 @@ public final class NativeDriverService {
 			result.addProperty("status", "ok");
 			switch (name) {
 				case "os_observe" -> {
-					keys(args, Set.of());
-					var observation = runtime.observe();
+					keys(args, Set.of("progressScopes"));
+					var observation = runtime.observe(args);
 					var frame = JSON.toJsonTree(observation).getAsJsonObject();
 					frame.addProperty("schemaVersion", 1);
 					frame.addProperty("capturedAtNanos", Long.toString(observation.capturedAtNanos()));
@@ -173,7 +173,10 @@ public final class NativeDriverService {
 			"direction", Map.of("type", "string", "enum", List.of("deposit", "withdraw")), "itemId", text, "quantity", bounded,
 			"allowance", schema(Map.of("sourceItems", bounded, "destinationItems", bounded))));
 		return List.of(
-			PlannerToolCatalog.toolForProvider("os_observe", "Read the current open-container scope and native authority. Never opens a GUI.", Map.of(), List.of()),
+			PlannerToolCatalog.toolForProvider("os_observe", "Read passive inventory, the current open container, native authority and registered progress counters. Optional progressScopes replaces up to 32 scoped chunk/entity clocks; omitted retains them. Never opens a GUI or forces chunks to load.",
+				Map.of("progressScopes", Map.of("type", "array", "maxItems", 32, "items", Map.of("type", "object", "properties", Map.of(
+					"scope", text, "chunks", Map.of("type", "array", "minItems", 1, "maxItems", 16, "items", schema(Map.of("x", Map.of("type", "integer"), "z", Map.of("type", "integer")))),
+					"entities", Map.of("type", "array", "minItems", 1, "maxItems", 16, "items", text)), "required", List.of("scope"), "additionalProperties", false))), List.of()),
 			PlannerToolCatalog.toolForProvider("os_lease", "Acquire the free player, renew each second, or request release. Five seconds without renewal revokes the fence; cleanup must still settle.",
 				Map.of("action", Map.of("type", "string", "enum", List.of("acquire", "heartbeat", "release")), "hostId", text, "epoch", text, "lease", lease), List.of("action")),
 			PlannerToolCatalog.toolForProvider("os_submit", "Admit one identified bounded transfer in an already-open container. Query the same ID after a lost response. Acceptance is not completion.",

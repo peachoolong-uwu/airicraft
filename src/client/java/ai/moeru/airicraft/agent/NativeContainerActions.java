@@ -39,7 +39,13 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 	@Override public World world() { return access.world(); }
 	@Override public Set<String> operations() { return access.available() ? Set.of("transfer_container") : Set.of(); }
 	@Override public JsonObject observe() {
+		return observe(new JsonObject());
+	}
+	@Override public JsonObject observe(JsonObject query) {
+		if (!Set.of("progressScopes").containsAll(query.keySet()) || query.has("progressScopes") && !query.get("progressScopes").isJsonArray())
+			throw new Rejected("invalid_progress_scopes");
 		var result = new JsonObject();
+		result.add("progress", access.progress(query.has("progressScopes") ? query.getAsJsonArray("progressScopes") : null));
 		var window = access.capture();
 		result.add("window", JSON.toJsonTree(window));
 		var inventory = access.inventory();
@@ -269,6 +275,10 @@ public final class NativeContainerActions implements NativeActionRuntime.Port {
 		default void releaseWindow(String windowId) {}
 		/** Main inventory and hotbar, independent of an open handler; null means unavailable. */
 		default List<Slot> inventory() { return null; }
+		default JsonObject progress(com.google.gson.JsonArray scopes) {
+			if (scopes != null) ai.moeru.airicraft.os.NativeProgressClocks.parse(scopes, world().dimension());
+			var result = new JsonObject(); result.addProperty("available", false); result.add("scopes", new com.google.gson.JsonArray()); return result;
+		}
 		World world();
 		Window capture();
 		CompletableFuture<Window> confirm(String windowId);

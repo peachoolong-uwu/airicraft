@@ -3,6 +3,7 @@ import { contentDigest } from './content.mjs';
 import { supplyOperations } from './supplies.mjs';
 import { ObservationFrames } from './observations.mjs';
 import { observeInventory } from './item-observation.mjs';
+import { progressScopes as validateProgressScopes, projectProgress } from './progress-observation.mjs';
 
 const text = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -15,14 +16,18 @@ const metadata = ['schemaVersion', 'sessionId', 'epoch', 'captureId', 'captureSe
 export class NativeObservationFeed {
   #native; #effects; #work; #invocations; #ledger; #resources; #waits; #operations;
   #epoch; #expectedWorld; #views; #now; #trace;
+  #progressScopes; #scopeNames;
   #job = null; #closed = false; #fault = null; #latest = null; #capture = null; #session = null; #next = 0;
 
-  constructor({ native, effects, work, invocations, ledger, resources, waits, operations, epoch, expectedWorld, views,
+  constructor({ native, effects, work, invocations, ledger, resources, waits, operations, epoch, expectedWorld, views, progressScopes = [],
     now = () => performance.now(), trace }) {
     const catalog = supplyOperations(operations), copied = copyMessage(views);
     const locations = new Set(['player', ...[...catalog.values()].map(operation => operation.grant)]);
-    if (!text(epoch) || !text(expectedWorld) || !object(copied) || !Object.keys(copied).length || Object.keys(copied).length > 32 ||
+    this.#progressScopes = validateProgressScopes(progressScopes);
+    if (!text(epoch) || !text(expectedWorld) || !object(copied) || Object.keys(copied).length > 32 ||
         [...catalog.values()].some(operation => typeof operation.observe !== 'function')) throw Error('invalid_native_views');
+    this.#scopeNames = [...Object.keys(copied), ...this.#progressScopes.map(scope => scope.scope)];
+    if (!this.#scopeNames.length || this.#scopeNames.length > 32 || new Set(this.#scopeNames).size !== this.#scopeNames.length) throw Error('invalid_native_views');
     for (const [scope, view] of Object.entries(copied)) {
       if (!text(scope) || scope.length > 128 || !object(view) || Object.keys(view).length !== 2 || !locations.has(view.location) ||
           !object(view.resources) || Object.keys(view.resources).length > 32 || Object.entries(view.resources).some(([alias, key]) =>
@@ -57,7 +62,7 @@ export class NativeObservationFeed {
   offerView(owner) {
     if (!this.#current()) return null;
     const { frame, generation } = this.#latest;
-    const view = this.#waits.grantedView(owner, Object.keys(this.#views));
+    const view = this.#waits.grantedView(owner, this.#scopeNames);
     if (view.epoch !== frame.epoch || view.scopes.some(scope => scope.frame?.captureId !== frame.captureId ||
       scope.frame?.captureSequence !== frame.captureSequence)) return null;
     return { basis: { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence, generation }, view };
@@ -73,7 +78,7 @@ export class NativeObservationFeed {
   }
   state() { return { closed: this.#closed, busy: this.#job !== null, fault: this.#fault, captureId: this.#capture?.id ?? null }; }
   async #read(generation) {
-    const response = await this.#native.call('os_observe');
+    const response = await this.#native.call('os_observe', this.#progressScopes.length ? { progressScopes: this.#progressScopes } : {});
     if (this.#closed) return false;
     if (response?.status !== 'ok') throw Error(response?.code ?? 'invalid_native_response');
     const frame = copyMessage(response.frame, 524_288, { maximumNodes: 8192 });
@@ -102,7 +107,7 @@ export class NativeObservationFeed {
     }
     const projections = this.#project(frame, observation);
     // Validate every projection before publishing any part of the capture.
-    const validator = new ObservationFrames({ epoch: this.#epoch, scopes: Object.keys(this.#views), now: this.#now });
+    const validator = new ObservationFrames({ epoch: this.#epoch, scopes: this.#scopeNames, now: this.#now });
     for (const projection of projections) validator.publish(projection);
     this.#session = frame.sessionId;
     this.#capture = { sequence: frame.captureSequence, id: frame.captureId, signature };
@@ -115,12 +120,12 @@ export class NativeObservationFeed {
     this.#latest = { frame, authority: copyMessage(response.authority), generation, assessable, assessed: new Set() };
     this.#assessPending();
     this.#trace?.record('observation.projected', { epoch: frame.epoch, captureId: frame.captureId, captureSequence: frame.captureSequence,
-      scopes: Object.keys(this.#views), stockKeys: Object.keys(observation.stocks).length });
+      scopes: this.#scopeNames, stockKeys: Object.keys(observation.stocks).length });
     return true;
   }
   #project(frame, observation) {
     const provenance = Object.fromEntries(metadata.map(key => [key, frame[key]]));
-    return Object.entries(this.#views).map(([scope, view]) => {
+    const items = Object.entries(this.#views).map(([scope, view]) => {
       const available = view.location === 'player' ? frame.facts?.inventory?.available === true : observation.targets.includes(view.location);
       return { ...provenance, scope, coverage: { available, complete: available, truncated: false },
         facts: Object.entries(view.resources).map(([alias, key]) => Object.hasOwn(observation.stocks, key)
@@ -129,6 +134,7 @@ export class NativeObservationFeed {
         // A sampled server tick is not evidence of a continuously eligible growth interval.
         progress: { clockId: `native-items:${scope}`, eligibleTicks: null } };
     });
+    return [...items, ...projectProgress(frame, this.#progressScopes, provenance)];
   }
   #assess(request, frame) {
     let readiness = 'ready';

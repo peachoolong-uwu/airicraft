@@ -11,6 +11,22 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NativeContainerActionsTest {
 	@Test
+	void scopeRegistrationIsPassiveBoundedAndExposedThroughTheNativeObservationFacade() {
+		var chest = new Chest();
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var driver = new NativeDriverService(runtime, () -> 0L, () -> 0L, () -> 0L);
+		var args = com.google.gson.JsonParser.parseString("{\"progressScopes\":[{\"scope\":\"farm\",\"chunks\":[{\"x\":1,\"z\":2}]}]}").getAsJsonObject();
+		var result = driver.execute("os_observe", args);
+		assertEquals("ok", result.get("status").getAsString());
+		assertFalse(result.getAsJsonObject("frame").getAsJsonObject("facts").getAsJsonObject("progress").get("available").getAsBoolean());
+		assertNull(runtime.authority().lease());
+		assertNull(runtime.authority().active());
+		assertEquals(20, chest.stored);
+		args.addProperty("progressScopes", true);
+		assertEquals("rejected", driver.execute("os_observe", args).get("status").getAsString());
+	}
+
+	@Test
 	void passiveCarriedInventoryRemainsVisibleWithoutOpeningAContainer() {
 		var chest = new Chest();
 		chest.open = false;

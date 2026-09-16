@@ -17,7 +17,7 @@ import { ConditionWaits } from '../src/os/waits.mjs';
 import { NativeObservationFeed } from '../src/os/native-feed.mjs';
 import { NativeContainer } from './fixtures/native-container.mjs';
 
-async function fixture(run) {
+async function fixture(run, { progressScopes = [] } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-feed-'));
   const journal = await EffectJournal.open(join(directory, 'effects.sqlite'));
   let now = 0;
@@ -33,9 +33,9 @@ async function fixture(run) {
   const activities = new ActivityCoordinator({ invocations, ledger, effects, operations, supplies });
   const work = new WorkService({ invocations, activities, operations, supplies, epoch: 'world', now: clock,
     rules: { chest: { priority: 12, kind: 'land', context: null } } });
-  const waits = new ConditionWaits({ invocations, scopes: { carried: 'observe:carried', home: 'container:home' }, epoch: 'world', now: clock });
+  const waits = new ConditionWaits({ invocations, scopes: { carried: 'observe:carried', home: 'container:home', growth: 'observe:growth' }, epoch: 'world', now: clock });
   const feed = new NativeObservationFeed({ native, effects, work, invocations, ledger, resources, waits, operations,
-    epoch: 'world', expectedWorld: 'fixture', now: clock,
+    epoch: 'world', expectedWorld: 'fixture', now: clock, progressScopes,
     views: { carried: { location: 'player', resources: { wheat: key } }, home: { location: 'container:home', resources: { wheat: chestKey } } } });
   const root = () => invocations.install({ definition: 'feed-fixture', grants: ['resource:wheat', 'container:home', 'observe:carried'] });
   const pulse = async () => {
@@ -75,6 +75,28 @@ test('one native inventory capture drives passive waits and automatic shared sup
   assert.deepEqual(await journal.unfinished(), []);
   assert.equal(work.state().fault, null);
 }));
+
+test('native scope counters drive a declared growth deadline without inferring progress from sampled ticks', async () => fixture(async ({ feed, native, waits, invocations, time }) => {
+  const owner = invocations.install({ definition: 'growth-wait', grants: ['observe:growth', 'observe:carried'] });
+  let eligibleTicks = 0, throughTick = 1, known = true;
+  native.beforeReply = async (name, response) => {
+    if (name === 'os_observe') response.frame.facts.progress = { available: true, source: 'native_completed_scope_ticks', clockSession: 'native-clock', throughTick,
+      scopes: [{ scope: 'growth', kind: 'random_tick_chunks', clockId: 'farm-clock', eligibleTicks: known ? eligibleTicks : null, lastTickEligible: known ? false : null }] };
+  };
+  await feed.refresh();
+  const wait = waits.wait(owner, { scope: 'carried', path: ['stock', 'wheat'], atLeast: 1 }, { deadline: { clock: 'eligible_ticks', scope: 'growth', ticks: 20 } });
+  time(500); native.serverTick = 1000; throughTick = 1000;
+  await feed.refresh();
+  assert.equal(waits.inspect(owner, wait).eligibleTicks, 0);
+  eligibleTicks = 10; throughTick += 10; await feed.refresh();
+  assert.equal(waits.inspect(owner, wait).eligibleTicks, 10);
+  known = false; await feed.refresh();
+  known = true; eligibleTicks = 100; throughTick = 2000; await feed.refresh();
+  assert.equal(waits.inspect(owner, wait).eligibleTicks, 10);
+  eligibleTicks = 110; throughTick += 10; await feed.refresh();
+  assert.equal(waits.take(owner, wait).status, 'deadline');
+  assert.equal(invocations.activity(), null);
+}, { progressScopes: [{ scope: 'growth', chunks: [{ x: 1, z: 2 }] }] }));
 
 test('offers use one granted native view and old declarations cannot run against a newer capture', async () => fixture(async ({ feed, native, work, invocations, pulse, time }) => {
   const owner = invocations.install({ definition: 'offers', grants: ['container:home'] });

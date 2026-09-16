@@ -38,7 +38,7 @@ Wall deadlines use `{ clock: "wall", milliseconds: n }`. Growth deadlines use `{
 
 The deadline's named clock scope is intentional even when its predicate combines multiple scopes; the host does not infer simultaneous eligibility by combining unrelated counters. Observed readiness wins when readiness and a deadline are first noticed in the same evaluation. Deadline expiration itself never asserts that a crop or tree matured.
 
-The current native open-container frame does not yet provide all domain projections or these per-scope growth counters. Until those adapters are implemented and qualified, unavailable counters remain unknown. No elapsed-time substitution is permitted.
+The [native scope progress adapter](progress-api.md) now supplies explicit chunk/passive-entity counters through the same feed. Domain readiness projections and continuously feasible root aging remain separate. Unavailable counters remain unknown; no sampled-time substitution is permitted.
 
 ## Evidence and limits
 

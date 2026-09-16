@@ -35,7 +35,7 @@ The work service exposes a monotonic observation generation, advanced when admis
 
 A stale read creates an observation gap and can recover on a newer capture. Invalid native data, session/epoch/world changes and infrastructure failures latch `state().fault`, invalidate evidence and request native lease revocation. The containing host must then stop its generators and continue polling/draining work and the effect broker until physical cleanup is proved. A fault never acknowledges a free player merely because revocation was requested.
 
-Sampled server ticks do not prove continuous process eligibility. Item projections deliberately publish `eligibleTicks: null`, and this feed never calls `work.advance`. Authoritative growth counters, eligible-root interval production and retained contexts remain separate integrations.
+Sampled server ticks do not prove continuous process eligibility. Item projections deliberately publish `eligibleTicks: null`. The optional [native progress scopes](progress-api.md) connect explicit chunk/passive-entity counters to wait deadlines. They use distinct configured scopes and grants. This feed never calls `work.advance`; continuous eligible-root intervals require resource/readiness/authority evidence beyond simulation progress. Eligible-root production and retained contexts remain separate integrations.
 
 ## Evidence
 

@@ -30,6 +30,7 @@ final class MinecraftContainerAccess implements Access {
 	private final BooleanSupplier reflexOwns;
 	private final CameraController camera;
 	private final BaritoneFacade baritone;
+	private final MinecraftProgressAccess progress = new MinecraftProgressAccess();
 	private final LinkedHashMap<String, Context> contexts = new LinkedHashMap<>();
 	private Object lastWorld;
 	private Object lastConnection;
@@ -100,6 +101,7 @@ final class MinecraftContainerAccess implements Access {
 			slots.add(stack(client.player, index, false, client.player.getInventory().getStack(index)));
 		return List.copyOf(slots);
 	}
+	@Override public com.google.gson.JsonObject progress(com.google.gson.JsonArray scopes) { return progress.observe(world(), scopes); }
 
 	@Override public void retainWindow(String windowId) {
 		Context context = contexts.get(windowId);

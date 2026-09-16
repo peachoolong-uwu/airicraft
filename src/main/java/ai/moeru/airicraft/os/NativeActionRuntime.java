@@ -47,8 +47,11 @@ public final class NativeActionRuntime {
 	}
 
 	public Observation observe() {
+		return observe(new JsonObject());
+	}
+	public Observation observe(JsonObject query) {
 		expireLease();
-		var observation = new Observation(sessionId, epoch, epoch + "/" + ++captureSequence, captureSequence, nanoTime.getAsLong(), effectRevision, world, port.observe());
+		var observation = new Observation(sessionId, epoch, epoch + "/" + ++captureSequence, captureSequence, nanoTime.getAsLong(), effectRevision, world, port.observe(query));
 		observations.put(observation.captureId(), observation);
 		while (observations.size() > RETAINED_OBSERVATIONS) observations.remove(observations.keySet().iterator().next());
 		return observation;
@@ -277,6 +280,10 @@ public final class NativeActionRuntime {
 		World world();
 		Set<String> operations();
 		JsonObject observe();
+		default JsonObject observe(JsonObject query) {
+			if (!query.keySet().isEmpty()) throw new Rejected("observation_query_unsupported");
+			return observe();
+		}
 		/** Validate without effects. The first effect must wait until the admitted operation is ticked. */
 		Operation prepare(String operation, JsonObject arguments, JsonObject observation, EffectPermit permit);
 	}
