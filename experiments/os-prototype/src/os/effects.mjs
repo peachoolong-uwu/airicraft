@@ -28,6 +28,7 @@ export class EffectBroker {
   #stopping = false;
   #trace;
   #revokedContext = null;
+  #context = null;
 
   constructor({ native, journal, expectedWorld, hostId = randomUUID(), timers = { setInterval, clearInterval }, trace }) {
     this.#native = native; this.#journal = journal; this.#expectedWorld = expectedWorld; this.#hostId = hostId;
@@ -61,46 +62,107 @@ export class EffectBroker {
     this.#renewal = this.#timers.setInterval(() => this.#renew(), 1000);
     this.#renewal?.unref?.();
   }
-  execute(activity) { return this.#exclusive(() => this.#execute(activity)); }
-  async #execute(activity) {
+  execute(activity, { context = null } = {}) { return this.#exclusive(() => this.#execute(activity, context)); }
+  retainContext(key, activity) {
+    if (typeof key !== 'string' || !key.length || key.length > 256) return Promise.reject(Error('invalid_context'));
+    return this.#exclusive(() => this.#execute(activity, key, true));
+  }
+  async #execute(activity, context, retaining = false) {
     this.#trace?.assertHealthy();
     if (this.#stopping) throw Error('broker_stopping');
     if (!this.#lease) throw Error('broker_not_started');
     if (this.#leaseError) throw this.#leaseError;
     if (this.#active) throw Error('effect_unresolved');
-    this.#last = null;
-    const { frame } = await this.#call('os_observe');
+    if (retaining ? this.#context !== null : context !== (this.#context?.key ?? null)) throw Error('context_mismatch');
+    if (!retaining) this.#last = null;
+    const { frame, authority } = await this.#call('os_observe');
     this.#checkWorld(frame);
     if (this.#stopping) throw Error('broker_stopping');
     if (this.#leaseError) throw this.#leaseError;
     if (frame.epoch !== this.#lease.epoch) throw Error('stale_epoch');
+    this.observeContext(frame, authority);
+    if (!this.#authorityReady(authority)) throw Error('context_not_ready');
+    if (retaining && (!Number.isSafeInteger(frame.serverTick) || frame.serverTick < 0 || !frame.sessionId ||
+        !Number.isSafeInteger(frame.captureSequence) || frame.captureSequence < 1)) throw Error('invalid_context_clock');
     // The trusted coordinator admits its ledger bundle against this exact native frame.
     activity = copyMessage(typeof activity === 'function' ? activity(frame) : activity);
+    if (!retaining && this.#context) activity.arguments.contextId = this.#context.receipt.effects.contextId;
     const id = { epoch: this.#lease.epoch, generation: this.#lease.generation, sequence: ++this.#sequence };
     const payload = { operation: activity.operation, arguments: activity.arguments, captureId: frame.captureId };
     const request = { schemaVersion: 1, id, ...payload, payloadHash: fingerprint(payload) };
-    this.#active = { id, request, payloadHash: request.payloadHash, definition: activity.definition, invocation: activity.invocation,
+    const intent = { id, request, payloadHash: request.payloadHash, definition: activity.definition, invocation: activity.invocation,
+      ...(retaining ? { context: { key: context, sessionId: frame.sessionId, startTick: frame.serverTick } } : {}),
       ...(activity.provenance ? { provenance: activity.provenance } : {}) };
-    await this.#journal.record(this.#active);
-    this.#trace?.record('native.intent', this.#active);
+    if (retaining) this.#context = { key: context, intent, receipt: null, closing: false, operations: 0,
+      sessionId: frame.sessionId, startTick: frame.serverTick, throughTick: frame.serverTick, throughCapture: frame.captureSequence };
+    else this.#active = intent;
+    await this.#journal.record(intent);
+    this.#trace?.record('native.intent', intent);
     if (this.#stopping || this.#leaseError) {
       const receipt = { released: true, accountingComplete: true, disposition: 'not_submitted' };
       await this.#journal.settle(id, receipt);
       this.#trace?.record('native.recovered', { id, receipt }, { cleanup: true });
-      this.#last = { id, ...receipt };
-      this.#active = null;
+      if (retaining) this.#context = null;
+      else { this.#last = { id, ...receipt }; this.#active = null; }
       throw this.#leaseError ?? Error('broker_stopping');
     }
     let response;
     try { response = await this.#call('os_submit', request); }
     catch { response = await this.#call('os_inspect', { id }); }
-    return await this.#receipt(response.receipt);
+    return retaining ? this.#contextReceipt(response.receipt) : this.#receipt(response.receipt);
   }
-  state() { return copyMessage({ unresolved: this.#active !== null || this.#revokedContext !== null, last: this.#last }); }
+  state() { return copyMessage({ unresolved: this.#active !== null || this.#context !== null || this.#revokedContext !== null,
+    operationUnresolved: this.#active !== null, context: this.context(), last: this.#last }); }
+  context() {
+    const context = this.#context;
+    if (!context) return null;
+    const receipt = context.receipt;
+    const phase = context.closing ? 'exiting' : context.observedUnready ? 'unresolved' : receipt?.state === 'RUNNING' && receipt.effects?.contextReady === true
+      ? 'ready' : !receipt || receipt.state === 'ACCEPTED' ? 'entering' : 'unresolved';
+    return { id: context.key, phase, operations: Math.max(context.operations, context.nativeOperations ?? 0), elapsedTicks: context.throughTick - context.startTick };
+  }
+  /** A trusted fresh capture supplies advancing simulation time, never root eligibility. */
+  observeContext(frame, authority) {
+    const context = this.#context;
+    if (!context) return;
+    if (frame.epoch !== context.intent.id.epoch || frame.sessionId !== context.sessionId || !Number.isSafeInteger(frame.serverTick) || frame.serverTick < 0 ||
+        !Number.isSafeInteger(frame.captureSequence) || frame.captureSequence < 1) throw Error('invalid_context_clock');
+    if (frame.captureSequence <= context.throughCapture) return;
+    if (frame.serverTick < context.throughTick) throw Error('invalid_context_clock');
+    context.throughCapture = frame.captureSequence;
+    context.throughTick = frame.serverTick;
+    if (context.receipt?.state === 'RUNNING') context.observedUnready = !sameNativeId(authority?.context?.id, context.intent.id) ||
+      authority.context.state !== 'RUNNING' || authority.context.effects?.contextReady !== true;
+  }
+  pollContext() { return this.#exclusive(() => this.#pollContext()); }
+  async #pollContext() {
+    if (!this.#context) return null;
+    const resolution = await this.#recover(this.#context.intent);
+    if (!resolution) throw Error('reconciliation_required');
+    this.#acceptContextReceipt(resolution.receipt, resolution.settled);
+    return copyMessage(resolution.receipt);
+  }
+  closeContext() {
+    return this.#exclusive(async () => {
+      if (!this.#context) return null;
+      this.#context.closing = true;
+      if (!this.#lease) return this.#pollContext();
+      // Uncertain cancellation is an infrastructure failure: the coordinator revokes
+      // the lease, so a lost request cannot leave an indefinitely renewed ready visit.
+      const response = await this.#call('os_cancel', { lease: this.#lease, id: this.#context.intent.id });
+      return this.#contextReceipt(response.receipt);
+    });
+  }
   canDispatch(authority) {
-    const lease = authority?.lease;
-    return !this.#stopping && !this.#leaseError && !this.#recoveryBlocked && !this.#flight && !this.#active &&
-      this.#lease !== null && authority?.active === null && authority.context == null && authority.epoch === this.#lease.epoch &&
+    return !this.#stopping && !this.#leaseError && !this.#recoveryBlocked && !this.#flight && !this.#active && this.#authorityReady(authority);
+  }
+  #authorityReady(authority) {
+    const lease = authority?.lease, context = authority?.context;
+    const ownContext = this.#context && this.context().phase === 'ready' && context &&
+      sameNativeId(context.id, this.#context.intent.id) && context.state === 'RUNNING' && context.effects?.contextReady === true &&
+      context.effects.contextId === this.#context.receipt?.effects?.contextId;
+    return !this.#revokedContext && this.#lease !== null && authority?.active === null &&
+      (this.#context ? ownContext : context == null) && authority.epoch === this.#lease.epoch &&
       lease?.epoch === this.#lease.epoch && lease.generation === this.#lease.generation && lease.hostId === this.#lease.hostId;
   }
   cancel() {
@@ -122,7 +184,7 @@ export class EffectBroker {
     const resolution = await this.#recover(this.#active);
     if (!resolution) throw Error('reconciliation_required');
     this.#last = copyMessage(resolution.receipt);
-    if (resolution.settled) this.#active = null;
+    if (resolution.settled) this.#releaseOperation(resolution.receipt);
     return copyMessage(this.#last);
   }
   stop() {
@@ -158,6 +220,9 @@ export class EffectBroker {
     if (this.#active) {
       try { await this.#poll(); } catch { reason ??= 'reconciliation_required'; }
     }
+    if (this.#context) {
+      try { await this.#pollContext(); } catch { reason ??= 'native_context_release_unconfirmed'; }
+    }
     if (this.#revokedContext) {
       try {
         const response = await this.#call('os_inspect', { id: this.#revokedContext.id });
@@ -168,7 +233,7 @@ export class EffectBroker {
         } else reason ??= 'native_context_release_unconfirmed';
       } catch { reason ??= 'native_context_release_unconfirmed'; }
     }
-    return { released: this.#lease === null && this.#active === null && this.#revokedContext === null && !this.#recoveryBlocked,
+    return { released: this.#lease === null && this.#active === null && this.#context === null && this.#revokedContext === null && !this.#recoveryBlocked,
       ...(reason ? { reason } : {}) };
   }
   #retainContextRelease(authority, lease) {
@@ -176,6 +241,7 @@ export class EffectBroker {
     if (receipt == null) return;
     if (!validNativeId(receipt.id)) throw Error('invalid_native_context');
     if (receipt.id.epoch !== lease.epoch || receipt.id.generation !== lease.generation) return;
+    if (this.#context && sameNativeId(receipt.id, this.#context.intent.id)) { this.#context.closing = true; return; }
     const basis = receipt.basis;
     if (!basis || typeof basis.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(basis.payloadHash) ||
         !['operation', 'captureId'].every(key => typeof basis[key] === 'string' && basis[key].length > 0 && basis[key].length <= 256))
@@ -208,8 +274,27 @@ export class EffectBroker {
     const intent = this.#active;
     const settled = await this.#account(intent, receipt);
     this.#last = copyMessage(receipt);
-    if (settled) this.#active = null;
+    if (settled) this.#releaseOperation(receipt);
     return copyMessage(receipt);
+  }
+  #releaseOperation(receipt) {
+    if (this.#context && !receipt.disposition && receipt.phase !== 'admission_rejected') this.#context.operations++;
+    this.#active = null;
+  }
+  async #contextReceipt(receipt) {
+    const settled = await this.#account(this.#context.intent, receipt);
+    this.#acceptContextReceipt(receipt, settled);
+    return copyMessage(receipt);
+  }
+  #acceptContextReceipt(receipt, settled) {
+    if (settled) { this.#context = null; return; }
+    const operations = receipt.state === 'ACCEPTED' ? 0 : receipt.effects?.completedOperations;
+    if (typeof receipt.effects?.contextId !== 'string' || !receipt.effects.contextId.length || receipt.effects.contextId.length > 256 ||
+        !Number.isSafeInteger(operations) || operations < 0) throw Error('invalid_native_context');
+    if (this.#context.receipt && this.#context.receipt.effects.contextId !== receipt.effects.contextId) throw Error('invalid_native_context');
+    this.#context.receipt = copyMessage(receipt);
+    this.#context.observedUnready = false;
+    this.#context.nativeOperations = Math.max(this.#context.nativeOperations ?? 0, operations);
   }
   async #recover(intent) {
     let response;

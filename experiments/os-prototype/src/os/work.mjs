@@ -6,7 +6,7 @@ import { executionPolicy } from './execution-policy.mjs';
 
 const name = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-export const workPolicy = Object.freeze({ version: 'os-work-v2', supplyRetryMillis: 5000, recurringRetryMillis: 5000 });
+export const workPolicy = Object.freeze({ version: 'os-work-v3', supplyRetryMillis: 5000, recurringRetryMillis: 5000 });
 const admissionRejections = new Set(['operation_not_granted', 'invocation_closing', 'invocation_unknown', 'stale_observation',
   'resource_reconciling', 'resource_unavailable', 'asset_unavailable', 'capacity_unavailable', 'target_unavailable',
   'container_changed', 'invalid_transfer', 'unsupported_transfer_item', 'ambiguous_item_components', 'supply_offer_stale',
@@ -47,8 +47,9 @@ export class WorkService {
     this.#rules = new Map();
     for (const [operation, rule] of Object.entries(copied)) {
       const native = catalog.get(operation);
-      // Context retention and fishing handover require their own native adapters before registration here.
-      if (!native || !name(native.grant) || !object(rule) || rule.kind !== 'land' || rule.context !== null ||
+      // Context declarations must resolve to a trusted adapter, never a guest native identity.
+      if (!native || !name(native.grant) || !object(rule) || rule.kind !== 'land' ||
+          (rule.context !== null && (!name(rule.context) || rule.context !== native.contextKey || typeof native.prepareContext !== 'function')) ||
           !Number.isInteger(rule.priority) || rule.priority < 0 || rule.priority > 2_147_483_647 ||
           Object.keys(rule).some(key => !['priority', 'kind', 'context'].includes(key))) throw Error('invalid_work_rules');
       this.#rules.set(operation, { ...rule, grant: native.grant });
@@ -60,6 +61,7 @@ export class WorkService {
     this.#maximumWork = executionPolicy.invocations * executionPolicy.offers - (supplies?.maximumOffers ?? 0);
     this.#invocations = invocations; this.#activities = activities; this.#epoch = epoch; this.#now = now; this.#trace = trace;
     this.#policy = new SchedulingPolicy({ epoch });
+    trace?.onFailure(error => { this.#fault ??= String(error.message).slice(0, 256); });
   }
   request(owner, sequence, value) {
     if (this.#fault) throw Error('work_service_failed');
@@ -211,17 +213,40 @@ export class WorkService {
       this.#launch(record, () => this.#activities.poll(), false);
       return { kind: 'wait', reason: 'activity_in_progress' };
     }
-    if (this.#fault) return { kind: 'wait', reason: 'work_service_failed' };
     if (this.#invocations.activity()) return { kind: 'wait', reason: 'player_owned' };
+    const context = this.#activities.context();
+    if (context && context.phase !== 'ready') {
+      this.#launchContext(() => this.#activities.pollContext());
+      return { kind: 'wait', reason: 'context_not_ready' };
+    }
+    if (this.#fault) return { kind: 'wait', reason: 'work_service_failed' };
     this.#updateSchedule();
-    const decision = this.#policy.decide({ authority });
+    const decision = this.#policy.decide({ authority, context });
+    if (decision.kind === 'close_context' && decision.reason === 'no_feasible_work') {
+      // Entry/completion invalidates authorship. Give live duties a chance to reevaluate
+      // the new material view; this never admits old declarations or defeats the visit budget.
+      const pending = this.#updateSchedule(true).some(offer => offer.context === context.id && offer.readiness === 'ready') ||
+        [...this.#requests.values()].some(record => record.recurring && record.desired && record.phase === 'finished' &&
+          record.rule.context === context.id && !this.#deferral(record) && record.offerBasis.generation !== this.#observationGeneration);
+      this.#updateSchedule();
+      if (pending) return { kind: 'wait', reason: 'context_authorship_pending' };
+    }
+    if (decision.kind === 'close_context') {
+      this.#trace?.record('work.context_closing', { decision, context });
+      this.#launchContext(() => this.#activities.pollContext({ close: true }));
+    }
     if (decision.kind === 'select') {
       const record = this.#get(decision.offerId);
+      if (decision.context !== null && !context) {
+        this.#trace?.record('work.context_entering', { decision, owner: record.owner, basis: record.assessment });
+        this.#launchContext(() => this.#activities.retainContext({ owner: record.owner, ...record.request, workId: record.id }), record);
+        return { ...decision, kind: 'enter_context' };
+      }
       this.#trace?.record('work.selected', { decision, owner: record.owner, basis: record.assessment });
       record.phase = 'admitting'; record.selection = copyMessage(decision);
       this.#observationGeneration++;
-      this.#launch(record, () => this.#activities.admit(record.supply ? { supplyOfferId: record.id, workId: record.id }
-        : { owner: record.owner, operation: record.request.operation, arguments: record.request.arguments, workId: record.id }), true);
+      this.#launch(record, () => this.#activities.admit(record.supply ? { supplyOfferId: record.id, workId: record.id, context: record.rule.context }
+        : { owner: record.owner, ...record.request, workId: record.id }), true);
     }
     return decision;
   }
@@ -264,7 +289,22 @@ export class WorkService {
       recurringOffers: this.#budgetedRequests().filter(record => record.recurring).length, retiringOffers: this.#requests.size - this.#budgetedRequests().length,
       supplyDeferrals: [...this.#supplyDeferrals.values()].map(value => ({ ...value })),
       recurringDeferrals: [...this.#recurringDeferrals.values()].map(value => ({ ...value })),
-      active: this.#active, busy: this.#job !== null, fault: this.#fault, scheduling: this.#policy.state() };
+      active: this.#active, context: this.#activities.context(), busy: this.#job !== null, fault: this.#fault, scheduling: this.#policy.state() };
+  }
+  #launchContext(operation, record) {
+    this.#invalidate();
+    this.#job = Promise.resolve().then(operation).catch(error => {
+      const reason = String(error?.message ?? 'context_failed').slice(0, 256);
+      if (record && admissionRejections.has(reason) && !this.#activities.context()) {
+        record.phase = 'finished'; record.result = { status: 'rejected', reason };
+        if (record.recurring) this.#deferRecurring(record, reason);
+        if (record.supply) this.#defer(record, reason);
+      } else {
+        this.#fault = reason;
+        if (record && this.#running(record.owner)) this.#invocations.failed(record.owner, reason);
+      }
+      this.#trace?.record('work.context_failed', { reason, context: this.#activities.context() }, { cleanup: true });
+    }).finally(() => { this.#job = null; this.#invalidate(); this.poll(); });
   }
   #launch(record, operation, admitting) {
     this.#job = Promise.resolve().then(operation).then(result => {
@@ -289,6 +329,11 @@ export class WorkService {
         this.#defer(record, record.result.reason ?? status);
     }).catch(error => {
       const reason = String(error?.message ?? 'work_failed').slice(0, 256), active = this.#invocations.activity();
+      if (admitting && reason === 'context_budget' && !active) {
+        record.phase = 'queued'; this.#invalidate();
+        this.#trace?.record('work.context_budget', { id: record.id, context: this.#activities.context() }, { cleanup: true });
+        return;
+      }
       const owners = record.supply?.owners ?? [record.owner];
       // Shared subscribers can outlive the proposer, including a later join after the admission reply.
       if (active && (active.id === record.activityId || [...active.subscribers, ...active.cleanupOwners].some(owner => owners.includes(owner)))) {
@@ -312,7 +357,7 @@ export class WorkService {
       const authored = !record.recurring || record.offerBasis.generation === this.#observationGeneration &&
         record.offerBasis.captureId === seen?.captureId && record.offerBasis.captureSequence === seen?.captureSequence;
       return { id: record.id, roots: record.supply?.consumers ?? [record.consumer], kind: record.rule.kind,
-        priority: Math.max(record.rule.priority, record.supply?.priority ?? 0), context: null,
+        priority: Math.max(record.rule.priority, record.supply?.priority ?? 0), context: record.rule.context,
         readiness: this.#deferral(record) ? 'blocked' : current && (authored || forProgress) ? seen.readiness : 'unknown' };
     });
     this.#policy.update({ roots: [...this.#roots], offers });
@@ -326,7 +371,8 @@ export class WorkService {
       if (this.#supplyRequests.has(supply.id)) continue;
       this.#trace?.record('supply.proposed', supply);
       this.#supplyRequests.set(supply.id, { id: supply.id, owner: supply.owner, consumer: supply.anchor, supply,
-        request: { operation: supply.operation, arguments: supply.arguments, context: null }, rule: this.#rules.get(supply.operation), phase: 'queued', assessment: null });
+        request: { operation: supply.operation, arguments: supply.arguments, context: this.#rules.get(supply.operation).context },
+        rule: this.#rules.get(supply.operation), phase: 'queued', assessment: null });
       for (const root of supply.consumers) this.#roots.add(root);
     }
   }
@@ -345,10 +391,11 @@ export class WorkService {
   }
   #supplyKey(record) { return JSON.stringify([record.supply.rule, record.supply.anchor]); }
   #declaration(owner, request) {
-    if (!object(request) || !name(request.operation) || !object(request.arguments) || request.context !== null ||
+    if (!object(request) || !name(request.operation) || !object(request.arguments) || (request.context !== null && !name(request.context)) ||
         Object.keys(request).some(key => !['operation', 'arguments', 'context'].includes(key))) throw Error('invalid_work');
     const rule = this.#rules.get(request.operation);
     if (!rule) throw Error('operation_unknown');
+    if (request.context !== rule.context) throw Error('invalid_work_context');
     const { consumer } = this.#invocations.authorize(owner, rule.grant);
     return { request, rule, consumer, digest: contentDigest(request) };
   }

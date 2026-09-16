@@ -17,6 +17,13 @@ export class ContainerTransfer {
   }
   get grant() { return `container:${this.#scope}`; }
   get nativeOperation() { return 'transfer_container'; }
+  get contextKey() { return this.grant; }
+  prepareContext(frame) {
+    const window = frame.facts?.window;
+    if (!window?.open || window.windowId !== this.#windowId || !Number.isSafeInteger(window.syncId) || window.syncId < 0 || window.cursor?.count !== 0)
+      throw Error('container_changed');
+    return { operation: 'retain_container', arguments: { windowId: window.windowId, syncId: window.syncId } };
+  }
   get availabilitySource() { return materialAvailabilitySource; }
   resource(side, itemId, variant) {
     if (!['container', 'player'].includes(side)) throw Error('invalid_item_identity');
@@ -72,7 +79,8 @@ export class ContainerTransfer {
         receipt.released === true && effects.accountingComplete === true && effects.releaseEvidence?.verified === true)
       return { released: true, accountingComplete: true, consumed: {}, produced: {}, nativeId: receipt.id,
         nativeState: receipt.state, releaseEvidence: effects.releaseEvidence };
-    if (receipt.released !== true && !Object.keys(effects).length)
+    if (receipt.released !== true && (!Object.keys(effects).length || receipt.state === 'ACCEPTED' &&
+        Object.keys(effects).every(key => key === 'contextId') && text(effects.contextId)))
       return { released: false, accountingComplete: false, consumed: {}, produced: {} };
     if (!count(effects.transferred) || effects.quantity !== prepared.quantity || effects.remaining !== prepared.quantity - effects.transferred ||
         effects.transferred > prepared.quantity) throw Error('invalid_transfer_accounting');

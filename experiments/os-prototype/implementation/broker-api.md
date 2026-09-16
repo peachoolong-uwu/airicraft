@@ -24,7 +24,7 @@ One shared activity accepts up to 32 explicit deliveries plus twelve target shar
 
 When the coordinator is owned by a `WorkService`, route in-flight joins through `WorkService.join` so the scheduling policy credits each newly participating consumer exactly once. The coordinator's lower-level `join` remains available for standalone broker use without that scheduling policy.
 
-The first domain adapter is `ContainerTransfer`, bound to one currently open window. It projects component-aware stock, destination capacity and exclusive targets into the ledger, and gives native work a quantity allowance. Mixed source variants are rejected because this native operation currently selects by item ID. Each transfer closes its owned window; shared physical visits and opening contexts are later work.
+The first domain adapter is `ContainerTransfer`, bound to one currently open window. It projects component-aware stock, destination capacity and exclusive targets into the ledger, and gives native work a quantity allowance. Mixed source variants are rejected because this native operation currently selects by item ID. A standalone transfer closes its window. The [host context extension](host-context-api.md) can retain that window across separate activities, with a distinct durable cleanup obligation. Navigation and opening remain later work.
 
 These objects are trusted host interfaces. Passing them directly into a guest would bypass the intended capability and ownership boundary. The runner layer must translate bounded typed guest effects through these interfaces.
 

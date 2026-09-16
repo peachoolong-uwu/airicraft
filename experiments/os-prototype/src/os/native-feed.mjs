@@ -99,6 +99,7 @@ export class NativeObservationFeed {
       throw Error('world_not_ready');
     if (this.#age(frame) >= 2000) throw Error('observation_stale');
     if (generation !== this.#work.observationGeneration) return false;
+    this.#effects.observeContext(frame, response.authority);
     const { receivedAtHostMillis, captureAgeUpperBoundMillis, ...identity } = frame;
     const signature = contentDigest(identity, 524_288, { maximumNodes: 8192 });
     if (this.#capture && frame.captureSequence <= this.#capture.sequence) {
@@ -184,7 +185,9 @@ export class NativeObservationFeed {
   }
   #quiescent() {
     const state = this.#work.state();
-    return !state.busy && !state.active && !this.#invocations.activity() && !this.#effects.state().unresolved;
+    const effects = this.#effects.state();
+    return !state.busy && !state.active && !this.#invocations.activity() && !effects.operationUnresolved &&
+      (!effects.unresolved || effects.context?.phase === 'ready');
   }
   #current() {
     return !this.#closed && !this.#fault && this.#latest !== null && this.#age(this.#latest.frame) < 2000 &&

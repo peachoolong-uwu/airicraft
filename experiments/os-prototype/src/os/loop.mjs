@@ -12,7 +12,7 @@ const rejections = new Set([
   'child_result_capacity', 'live_invocation_capacity', 'invocation_depth', 'message_limit', 'resource_unknown',
   'supply_method_unavailable', 'invalid_target', 'invalid_demand', 'target_capacity', 'demand_capacity',
   'invocation_demand_capacity', 'demand_conflict', 'demand_retired', 'stale_observation',
-  'invalid_work', 'operation_unknown', 'work_conflict', 'work_retired', 'work_capacity', 'invocation_work_capacity',
+  'invalid_work', 'invalid_work_context', 'operation_unknown', 'work_conflict', 'work_retired', 'work_capacity', 'invocation_work_capacity',
   'worker_definition_required', 'worker_effects_forbidden', 'invalid_worker_request', 'worker_request_conflict',
   'worker_request_retired', 'worker_outstanding', 'worker_evidence_unavailable', 'invalid_worker_fingerprint'
 ]);

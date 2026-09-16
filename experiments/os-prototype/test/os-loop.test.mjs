@@ -17,11 +17,12 @@ import { ActivityCoordinator } from '../src/os/activities.mjs';
 import { EffectBroker } from '../src/os/effects.mjs';
 import { EffectJournal } from '../src/os/journal.mjs';
 import { NativeContainer } from './fixtures/native-container.mjs';
+import { NativeContextContainer } from './fixtures/native-context-container.mjs';
 import { WorkService } from '../src/os/work.mjs';
 import { SupplyPlanner } from '../src/os/supply-planner.mjs';
 import { NativeObservationFeed } from '../src/os/native-feed.mjs';
 
-async function fixture(run, { workEnabled = false, suppliesEnabled = false, feedEnabled = false } = {}) {
+async function fixture(run, { workEnabled = false, suppliesEnabled = false, feedEnabled = false, contextEnabled = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'airicraft-loop-'));
   const library = await DefinitionLibrary.open(directory), invocations = new InvocationBroker(), runners = new RunnerPool({ invocations });
   const grants = ['observe:wheat', 'observe:sheep', 'resource:wheat', 'container:home'];
@@ -35,7 +36,7 @@ async function fixture(run, { workEnabled = false, suppliesEnabled = false, feed
     resources: { wheat: { key: resourceKey, grant: 'resource:wheat', methods: ['chest'], priority: 12 } } });
   let work, workNative, workJournal, workEffects, feed;
   if (workEnabled || suppliesEnabled) {
-    workNative = new NativeContainer({ itemId: 'minecraft:wheat', now });
+    workNative = new (contextEnabled ? NativeContextContainer : NativeContainer)({ itemId: 'minecraft:wheat', now });
     workJournal = await EffectJournal.open(join(directory, 'work-effects.sqlite'));
     workEffects = new EffectBroker({ native: workNative, journal: workJournal, expectedWorld: 'fixture' });
     await workEffects.start();
@@ -43,7 +44,7 @@ async function fixture(run, { workEnabled = false, suppliesEnabled = false, feed
       rules: { wheat: { resource: resourceKey, operation: 'chest', arguments: { direction: 'withdraw', itemId: 'minecraft:wheat' }, maximum: 64 } } }) : undefined;
     work = new WorkService({ invocations, operations, supplies, epoch: 'world', now,
       activities: new ActivityCoordinator({ invocations, ledger, effects: workEffects, operations, supplies }),
-      rules: { chest: { priority: 12, kind: 'land', context: null } } });
+      rules: { chest: { priority: 12, kind: 'land', context: contextEnabled ? 'container:home' : null } } });
     if (feedEnabled) {
       feed = new NativeObservationFeed({ native: workNative, effects: workEffects, work, invocations, ledger, resources, waits, operations,
         epoch: 'world', expectedWorld: 'fixture', now, views: { wheat: { location: 'player', resources: { wheat: resourceKey } } } });
@@ -85,6 +86,29 @@ async function fixture(run, { workEnabled = false, suppliesEnabled = false, feed
 }
 
 const childSource = 'function* main(os, input) { const result = yield os.wait({scope:input,path:["mature"],equals:true}); return {scope:input,wait:result.status}; }';
+
+test('independent sandboxed duties reuse a visit and withdraw after fresh native stock satisfies them', async () => fixture(async ({
+  definition, install, until, workNative, workJournal, work, feed, invocations, loop
+}) => {
+  const source = 'function offers(os,input,view) { return view.scopes[0].frame.facts[0].value<2 ? [os.work("chest",{direction:"withdraw",itemId:"minecraft:wheat",quantity:1},"container:home")] : []; }';
+  const duty = await definition(source, { mode: 'offers' });
+  const a = await install(duty), b = await install(duty);
+  await until(() => workNative.context !== null);
+  workNative.ready();
+  await until(() => workNative.requests.length === 2);
+  workNative.progress(1, 1, true);
+  await until(() => workNative.requests.length === 3);
+  workNative.progress(1, 1, true);
+  await until(() => workNative.context?.state === 'RECONCILING');
+  assert.equal(workNative.requests.filter(request => request.operation === 'retain_container').length, 1);
+  assert.equal(workNative.playerQuantity, 2);
+  workNative.closeContext(); await until(() => work.state().context === null && !work.state().busy && !work.state().active);
+  assert.deepEqual(await workJournal.unfinished(), []);
+  assert.equal(invocations.inspect(a.rootId).phase, 'running');
+  assert.equal(invocations.inspect(b.rootId).phase, 'running');
+  assert.equal(work.state().fault, null);
+  feed.close(); loop.close();
+}, { workEnabled: true, feedEnabled: true, contextEnabled: true }));
 
 test('real sandboxed growth waits leave an unrelated root free to complete', async () => fixture(async ({ definition, install, publish, until, loop, invocations, waits, host }) => {
   publish('wheat', 1, false);

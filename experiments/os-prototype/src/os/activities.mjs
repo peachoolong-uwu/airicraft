@@ -1,6 +1,7 @@
 import { copyMessage } from './value.mjs';
 import { nativeIdKey } from './native-id.mjs';
 import { supplyOperations } from './supplies.mjs';
+import { schedulingPolicy } from './scheduling.mjs';
 
 /** One trusted admission path joins invocation ownership, resource claims and native effects. */
 export class ActivityCoordinator {
@@ -22,6 +23,40 @@ export class ActivityCoordinator {
     this.#supplies = supplies;
     this.#trace = trace;
     trace?.onFailure(error => this.#drain(error));
+  }
+  context() { return this.#effects.context(); }
+  async retainContext(request) {
+    if (this.#fault) throw Error('coordinator_failed');
+    if (this.#busy || this.#active || this.#invocations.activity()) throw Error('player_owned');
+    request = copyMessage(request);
+    const operation = this.#operations.get(request.operation);
+    if (!operation || request.context !== operation.contextKey || typeof operation.prepareContext !== 'function') throw Error('invalid_context');
+    this.#busy = true;
+    try {
+      const receipt = await this.#effects.retainContext(request.context, frame => {
+        const owner = this.#invocations.authorize(request.owner, operation.grant);
+        const prepared = operation.prepare(frame, request.arguments);
+        this.#ledger.observe(prepared.observation);
+        this.#ledger.assess(owner.consumer, prepared.bundle, prepared.observation.revision);
+        return { ...operation.prepareContext(frame), definition: 'os:context', invocation: `context:${++this.#sequence}`,
+          provenance: { context: request.context, requestedBy: request.owner, workId: request.workId } };
+      });
+      if (receipt.released) throw Error(receipt.reason ?? 'context_entry_failed');
+      return receipt;
+    } catch (error) { if (this.#effects.state().unresolved) await this.#drain(error); throw error; }
+    finally { this.#busy = false; }
+  }
+  async pollContext({ close = false } = {}) {
+    if (this.#busy || this.#active || this.#invocations.activity()) throw Error('player_owned');
+    this.#busy = true;
+    try {
+      const closing = close || this.#effects.context()?.phase === 'exiting';
+      const receipt = await (close ? this.#effects.closeContext() : this.#effects.pollContext());
+      if (receipt?.state === 'FAILED' || receipt?.effects?.cleanupFailure) throw Error(receipt.reason ?? 'context_failed');
+      if (!closing && receipt && !['ACCEPTED', 'RUNNING'].includes(receipt.state)) throw Error('context_revoked');
+      return receipt;
+    } catch (error) { await this.#drain(error); throw error; }
+    finally { this.#busy = false; }
   }
   async admit(request) {
     const attempt = { request: null, definition: null, consumer: null, basis: null, observation: null, bundle: null };
@@ -45,16 +80,20 @@ export class ActivityCoordinator {
     if (request.workId !== undefined && (typeof request.workId !== 'string' || !request.workId.length || request.workId.length > 256)) throw Error('invalid_activity');
     let proposal = null;
     if (request.supplyOfferId !== undefined) {
-      if (!this.#supplies || typeof request.supplyOfferId !== 'string' || Object.keys(request).some(key => !['supplyOfferId', 'workId'].includes(key)))
+      if (!this.#supplies || typeof request.supplyOfferId !== 'string' || Object.keys(request).some(key => !['supplyOfferId', 'workId', 'context'].includes(key)))
         throw Error('invalid_supply_activity');
       proposal = this.#supplies.resolve(request.supplyOfferId);
       request = { ...request, owner: proposal.owner, operation: proposal.operation, arguments: proposal.arguments, deliveries: proposal.deliveries };
     }
     const operation = this.#operations.get(request.operation);
     if (!operation) throw Error('operation_unknown');
+    if (request.context != null && request.context !== operation.contextKey) throw Error('invalid_context');
     this.#busy = true;
     try {
       const receipt = await this.#effects.execute(frame => {
+        const context = this.#effects.context();
+        if (context && (context.operations >= schedulingPolicy.contextOperations || context.elapsedTicks >= schedulingPolicy.contextTicks))
+          throw Error('context_budget');
         attempt.basis = { epoch: frame.epoch, captureId: frame.captureId };
         const owner = this.#invocations.authorize(request.owner, operation.grant);
         attempt.definition = owner.definition; attempt.consumer = owner.consumer;
@@ -104,12 +143,12 @@ export class ActivityCoordinator {
           observation: prepared.observation, bundle: prepared.bundle, deliveries, supplyId, ...supplyProvenance, ...(request.workId ? { workId: request.workId } : {}) });
         return { definition: owner.definition, invocation: request.owner, operation: operation.nativeOperation, arguments: prepared.arguments,
           provenance: { activityId: id, consumer: owner.consumer, bundle: prepared.bundle, deliveries, ...supplyProvenance, ...(request.workId ? { workId: request.workId } : {}) } };
-      });
+      }, { context: request.context ?? null });
       return this.#account(receipt);
     } catch (error) {
       if (this.#active) {
         const state = this.#effects.state();
-        if (!state.unresolved && state.last === null) this.#settle({ released: true, accountingComplete: true, consumed: {}, produced: {}, disposition: 'not_submitted' });
+        if (!state.operationUnresolved && state.last === null) this.#settle({ released: true, accountingComplete: true, consumed: {}, produced: {}, disposition: 'not_submitted' });
         else await this.#drain(error);
       }
       throw error;

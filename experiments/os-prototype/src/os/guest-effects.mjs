@@ -21,7 +21,7 @@ export function guestEffect(value) {
   for (const key of ['definition', 'resource', 'operation']) if (Object.hasOwn(effect, key) && !name(effect[key])) throw Error('invalid_effect');
   if (Object.hasOwn(effect, 'quantity') && (!Number.isSafeInteger(effect.quantity) || effect.quantity < (effect.kind === 'target' ? 0 : 1))) throw Error('invalid_effect');
   if (effect.kind === 'demand' && (!Array.isArray(effect.methods) || effect.methods.length > 32 || effect.methods.some(method => !name(method)))) throw Error('invalid_effect');
-  if (effect.kind === 'work' && effect.context !== null && !object(effect.context)) throw Error('invalid_effect');
+  if (effect.kind === 'work' && effect.context !== null && !name(effect.context) && !object(effect.context)) throw Error('invalid_effect');
   return effect;
 }
 
