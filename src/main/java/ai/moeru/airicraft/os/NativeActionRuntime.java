@@ -339,10 +339,12 @@ public final class NativeActionRuntime {
 		publishAvailability();
 	}
 	private void publishAvailability() {
-		if (world != null) port.availability(new AvailabilityGate(world, lease, active == null && context == null, lastHeartbeat));
+		if (world != null) port.availability(new AvailabilityGate(world, lease,
+			active == null && (context == null || contextReady(context)), lastHeartbeat, context == null ? null : context.contextId));
 	}
 
-	public record AvailabilityGate(World world, Lease lease, boolean idle, long heartbeatAtNanos) {}
+	/** Idle describes an effect boundary; a ready context still retains exclusive player ownership. */
+	public record AvailabilityGate(World world, Lease lease, boolean idle, long heartbeatAtNanos, String contextId) {}
 
 	public interface Port {
 		World world();
@@ -432,7 +434,7 @@ public final class NativeActionRuntime {
 		payload.addProperty("captureId", captureId);
 		payload.addProperty("operation", operation);
 		payload.add("arguments", arguments);
-		byte[] bytes = new GsonBuilder().disableHtmlEscaping().create().toJson(sorted(payload)).getBytes(StandardCharsets.UTF_8);
+		byte[] bytes = new GsonBuilder().disableHtmlEscaping().serializeNulls().create().toJson(sorted(payload)).getBytes(StandardCharsets.UTF_8);
 		try {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
 		} catch (NoSuchAlgorithmException impossible) {

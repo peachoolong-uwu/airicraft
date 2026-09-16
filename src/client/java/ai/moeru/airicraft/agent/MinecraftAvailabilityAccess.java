@@ -38,7 +38,7 @@ final class MinecraftAvailabilityAccess {
 		if (source == null || !source.binding.equals(binding)) source = new Source(binding);
 		State previous = source.state;
 		boolean changed = previous == null || !previous.gate.world().equals(gate.world()) || !Objects.equals(previous.gate.lease(), gate.lease())
-			|| previous.gate.idle() != gate.idle() || !Objects.equals(previous.window, window);
+			|| previous.gate.idle() != gate.idle() || !Objects.equals(previous.gate.contextId(), gate.contextId()) || !Objects.equals(previous.window, window);
 		long revision = previous == null ? 1 : previous.revision + (changed ? 1 : 0);
 		// Publish first: a server callback can never resume an older gate after its invalidation.
 		source.state = new State(gate, window, revision, System.nanoTime());
@@ -56,6 +56,7 @@ final class MinecraftAvailabilityAccess {
 		result = JSON.toJsonTree(snapshot).getAsJsonObject();
 		result.addProperty("source", "native_stable_material_ticks");
 		result.addProperty("gateRevision", state.revision);
+		result.addProperty("contextId", state.gate.contextId());
 		if (inventory == null || state.gate.lease() == null || !snapshot.available() || !Objects.equals(snapshot.stamp(), stamp(state, window, inventory))) {
 			result.addProperty("available", false);
 			result.add("fromTick", com.google.gson.JsonNull.INSTANCE);
@@ -67,7 +68,8 @@ final class MinecraftAvailabilityAccess {
 	private static String stamp(State state, Window window, List<Slot> inventory) {
 		var material = JSON.toJsonTree(Map.of("world", state.gate.world(), "lease", state.gate.lease(), "gateRevision", state.revision,
 			"window", window, "inventory", Map.of("available", true, "slots", inventory))).getAsJsonObject();
-		return NativeActionRuntime.fingerprint("eligibility-v1", "material", material);
+		material.addProperty("contextId", state.gate.contextId());
+		return NativeActionRuntime.fingerprint("eligibility-v2", "material", material);
 	}
 
 	private static final class Source implements NativeAvailabilityRuntime.Sampler {

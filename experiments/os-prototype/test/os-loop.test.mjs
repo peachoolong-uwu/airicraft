@@ -301,7 +301,9 @@ test('an installed recurring offer duty repeats only from fresh observations and
   await until(() => workNative.submissions === 2 && !work.state().busy);
   workNative.progress(2, 2, true); workNative.playerQuantity = 4; workNative.quantity = 0; workNative.windowOpen = false;
   await until(() => invocations.inspect(waiter.rootId).outcome && work.state().recurringOffers === 0);
-  assert.equal(invocations.inspect(waiter.rootId).outcome.value, 'met');
+  const outcome = invocations.inspect(waiter.rootId).outcome;
+  assert.equal(outcome.status, 'success', JSON.stringify(outcome));
+  assert.equal(outcome.value, 'met');
   assert.equal(invocations.inspect(duty.rootId).phase, 'running');
   assert.equal(workNative.submissions, 2);
   assert.deepEqual(await workJournal.unfinished(), []);

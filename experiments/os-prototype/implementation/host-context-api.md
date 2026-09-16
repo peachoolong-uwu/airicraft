@@ -24,6 +24,6 @@ Shutdown revokes authority before waiting for outstanding transport and reconcil
 
 ## Qualification limits
 
-The native material-availability source currently reports unavailable while a context is held. Shared work selection still uses fresh resource/readiness checks, but root waiting age does not gain that interval. This implementation does not infer eligible age from the visit clock. Context-aware native eligibility remains required before claiming fairness or efficiency for mixed duties.
+The native [material-availability source](availability-api.md) can cover the quiet boundary between operations in a confirmed ready visit. Its proof binds the native context identity and lease. Entry, an outstanding child and exit remain excluded. Root waiting age uses that covered material interval and fresh resource/readiness checks; it is never inferred from the visit clock. Feasibility during physical work and for the remaining duty types still needs native coverage before mixed-duty fairness or efficiency can be claimed.
 
 Focused tests use real host modules and SQLite with a simulated native transport; supervised QuickJS duties exercise the guest declaration path. Those tests establish composition and ownership behavior, not Minecraft production throughput. Live qualification and review evidence are recorded separately in `host-context-review.md` and `STATUS.md`.

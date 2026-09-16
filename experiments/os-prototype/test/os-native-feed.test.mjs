@@ -19,12 +19,12 @@ import { NativeContainer } from './fixtures/native-container.mjs';
 import { contentDigest } from '../src/os/content.mjs';
 
 function availability(native) {
-  const proof = { available: true, source: 'native_stable_material_ticks', clockId: 'material-clock', gateRevision: 1, fromTick: 0, throughTick: 0 };
+  const proof = { available: true, source: 'native_stable_material_ticks', clockId: 'material-clock', gateRevision: 1, fromTick: 0, throughTick: 0, contextId: null };
   native.beforeReply = async (name, response) => {
     if (name !== 'os_observe') return;
     const frame = response.frame;
-    const stamp = contentDigest({ captureId: 'eligibility-v1', operation: 'material', arguments: {
-      world: frame.world, lease: native.lease, gateRevision: proof.gateRevision, window: frame.facts.window, inventory: frame.facts.inventory
+    const stamp = contentDigest({ captureId: 'eligibility-v2', operation: 'material', arguments: {
+      world: frame.world, lease: native.lease, gateRevision: proof.gateRevision, contextId: proof.contextId ?? null, window: frame.facts.window, inventory: frame.facts.inventory
     } }, 524_288, { maximumNodes: 8192 }).slice(7);
     frame.facts.availability = { ...proof, fromTick: proof.available ? proof.fromTick : null, stamp: proof.available ? stamp : null };
   };
@@ -205,7 +205,9 @@ for (const [label, corrupt, reason] of [
   ['clock replacement', proof => { proof.clockId = 'different-clock'; }, 'eligibility_clock_changed'],
   ['clock regression', proof => { proof.throughTick = 0; }, 'eligibility_clock_regressed'],
   ['invalid interval', proof => { proof.fromTick = 500; }, 'invalid_native_availability'],
-  ['unsafe counter', proof => { proof.throughTick = Number.MAX_SAFE_INTEGER + 1; }, 'invalid_native_availability']
+  ['unsafe counter', proof => { proof.throughTick = Number.MAX_SAFE_INTEGER + 1; }, 'invalid_native_availability'],
+  ['foreign context', proof => { proof.contextId = 'unowned-context'; }, 'availability_context_mismatch'],
+  ['missing context binding', proof => { delete proof.contextId; }, 'invalid_native_availability']
 ]) test(`availability rejects ${label} and revokes the lease`, async () => fixture(async ({ feed, native, work, root }) => {
   const proof = availability(native);
   work.request(root(), 1, transferRequest);
@@ -214,6 +216,19 @@ for (const [label, corrupt, reason] of [
   await assert.rejects(feed.refresh(), new RegExp(reason));
   assert.equal(native.lease, null);
   assert.equal(native.submissions, 0);
+}));
+
+for (const contextId of [undefined, null]) test(`a present context with ${contextId} identity cannot borrow a context-free proof`, async () => fixture(async ({ feed, native }) => {
+  availability(native);
+  const attachProof = native.beforeReply;
+  native.beforeReply = async (name, response) => {
+    await attachProof(name, response);
+    if (name === 'os_observe') response.authority = { epoch: 'world', lease: native.lease, active: null,
+      context: { id: { epoch: 'world', generation: native.lease.generation, sequence: 1 }, state: 'RUNNING', released: false,
+        effects: { contextReady: true, ...(contextId === undefined ? {} : { contextId }) } } };
+  };
+  await assert.rejects(feed.refresh(), /availability_context_mismatch/);
+  assert.equal(native.lease, null);
 }));
 
 test('native proof cannot authenticate altered material and missing proof never ages a ready request', async () => fixture(async ({ feed, native, work, root }) => {

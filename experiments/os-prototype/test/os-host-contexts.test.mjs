@@ -15,6 +15,7 @@ import { WorkService } from '../src/os/work.mjs';
 import { NativeObservationFeed } from '../src/os/native-feed.mjs';
 import { ConditionWaits } from '../src/os/waits.mjs';
 import { DecisionTrace } from '../src/os/trace.mjs';
+import { contentDigest } from '../src/os/content.mjs';
 
 const contextIntent = { definition: 'os:context', invocation: 'os:visit', operation: 'retain_container', arguments: { windowId: 'home-window', syncId: 1 } };
 const childIntent = { definition: 'supply', invocation: 'caller', operation: 'transfer_container', arguments: { quantity: 2 } };
@@ -112,6 +113,47 @@ async function hostFixture(run, { trace } = {}) {
     finally { feed.close(); }
   }, { trace });
 }
+
+test('waiting duties earn covered age within a ready visit without crediting entry or child work', async () => hostFixture(async ({
+  native, work, feed, root, request, pulse
+}) => {
+  const proof = { source: 'native_stable_material_ticks', clockId: 'material-clock', available: false,
+    gateRevision: 1, fromTick: null, throughTick: 0, contextId: null };
+  native.beforeReply = async (name, response) => {
+    if (name !== 'os_observe') return;
+    const frame = response.frame;
+    const stamp = contentDigest({ captureId: 'eligibility-v2', operation: 'material', arguments: {
+      world: frame.world, lease: native.lease, gateRevision: proof.gateRevision, contextId: proof.contextId,
+      window: frame.facts.window, inventory: frame.facts.inventory
+    } }, 524_288, { maximumNodes: 8192 }).slice(7);
+    frame.facts.availability = { ...proof, stamp: proof.available ? stamp : null };
+  };
+  const age = owner => work.state().scheduling.roots.find(record => record.id === owner)?.ageTicks ?? 0;
+  const a = root(), b = root(), outside = root();
+  request(a); request(a, 2); request(b); request(outside, 1, 'outside');
+  await feed.refresh(); await pulse();
+  proof.throughTick = 100;
+  await feed.refresh();
+  assert.equal(age(a), 0, 'entry is not a ready boundary');
+  native.ready(); await pulse();
+  Object.assign(proof, { available: true, fromTick: 100, contextId: native.context.effects.contextId, gateRevision: 2 });
+  await feed.refresh();
+  proof.throughTick = 120; await feed.refresh();
+  assert.equal(age(a), 20, 'duplicate offers count the root once');
+  assert.equal(age(b), 20);
+  assert.equal(age(outside), 20, 'ready outside work can wait for the visit to yield');
+  await feed.refresh(); assert.equal(age(b), 20, 'paused native coverage adds no age');
+  assert.equal((await pulse()).kind, 'select');
+  Object.assign(proof, { available: false, fromTick: null, throughTick: 200, gateRevision: 3 });
+  await feed.refresh();
+  assert.equal(age(a), 0, 'only admitted service resets its root');
+  assert.equal(age(b), 20, 'child work cannot be converted to covered idle time');
+  native.progress(1, 1, true); await pulse();
+  Object.assign(proof, { available: true, fromTick: 200, throughTick: 210, gateRevision: 4 });
+  await feed.refresh(); assert.equal(age(b), 20, 'a new material/claim basis starts a new interval');
+  proof.throughTick = 220; await feed.refresh();
+  assert.equal(age(b), 30); assert.equal(age(outside), 30);
+}));
 
 test('the host automatically shares one visit across independent roots and closes it after their work', async () => hostFixture(async ({
   native, effects, journal, invocations, work, feed, root, request, pulse

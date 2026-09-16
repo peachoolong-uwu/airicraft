@@ -16,6 +16,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NativeActionRuntimeTest {
 	@Test
+	void materialFingerprintsPreserveExplicitNullFields() {
+		var args = com.google.gson.JsonParser.parseString("{\"nested\":{\"state\":null},\"contextId\":null,\"items\":[null,{\"variant\":null}]}").getAsJsonObject();
+		// SHA-256 of the canonical JSON envelope, including its explicit object and array nulls.
+		assertEquals("c80e0934f5882dcd4535fbd04feef34af80ab2fea8c4ba59b4ca1e902df74cd9",
+			NativeActionRuntime.fingerprint("frame-a", "material", args));
+		var omitted = args.deepCopy(); omitted.remove("contextId");
+		assertNotEquals(NativeActionRuntime.fingerprint("frame-a", "material", args),
+			NativeActionRuntime.fingerprint("frame-a", "material", omitted));
+	}
+
+	@Test
 	void rejectedRequestsCannotEvictAnActiveOrJustCompletedOperation() {
 		var world = new ChestWorld();
 		var runtime = new NativeActionRuntime(world, () -> 0L);

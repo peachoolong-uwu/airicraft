@@ -11,6 +11,44 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NativeContainerActionsTest {
 	@Test
+	void retainedVisitsExposeEligibilityOnlyBetweenConfirmedOperations() {
+		var chest = new Chest();
+		var runtime = new NativeActionRuntime(new NativeContainerActions(chest, () -> 0L), () -> 0L);
+		var observation = runtime.observe();
+		var lease = runtime.acquire("host", observation.epoch());
+		assertNull(chest.availabilityGate.contextId());
+		var binding = com.google.gson.JsonParser.parseString("{\"windowId\":\"window-a\",\"syncId\":7}").getAsJsonObject();
+		var context = NativeActionRuntime.Request.create(lease, 1, observation.captureId(), "retain_container", binding);
+		runtime.submit(context); runtime.tick();
+		assertFalse(chest.availabilityGate.idle(), "unconfirmed entry earns no eligibility");
+		chest.confirmation.complete(chest.capture());
+		chest.delayConfirmation = false;
+		runtime.tick();
+		assertTrue(chest.availabilityGate.idle(), "a confirmed visit can admit another duty");
+		assertEquals(runtime.inspect(context.id()).effects().get("contextId"), chest.availabilityGate.contextId());
+		assertTrue(runtime.blocksOrdinaryActions(), "eligibility never releases the singleton player");
+		var args = transfer(1);
+		args.addProperty("contextId", (String) runtime.inspect(context.id()).effects().get("contextId"));
+		var request = NativeActionRuntime.Request.create(lease, 2, runtime.observe().captureId(), "transfer_container", args);
+		runtime.submit(request);
+		for (int i = 0; i < 20 && !runtime.inspect(request.id()).released(); i++) {
+			assertFalse(chest.availabilityGate.idle(), "an outstanding child excludes eligibility");
+			runtime.tick();
+		}
+		assertTrue(runtime.inspect(request.id()).released());
+		assertTrue(chest.availabilityGate.idle());
+		runtime.cancel(lease, context.id());
+		for (int i = 0; i < 20 && !runtime.inspect(context.id()).released(); i++) {
+			assertFalse(chest.availabilityGate.idle(), "exit keeps exclusive cleanup ownership");
+			runtime.tick();
+		}
+		assertTrue(runtime.inspect(context.id()).released());
+		assertTrue(chest.availabilityGate.idle());
+		assertNull(chest.availabilityGate.contextId());
+		assertEquals(1, chest.carried);
+	}
+
+	@Test
 	void contextExitWatchdogStillReportsFailureWhileAReflexOwnsThePlayer() {
 		var clock = new java.util.concurrent.atomic.AtomicLong();
 		var chest = new Chest();
@@ -736,6 +774,8 @@ class NativeContainerActionsTest {
 
 	/** Fake Minecraft inventory and delayed server response, outside the tested native seam. */
 	private static final class Chest implements NativeContainerActions.Access {
+		private NativeActionRuntime.AvailabilityGate availabilityGate;
+		@Override public void availability(NativeActionRuntime.AvailabilityGate gate) { availabilityGate = gate; }
 		public List<NativeContainerActions.Slot> inventory() {
 			return java.util.stream.IntStream.range(0, 36).mapToObj(index -> new NativeContainerActions.Slot(index, false,
 				index == 0 && carried > 0 ? itemId : "", "", index == 0 ? carried : 0, 64)).toList();
