@@ -1,6 +1,7 @@
 package ai.moeru.airicraft.agent.recording;
 
 import ai.moeru.airicraft.agent.EmbodiedAgentRuntime;
+import ai.moeru.airicraft.agent.debug.LlmFlightRecordQueryResult;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import java.io.IOException;
@@ -11,6 +12,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
+import java.util.function.Function;
 
 /** Shared runtime evidence files for evaluation and automatic playtests. */
 public final class RuntimeFlightRecorder {
@@ -22,6 +25,7 @@ public final class RuntimeFlightRecorder {
 	private boolean eventsTruncated;
 	private boolean timelineTruncated;
 	private boolean llmCallsTruncated;
+	private final TreeSet<Long> pendingLlmCalls = new TreeSet<>();
 
 	public RuntimeFlightRecorder(Path outputDir) throws IOException {
 		this.outputDir = outputDir.toAbsolutePath().normalize();
@@ -32,7 +36,7 @@ public final class RuntimeFlightRecorder {
 		String collectedAt = Instant.now().toString();
 		drainEvents(runtime, collectedAt);
 		drainTimeline(runtime, collectedAt);
-		drainLlmCalls(runtime, collectedAt);
+		drainLlmCalls(runtime::llmFlightRecords, collectedAt);
 	}
 
 	public Map<String, Object> statusPayload() {
@@ -82,13 +86,24 @@ public final class RuntimeFlightRecorder {
 		}
 	}
 
-	private void drainLlmCalls(EmbodiedAgentRuntime runtime, String collectedAt) throws IOException {
-		var result = runtime.llmFlightRecords(latestLlmSequenceId);
-		latestLlmSequenceId = result.latestSequenceId();
+	void drainLlmCalls(Function<Long, LlmFlightRecordQueryResult> query, String collectedAt) throws IOException {
+		// Responses update the original sequence in place. Keep polling unfinished calls;
+		// append their terminal version before advancing past them, including out-of-order completion.
+		Long since = latestLlmSequenceId;
+		if (!pendingLlmCalls.isEmpty()) since = pendingLlmCalls.first() - 1L;
+		var result = query.apply(since);
 		llmCallsTruncated = llmCallsTruncated || result.truncated();
 		for (var record : result.records()) {
-			appendJsonl(outputDir.resolve("llm-calls.jsonl"), Map.of("collectedAt", collectedAt, "record", record));
+			boolean terminal = record.status().equals("COMPLETED") || record.status().equals("FAILED");
+			boolean newCall = latestLlmSequenceId == null || record.sequenceId() > latestLlmSequenceId;
+			if (newCall || terminal && pendingLlmCalls.contains(record.sequenceId())) {
+				appendJsonl(outputDir.resolve("llm-calls.jsonl"), Map.of("collectedAt", collectedAt, "record", record));
+			}
+			if (terminal) pendingLlmCalls.remove(record.sequenceId());
+			else pendingLlmCalls.add(record.sequenceId());
 		}
+		pendingLlmCalls.removeIf(sequence -> sequence < result.oldestSequenceId());
+		latestLlmSequenceId = result.latestSequenceId();
 	}
 
 	private static void appendJsonl(Path path, Object value) throws IOException {
