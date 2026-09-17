@@ -229,11 +229,11 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 	}
 	@Override public BreakResult breakTarget(Candidate target, GoalMineSpec spec) {
 		var client = client();
-		if (!targetPresent(target)) return BreakResult.BROKEN;
+		if (!targetPresent(target)) return BreakStatus.BROKEN;
 		if (client.player.currentScreenHandler != client.player.playerScreenHandler
-			|| !client.player.currentScreenHandler.getCursorStack().isEmpty()) return BreakResult.FAILED;
+			|| !client.player.currentScreenHandler.getCursorStack().isEmpty()) return BreakStatus.FAILED;
 		BlockHitResult hit = interactionPath(client.player.getEyePos(), block(target.position()));
-		if (hit == null || WorldPlacePreservation.contains(client.world, hit.getBlockPos())) return BreakResult.FAILED;
+		if (hit == null || WorldPlacePreservation.contains(client.world, hit.getBlockPos())) return BreakStatus.FAILED;
 		BlockPos pos = hit.getBlockPos();
 		// Aim at the actual hit, which may be leaves being cleared in front of the resource.
 		cameraController.lookAtNow(client, hit.getPos());
@@ -241,13 +241,13 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 			cancelBreaking();
 			var result = BaritoneTaskExecutor.MiningToolPreflight.ensureSelected(client, client.player,
 				List.of(client.world.getBlockState(pos)), pos.equals(block(target.position())) ? spec.requiredToolItemIds() : List.of());
-			if (!result.ok()) return BreakResult.FAILED;
-			if (!client.interactionManager.attackBlock(pos, hit.getSide())) return BreakResult.FAILED;
+			if (!result.ok()) return new ToolFailure(result.message());
+			if (!client.interactionManager.attackBlock(pos, hit.getSide())) return BreakStatus.FAILED;
 			breaking = pos;
 		}
 		client.interactionManager.updateBlockBreakingProgress(pos, hit.getSide());
 		client.player.swingHand(Hand.MAIN_HAND);
-		return targetPresent(target) ? BreakResult.BREAKING : BreakResult.BROKEN;
+		return targetPresent(target) ? BreakStatus.BREAKING : BreakStatus.BROKEN;
 	}
 	@Override public void cancelBreaking() {
 		if (breaking != null && client().interactionManager != null) client().interactionManager.cancelBlockBreaking();

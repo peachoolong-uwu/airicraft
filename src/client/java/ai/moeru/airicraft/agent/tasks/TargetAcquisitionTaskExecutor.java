@@ -145,8 +145,10 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			if (phaseTicks > 240) reject("break_timeout");
 			else {
 				BreakResult result = environment.breakTarget(target, spec);
-				if (result == BreakResult.FAILED) reject("break_unavailable");
-				else if (result == BreakResult.BROKEN) {
+				if (result instanceof ToolFailure failure)
+					return finish(false, failure.reason(), TaskFailureCode.MISSING_ITEM);
+				if (result == BreakStatus.FAILED) reject("break_unavailable");
+				else if (result == BreakStatus.BROKEN) {
 					environment.cancelBreaking();
 					enter(Phase.SETTLE);
 				}
@@ -214,7 +216,9 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 
 	enum Phase { SELECT, APPROACH, BREAK, PICKUP, SETTLE, RELEASE }
 	enum Kind { DROP, BLOCK }
-	enum BreakResult { BREAKING, BROKEN, FAILED }
+	sealed interface BreakResult {}
+	enum BreakStatus implements BreakResult { BREAKING, BROKEN, FAILED }
+	record ToolFailure(String reason) implements BreakResult {}
 	record Candidate(Kind kind, String id, GoalPosition position, GoalPosition workPosition) {
 		String key() { return kind + ":" + id + ":" + position + ":" + workPosition; }
 	}

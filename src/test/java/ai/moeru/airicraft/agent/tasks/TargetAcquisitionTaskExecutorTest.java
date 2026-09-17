@@ -138,6 +138,43 @@ class TargetAcquisitionTaskExecutorTest {
 		assertEquals(TaskFailureCode.MISSING_ITEM, f.events.getFirst().failureCode());
 		assertEquals(0, f.env.rejections);
 	}
+	@Test void inferredHarvestToolFailureStopsBeforeTryingAnotherWorkPosition() {
+		Fixture f = new Fixture();
+		Candidate ore = new Candidate(Kind.BLOCK, "minecraft:iron_ore", pos(6,127,3), pos(5,127,3));
+		f.env.sources = List.of(ore, new Candidate(ore.kind(), ore.id(), ore.position(), pos(7,127,3)));
+		f.request = WorldTaskRequest.collectMine("iron", "job", new GoalSnapshot(GoalType.MINE_BLOCKS, null, null,
+			new GoalMineSpec(List.of("minecraft:iron_ore"), 3), 0, "test"));
+		assertTrue(f.request.goal().mineSpec().requiredToolItemIds().isEmpty());
+		f.tick(2);
+		assertTrue(f.nav.active);
+		f.env.interactable = true;
+		String reason = "missing_suitable_tool blockIds=[minecraft:iron_ore]";
+		f.env.breakFailure = new ToolFailure(reason);
+		f.tick(5);
+		assertEquals(TaskExecutionState.FAILED, f.executor.snapshot().state());
+		assertEquals(1, f.events.size());
+		assertEquals(TaskFailureCode.MISSING_ITEM, f.events.getFirst().failureCode());
+		assertEquals(reason, f.events.getFirst().message());
+		assertEquals(1, f.env.breaks);
+		assertEquals(0, f.env.rejections);
+		assertFalse(f.nav.active);
+	}
+
+	@Test void unavailableInteractionStillTriesAnotherWorkPosition() {
+		Fixture f = new Fixture();
+		Candidate first = f.env.sources.getFirst();
+		Candidate otherSide = new Candidate(first.kind(), first.id(), first.position(), pos(6,64,0));
+		f.env.sources = List.of(first, otherSide);
+		f.env.interactable = true;
+		f.env.breakFailure = BreakStatus.FAILED;
+		f.tick(3);
+		f.env.interactable = false;
+		f.tick(2);
+		assertTrue(f.nav.goals.contains(otherSide.workPosition()));
+		assertEquals(1, f.env.rejections);
+		assertTrue(f.events.isEmpty());
+	}
+
 	@Test void workSearchIncludesGroundFromWhichAnOverheadLogIsInEyeReach() {
 		var log = new net.minecraft.util.math.BlockPos(284,69,-138);
 		var feet = new net.minecraft.util.math.BlockPos(285,64,-138);
@@ -290,6 +327,7 @@ class TargetAcquisitionTaskExecutorTest {
 		boolean requiredToolAvailable = true;
 		Set<GoalPosition> visible;
 		boolean countOnBreak;
+		BreakResult breakFailure;
 		public boolean requiredToolAvailable(GoalMineSpec spec) { return requiredToolAvailable; }
 		int count, breaks, rejections;
 		public GoalPosition position() { return position; }
@@ -311,9 +349,10 @@ class TargetAcquisitionTaskExecutorTest {
 		public boolean canInteract(Candidate t) { return interactable; }
 		public BreakResult breakTarget(Candidate t, GoalMineSpec s) {
 			breaks++;
+			if (breakFailure != null) return breakFailure;
 			if (countOnBreak) count++;
 			sources = sources.stream().filter(source -> !source.equals(t)).toList();
-			return BreakResult.BROKEN;
+			return BreakStatus.BROKEN;
 		}
 		public void cancelBreaking() {}
 	}
