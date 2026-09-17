@@ -12,7 +12,7 @@ import java.util.Map;
 /** Client-thread owner of one opt-in recording and its report/pause boundary. */
 public final class AutomaticPlaytestRuntime {
 	public static boolean enabled() { return Boolean.getBoolean("airicraft.automaticPlaytest"); }
-	private enum State { IDLE, RECORDING, REPORT_PENDING, PAUSING, CAPTURE_READY, FAILED }
+	private enum State { IDLE, RECORDING, REPORT_PENDING, PAUSING, CAPTURE_READY, FINISHED, FAILED }
 	private final ClientRuntimeController controller;
 	private final Path root;
 	private State state = State.IDLE;
@@ -56,6 +56,7 @@ public final class AutomaticPlaytestRuntime {
 			return "Tool result for something_wrong: reportId=" + recording.id()
 				+ " state=CAPTURE_READY outputDir=" + recording.pendingDirectory() + ". This playtest was already reported; the launcher will finalize its Recorder Play.";
 		}
+		if (state == State.FINISHED) return "TOOL_ERROR: something_wrong: playtest_already_finished";
 		if (state == State.RECORDING || state == State.FAILED) {
 			pendingDescription = description;
 			if (recording != null) {
@@ -129,17 +130,13 @@ public final class AutomaticPlaytestRuntime {
 
 	public void worldLeft(String reason) {
 		// This mode has one run per process. Keep its pause through disconnect/server save.
-		if (captureReady()) return;
+		if (captureReady() || state == State.FINISHED || recording == null) return;
 		sessionEpoch++;
-		if (recording != null && state != State.CAPTURE_READY) {
-			try { recording.interrupted(reason); }
-			catch (IOException exception) { Airicraft.LOGGER.warn("Could not finalize interrupted playtest", exception); }
+		try {
+			recording.finish(controller.agentRuntime(), controller.liveRecording(), reason);
+			state = State.FINISHED;
 		}
-		recording = null;
-		state = State.IDLE;
-		resultCommitted = false;
-		error = "";
-		pendingDescription = "";
+		catch (IOException | RuntimeException exception) { fail(exception); }
 	}
 
 	private void fail(Throwable failure) {

@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/** One local playtest recording; only a completed incident is moved into the review queue. */
+/** One local playtest recording; the launcher archives every stopped run. */
 public final class AutomaticPlaytestRecording {
 	private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
 	private final String id;
@@ -84,25 +84,30 @@ public final class AutomaticPlaytestRecording {
 
 	public void finish(EmbodiedAgentRuntime runtime, DashboardObservationStore history,
 		Map<String, Object> pause, byte[] screenshot) throws IOException {
-		recordTick(runtime, history);
-		recorder.writeFinalSnapshots(runtime);
 		writeJson("pause.json", pause);
 		if (screenshot.length > 0) Files.write(pendingDirectory.resolve("paused.png"), screenshot);
+		finish(runtime, history, "CAPTURE_READY", "bug_report");
+	}
+
+	/** Capture the same terminal evidence on ordinary disconnect, before the runtime is cleared. */
+	public void finish(EmbodiedAgentRuntime runtime, DashboardObservationStore history, String reason) throws IOException {
+		finish(runtime, history, "FINISHED", reason);
+	}
+
+	private void finish(EmbodiedAgentRuntime runtime, DashboardObservationStore history, String status, String reason) throws IOException {
+		recordTick(runtime, history);
+		recorder.writeFinalSnapshots(runtime);
 		Files.writeString(pendingDirectory.resolve("live-recording.jsonl"), GSON.toJson(Map.of(
 			"recordType", "export_complete", "observations", visualCount, "truncated", visualTruncated)) + "\n", StandardOpenOption.APPEND);
 		Map<String, Object> summary = new LinkedHashMap<>(recorder.statusPayload());
 		summary.put("id", id);
-		summary.put("status", "CAPTURE_READY");
+		summary.put("status", status);
+		summary.put("reason", reason);
 		summary.put("visualHistoryTruncated", visualTruncated);
 		summary.put("finishedAt", Instant.now().toString());
 		summary.put("outputDir", incidentDirectory.toString());
 		writeJson("summary.json", summary);
 		// The launcher closes the client, validates the required Recorder Play, then publishes the directory.
-	}
-
-	public void interrupted(String reason) throws IOException {
-		writeJson("summary.json", Map.of("id", id, "status", "INTERRUPTED", "reason", reason,
-			"recording", recorder.statusPayload()));
 	}
 
 	private void recordVisualHistory(DashboardObservationStore history) throws IOException {

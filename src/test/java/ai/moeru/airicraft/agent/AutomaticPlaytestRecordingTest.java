@@ -46,12 +46,23 @@ class AutomaticPlaytestRecordingTest {
 		assertFalse(Files.exists(recording.incidentDirectory()));
 	}
 
-	@Test void interruptedRunsAndDifferentClientsCannotOverwriteOtherIncidents() throws Exception {
+	@Test void normalExitRetainsTheFullFlightDatasetWithoutABugReport() throws Exception {
 		var first = new AutomaticPlaytestRecording(root, Map.of());
 		var second = new AutomaticPlaytestRecording(root, Map.of());
 		assertNotEquals(first.incidentDirectory(), second.incidentDirectory());
-		first.interrupted("world_left");
-		assertTrue(Files.readString(first.pendingDirectory().resolve("summary.json")).contains("INTERRUPTED"));
+		var runtime = EmbodiedAgentRuntime.createForTests(new NoopExecutor());
+		var history = new DashboardObservationStore(1024 * 1024);
+		history.append("visual_frame", 1, 1, Map.of("imageBase64", "last frame before leaving"));
+		first.finish(runtime, history, "world_left");
+		assertTrue(Files.readString(first.pendingDirectory().resolve("summary.json")).contains("FINISHED"));
+		for (String file : new String[]{"planner-calls.jsonl", "agent-status-final.json", "agent-events-final.json",
+			"agent-debug-timeline-final.json", "agent-debug-llm-calls-final.json", "world-evidence-final.json"})
+			assertTrue(Files.isRegularFile(first.pendingDirectory().resolve(file)), file);
+		var lines = Files.readAllLines(first.pendingDirectory().resolve("live-recording.jsonl"));
+		assertTrue(lines.stream().anyMatch(line -> line.contains("last frame before leaving")));
+		assertTrue(lines.getLast().contains("export_complete"));
+		assertFalse(Files.exists(first.pendingDirectory().resolve("bug-report.json")));
+		assertFalse(Files.exists(first.pendingDirectory().resolve("pause.json")));
 		assertFalse(Files.exists(first.incidentDirectory()));
 		assertTrue(Files.exists(second.pendingDirectory()));
 	}
