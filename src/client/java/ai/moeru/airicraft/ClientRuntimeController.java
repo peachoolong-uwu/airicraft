@@ -59,6 +59,11 @@ public final class ClientRuntimeController {
 	private long lastDashboardCaptureFailureLogAtMs;
 	private final PlannerDebugOverlay plannerDebugOverlay = new PlannerDebugOverlay();
 	private final ClientTickIndicator clientTickIndicator = new ClientTickIndicator();
+	private final ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime automaticPlaytest =
+		new ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime(this, java.nio.file.Path.of(
+			System.getProperty("airicraft.automaticPlaytestDir", "automatic_playtest")));
+
+	public ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime automaticPlaytest() { return automaticPlaytest; }
 
 	public ClientRuntimeController() {
 		this.config = AiricraftConfigLoader.load();
@@ -68,7 +73,13 @@ public final class ClientRuntimeController {
 		this.dashboardObservationStore = new DashboardObservationStore(config.debugDashboard().historyByteBudget());
 		this.dashboardObservationCollector = new DashboardObservationCollector(
 			dashboardObservationStore,
-			() -> config.debugDashboard()
+			() -> {
+				var dashboard = config.debugDashboard();
+				return ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime.enabled()
+					? new ai.moeru.airicraft.dashboard.DebugDashboardConfig(dashboard.enabled(), dashboard.basePort(), dashboard.portScanLimit(),
+						dashboard.historyByteBudget(), true, 20)
+					: dashboard;
+			}
 		);
 		this.debugDashboardServer = new DebugDashboardServer(dashboardObservationStore);
 		this.bridgeServer = new ModBridgeServer(
@@ -79,7 +90,8 @@ public final class ClientRuntimeController {
 			this::reload,
 			cameraController,
 			BridgeDiscoveryFile.createDefault(),
-			debugDashboardServer::statusPayload
+			debugDashboardServer::statusPayload,
+			automaticPlaytest::statusPayload
 		);
 	}
 
@@ -147,9 +159,10 @@ public final class ClientRuntimeController {
 	}
 
 	public void onWorldLeave() {
+		automaticPlaytest.worldLeft("world_left");
 		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.clear();
 		dashboardObservationCollector.worldLeft();
-		clientTickDebugRuntime.reset("world_left", "The world closed during a client tick debug capture");
+		if (!automaticPlaytest.captureReady()) clientTickDebugRuntime.reset("world_left", "The world closed during a client tick debug capture");
 		screenshotService.failActiveCapture("capture_failed", "Screenshot capture was interrupted");
 		currentAgentRuntime().onWorldLeave();
 		cameraController.clear();
@@ -158,7 +171,7 @@ public final class ClientRuntimeController {
 
 	public void onClientTick(MinecraftClient client) {
 		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.tick(client);
-		currentAgentRuntime().onClientTick(client);
+		if (!automaticPlaytest.freezing()) currentAgentRuntime().onClientTick(client);
 		cameraController.tick(client);
 		highlightManager.tick();
 		clientTickDebugRuntime.onClientTickCompleted(client, currentAgentRuntime());
@@ -172,6 +185,7 @@ public final class ClientRuntimeController {
 				Airicraft.LOGGER.warn("Debug dashboard observation failed; game execution is unaffected", exception);
 			}
 		}
+		automaticPlaytest.onClientTick(client);
 		announceDashboardUrl(client);
 	}
 
@@ -314,6 +328,7 @@ public final class ClientRuntimeController {
 			throw new BridgeUnavailableException("invalid_config", exception.getMessage());
 		}
 
+		automaticPlaytest.worldLeft("runtime_reloaded");
 		clientTickDebugRuntime.reset("runtime_reloaded", "Airicraft reloaded during a client tick debug capture");
 		screenshotService.failActiveCapture("capture_failed", "Screenshot capture was interrupted");
 		cameraController.clear();
@@ -342,7 +357,8 @@ public final class ClientRuntimeController {
 	}
 
 	public void shutdown() {
-		clientTickDebugRuntime.reset("client_stopping", "The client stopped during a client tick debug capture");
+		automaticPlaytest.worldLeft("client_stopping");
+		if (!automaticPlaytest.captureReady()) clientTickDebugRuntime.reset("client_stopping", "The client stopped during a client tick debug capture");
 		screenshotService.failActiveCapture("capture_failed", "Screenshot capture was interrupted");
 		plannerDebugOverlay.setMode(PlannerDebugOverlayMode.OFF);
 		currentAgentRuntime().shutdown();

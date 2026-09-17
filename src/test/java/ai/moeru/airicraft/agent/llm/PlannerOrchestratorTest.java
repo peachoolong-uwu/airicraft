@@ -53,6 +53,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerOrchestratorTest {
 	@Test
+	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {
+		RecordingBackend backend = new RecordingBackend();
+		var order = new ArrayList<String>();
+		var provider = new ai.moeru.airicraft.playtest.SomethingWrongToolProvider(
+			description -> "Tool result for something_wrong: accepted report-1",
+			() -> order.add("pause"), Runnable::run);
+		var registry = PlannerToolRegistry.of(provider);
+		var debugRecorder = new AgentDebugRecorder();
+		var listener = new PlannerLifecycleListener() {
+			@Override public void onToolExchange(PlannerToolCall call, String result, boolean imageAttached) {
+				assertTrue(result.contains("report-1"));
+				order.add("receipt");
+			}
+			@Override public void onToolCompleted(long generation, String result, boolean imageAttached) { order.add("completed"); }
+		};
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED, listener, debugRecorder);
+		orchestrator.submit(baseRequest(null));
+		backend.awaitCalls(1, Duration.ofSeconds(1));
+		JsonObject args = new JsonObject();
+		args.addProperty("description", "The reported outcome contradicts the inventory.");
+		backend.succeed(0, new PlannerResponse("", new PlannerToolCall("bug-report", "something_wrong", args, null, null), null));
+		long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+		while (!order.contains("pause") && System.nanoTime() < deadline) {
+			orchestrator.poll();
+			Thread.sleep(5);
+		}
+		assertEquals(List.of("receipt", "completed", "pause"), order);
+		for (int i = 0; i < 3; i++) orchestrator.poll();
+		assertEquals(1, backend.callCount());
+		assertFalse(orchestrator.hasInFlight());
+		assertTrue(debugRecorder.queryTimeline(null).entries().stream().anyMatch(entry ->
+			entry.action().equals("terminal_tool_result") && entry.payload().get("result").toString().contains("accepted report-1")),
+			"The terminal receipt must reach the flight stream without a follow-up model request");
+	}
+
+	@Test
 	void plannerOffRecordsAndDiscardsInputWithoutLeakingItIntoTheNextTurn() {
 		RecordingBackend backend = new RecordingBackend();
 		LlmFlightRecorder flightRecorder = new LlmFlightRecorder();
@@ -3134,6 +3171,18 @@ class PlannerOrchestratorTest {
 		PlannerToolRegistry toolRegistry,
 		PlannerActionToolExecutor actionToolExecutor
 	) {
+		return newOrchestrator(backend, visionTool, inventoryTool, visionMode, toolRegistry, actionToolExecutor, PlannerLifecycleListener.NO_OP);
+	}
+
+	private static PlannerOrchestrator newOrchestrator(LlmBackend backend, CurrentViewVisionTool visionTool,
+		CurrentInventoryTool inventoryTool, PlannerVisionMode visionMode, PlannerToolRegistry toolRegistry,
+		PlannerActionToolExecutor actionToolExecutor, PlannerLifecycleListener listener) {
+		return newOrchestrator(backend, visionTool, inventoryTool, visionMode, toolRegistry, actionToolExecutor, listener, new AgentDebugRecorder());
+	}
+
+	private static PlannerOrchestrator newOrchestrator(LlmBackend backend, CurrentViewVisionTool visionTool,
+		CurrentInventoryTool inventoryTool, PlannerVisionMode visionMode, PlannerToolRegistry toolRegistry,
+		PlannerActionToolExecutor actionToolExecutor, PlannerLifecycleListener listener, AgentDebugRecorder debugRecorder) {
 		AgentConfig.LlmConfig config = AgentConfig.LlmConfig.defaults();
 		Clock clock = Clock.systemDefaultZone();
 		return new PlannerOrchestrator(
@@ -3150,8 +3199,8 @@ class PlannerOrchestratorTest {
 			config.plannerSessionCoalesceMaxMillis(),
 			clock,
 			NoopObservability.INSTANCE,
-			PlannerLifecycleListener.NO_OP,
-			new AgentDebugRecorder(),
+			listener,
+			debugRecorder,
 			actionToolExecutor,
 			PlannerToolNarrationSink.NO_OP,
 			toolRegistry,

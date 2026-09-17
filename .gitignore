@@ -60,3 +60,5 @@ eval-output/
 /.alintcache
 /.codex/environments
 eval-output
+
+/automatic_playtest/

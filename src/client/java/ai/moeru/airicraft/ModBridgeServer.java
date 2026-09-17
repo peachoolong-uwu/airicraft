@@ -103,6 +103,7 @@ public final class ModBridgeServer {
 	private final Supplier<ClientTickDebugRuntime> clientTickDebugRuntimeSupplier;
 	private final Supplier<ClientRuntimeController.ReloadResult> reloadSupplier;
 	private final Supplier<Map<String, Object>> dashboardStatusSupplier;
+	private final Supplier<Map<String, Object>> automaticPlaytestStatusSupplier;
 	private final BridgeDiscoveryFile bridgeDiscoveryFile;
 	private final SingleplayerWorldService singleplayerWorldService = new SingleplayerWorldService();
 	private final SavedServerService savedServerService = new SavedServerService();
@@ -130,7 +131,8 @@ public final class ModBridgeServer {
 			reloadSupplier,
 			cameraController,
 			bridgeDiscoveryFile,
-			() -> Map.of("enabled", false, "running", false)
+			() -> Map.of("enabled", false, "running", false),
+			() -> Map.of("enabled", false)
 		);
 	}
 
@@ -142,7 +144,8 @@ public final class ModBridgeServer {
 		Supplier<ClientRuntimeController.ReloadResult> reloadSupplier,
 		CameraController cameraController,
 		BridgeDiscoveryFile bridgeDiscoveryFile,
-		Supplier<Map<String, Object>> dashboardStatusSupplier
+		Supplier<Map<String, Object>> dashboardStatusSupplier,
+		Supplier<Map<String, Object>> automaticPlaytestStatusSupplier
 	) {
 		this.highlightManagerSupplier = Objects.requireNonNull(highlightManagerSupplier, "highlightManagerSupplier");
 		this.agentRuntimeSupplier = Objects.requireNonNull(agentRuntimeSupplier, "agentRuntimeSupplier");
@@ -152,6 +155,7 @@ public final class ModBridgeServer {
 		this.playerViewService = new PlayerViewService(Objects.requireNonNull(cameraController, "cameraController"));
 		this.bridgeDiscoveryFile = Objects.requireNonNull(bridgeDiscoveryFile, "bridgeDiscoveryFile");
 		this.dashboardStatusSupplier = Objects.requireNonNull(dashboardStatusSupplier, "dashboardStatusSupplier");
+		this.automaticPlaytestStatusSupplier = Objects.requireNonNull(automaticPlaytestStatusSupplier, "automaticPlaytestStatusSupplier");
 	}
 
 	public synchronized void start() {
@@ -1984,8 +1988,9 @@ public final class ModBridgeServer {
 		response.put("worldLoaded", worldLoaded);
 		response.put("sessionState", sessionState(client));
 		response.put("currentScreen", currentScreenName(client));
-		response.put("canJoinWorldOrServer", !worldLoaded);
+		response.put("canJoinWorldOrServer", !worldLoaded && client.getOverlay() == null);
 		response.put("debugDashboard", dashboardStatusSupplier.get());
+		response.put("automaticPlaytest", automaticPlaytestStatusSupplier.get());
 
 		if (!worldLoaded) {
 			response.put("state", "world_not_loaded");

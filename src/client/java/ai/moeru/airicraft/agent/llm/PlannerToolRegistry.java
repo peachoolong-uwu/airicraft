@@ -35,6 +35,11 @@ public final class PlannerToolRegistry {
 		return providers.stream().anyMatch(provider -> provider.handles(name) && provider.endsTurn(name));
 	}
 
+	public void afterResultCommitted(String name) {
+		providers.stream().filter(provider -> provider.handles(name) && provider.endsTurn(name))
+			.forEach(provider -> provider.afterResultCommitted(name));
+	}
+
 	public String contextSnapshot() {
 		return providers.stream().filter(PlannerToolProvider::available)
 			.map(PlannerToolProvider::contextSnapshot).filter(value -> !value.isBlank())

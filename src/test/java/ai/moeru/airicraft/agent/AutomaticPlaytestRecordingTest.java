@@ -1,0 +1,111 @@
+package ai.moeru.airicraft.agent;
+
+import ai.moeru.airicraft.agent.recording.AutomaticPlaytestRecording;
+import ai.moeru.airicraft.agent.session.SessionSnapshot;
+import ai.moeru.airicraft.agent.tasks.*;
+import ai.moeru.airicraft.dashboard.DashboardObservationStore;
+import com.google.gson.JsonParser;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.Optional;
+import static org.junit.jupiter.api.Assertions.*;
+
+class AutomaticPlaytestRecordingTest {
+	@TempDir Path root;
+
+	@Test void flightCaptureWaitsForTheLauncherToFinalizeTheRequiredRecorderPlay() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new NoopExecutor());
+		var recording = new AutomaticPlaytestRecording(root, Map.of("world", "test"));
+		var history = new DashboardObservationStore(1024 * 1024);
+		recording.recordTick(runtime, history);
+		recording.report("The work result contradicts the observed inventory.", 42);
+		assertFalse(Files.exists(recording.incidentDirectory()));
+		history.advanceClock(42, true, true);
+		history.append("runtime_snapshot", 42, 1, Map.of("health", 20));
+		recording.finish(runtime, history, Map.of("debugSessionId", "paused", "pauseEpoch", 1), new byte[]{1, 2, 3});
+		assertFalse(Files.exists(recording.incidentDirectory()));
+		Path dir = recording.pendingDirectory();
+		for (String file : new String[]{"bug-report.json", "summary.json", "pause.json", "paused.png", "status-samples.jsonl", "planner-calls.jsonl", "agent-status-final.json", "agent-events-final.json", "agent-debug-timeline-final.json", "agent-debug-llm-calls-final.json", "world-evidence-final.json", "live-recording.jsonl"})
+			assertTrue(Files.isRegularFile(dir.resolve(file)), file);
+		assertEquals("CAPTURE_READY", JsonParser.parseString(Files.readString(dir.resolve("summary.json"))).getAsJsonObject().get("status").getAsString());
+		assertTrue(Files.readAllLines(dir.resolve("live-recording.jsonl")).getLast().contains("export_complete"));
+		assertTrue(Files.readString(dir.resolve("bug-report.json")).contains("contradicts"));
+	}
+
+	@Test void failedFinalizationKeepsTheSourceAndNeverPublishesACompletedIncident() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new NoopExecutor());
+		var recording = new AutomaticPlaytestRecording(root, Map.of());
+		recording.report("bug", 1);
+		Files.createDirectory(recording.pendingDirectory().resolve("pause.json"));
+		assertThrows(IOException.class, () -> recording.finish(runtime, new DashboardObservationStore(1024 * 1024), Map.of(), new byte[0]));
+		assertTrue(Files.exists(recording.pendingDirectory().resolve("bug-report.json")));
+		assertFalse(Files.exists(recording.incidentDirectory()));
+	}
+
+	@Test void interruptedRunsAndDifferentClientsCannotOverwriteOtherIncidents() throws Exception {
+		var first = new AutomaticPlaytestRecording(root, Map.of());
+		var second = new AutomaticPlaytestRecording(root, Map.of());
+		assertNotEquals(first.incidentDirectory(), second.incidentDirectory());
+		first.interrupted("world_left");
+		assertTrue(Files.readString(first.pendingDirectory().resolve("summary.json")).contains("INTERRUPTED"));
+		assertFalse(Files.exists(first.incidentDirectory()));
+		assertTrue(Files.exists(second.pendingDirectory()));
+	}
+
+	@Test void retriesPreserveTheOriginalReportAndItsTime() throws Exception {
+		var recording = new AutomaticPlaytestRecording(root, Map.of());
+		recording.report("Original bug description", 42);
+		String original = Files.readString(recording.pendingDirectory().resolve("bug-report.json"));
+		recording.report("Duplicate delivery", 99);
+		assertEquals(original, Files.readString(recording.pendingDirectory().resolve("bug-report.json")));
+	}
+
+	@Test void liveFramesSurviveRollingHistoryEvictionWithoutPosthocRendering() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new NoopExecutor());
+		var recording = new AutomaticPlaytestRecording(root, Map.of());
+		var history = new DashboardObservationStore(1024 * 1024);
+		history.append("log", 0, 0, Map.of("message", "title screen"));
+		history.startSession("world_joined", 1, 1);
+		history.advanceClock(1, false, true);
+		history.append("visual_frame", 1, 1, Map.of("imageBase64", "early-frame"));
+		recording.recordTick(runtime, history);
+		history.advanceClock(20000, false, true);
+		history.append("visual_frame", 20000, 2, Map.of("imageBase64", "late-frame"));
+		recording.report("bug", 20000);
+		recording.finish(runtime, history, Map.of(), new byte[0]);
+		var lines = Files.readAllLines(recording.pendingDirectory().resolve("live-recording.jsonl"));
+		assertTrue(lines.stream().anyMatch(line -> line.contains("early-frame")));
+		assertTrue(lines.stream().anyMatch(line -> line.contains("late-frame")));
+		assertFalse(JsonParser.parseString(lines.getLast()).getAsJsonObject().get("truncated").getAsBoolean());
+	}
+
+	@Test void launcherRunIdCannotOverwriteAnEarlierRecording() throws Exception {
+		var first = new AutomaticPlaytestRecording(root, "run-id", Map.of());
+		first.report("original", 1);
+		assertThrows(IOException.class, () -> new AutomaticPlaytestRecording(root, "run-id", Map.of()));
+		assertTrue(Files.readString(first.pendingDirectory().resolve("bug-report.json")).contains("original"));
+	}
+
+	@Test void checkpointPreservesThePausedSaveIndependentlyOfDisconnectWrites() throws Exception {
+		var recording = new AutomaticPlaytestRecording(root, Map.of());
+		Path world = Files.createDirectory(root.resolve("worker-world"));
+		Files.writeString(world.resolve("level.dat"), "paused state");
+		Files.writeString(world.resolve("session.lock"), "locked");
+		recording.saveWorldCheckpoint(world, Map.of("serverTickId", 42, "capturedWhilePaused", true));
+		Files.writeString(world.resolve("level.dat"), "later shutdown state");
+		assertEquals("paused state", Files.readString(recording.pendingDirectory().resolve("world-save/level.dat")));
+		assertFalse(Files.exists(recording.pendingDirectory().resolve("world-save/session.lock")));
+		assertTrue(Files.readString(recording.pendingDirectory().resolve("world-save.json")).contains("42"));
+	}
+
+	private static final class NoopExecutor implements WorldTaskExecutor {
+		public Optional<TaskTerminalEvent> tick(SessionSnapshot session, Optional<WorldTaskRequest> request) { return Optional.empty(); }
+		public TaskExecutionSnapshot snapshot() { return TaskExecutionSnapshot.idle(); }
+		public void onWorldLeave() {}
+		public void shutdown() {}
+	}
+}

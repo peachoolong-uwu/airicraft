@@ -50,6 +50,13 @@ public final class AgentDebugRecorder {
 			Map.of("evidence", evidence));
 	}
 
+	/** Terminal tools have no follow-up request to carry their receipt into flight records. */
+	public synchronized void recordTerminalTool(long tick, PlannerToolCall call, String result, boolean imageAttached) {
+		appendTimeline(tick, System.currentTimeMillis(), "planner", "terminal_tool_result",
+			call.name() + " completed", Map.of("callId", call.id(), "toolName", call.name()),
+			Map.of("arguments", call.arguments().deepCopy(), "result", result, "imageAttached", imageAttached));
+	}
+
 	public synchronized void recordPlannerSubmission(
 		long generation,
 		int attempt,

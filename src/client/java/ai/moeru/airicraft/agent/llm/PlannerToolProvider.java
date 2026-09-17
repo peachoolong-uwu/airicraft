@@ -25,6 +25,9 @@ public interface PlannerToolProvider {
 	/** Commit this tool result and yield without another model call. */
 	default boolean endsTurn(String toolName) { return false; }
 
+	/** Run after a successful terminal tool receipt has been committed to the journal. */
+	default void afterResultCommitted(String toolName) {}
+
 	boolean handles(String toolName);
 
 	default boolean isReadTool(String toolName) {

@@ -204,7 +204,17 @@ public final class EvaluationAddonRuntime {
 			return;
 		}
 		context.writeJson(202, context.onClientThread(() -> {
-			MinecraftClient.getInstance().scheduleStop();
+			MinecraftClient client = MinecraftClient.getInstance();
+			var runtime = AiricraftClient.runtimeController();
+			if (runtime.automaticPlaytest().captureReady()) {
+				runtime.automaticPlaytest().prepareShutdown(client).whenComplete((ignored, failure) -> client.execute(() -> {
+					if (failure != null) ai.moeru.airicraft.Airicraft.LOGGER.error("Could not save paused playtest world", failure);
+					// The checkpoint is immutable now. Disconnect must run normally for the recording profile.
+					runtime.clientTickDebugRuntime().reset("client_stopping", "Finalizing the automatic playtest Recorder Play");
+					client.scheduleStop();
+				}));
+			}
+			else client.scheduleStop();
 			return Map.of("stopping", true);
 		}));
 	}

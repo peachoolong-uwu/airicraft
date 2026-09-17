@@ -2387,6 +2387,11 @@ public final class AiricraftCliMain {
 				copy(dashboardView, dashboard, "enabled", "running", "port", "startedAtMs", "url", "error");
 				view.put("debugDashboard", dashboardView);
 			}
+			if (payload.containsKey("automaticPlaytest")) {
+				LinkedHashMap<String, Object> playtestView = new LinkedHashMap<>();
+				copy(playtestView, map(payload.get("automaticPlaytest")), "enabled", "state", "outputDir", "error");
+				view.put("automaticPlaytest", playtestView);
+			}
 			if (verbose) {
 				copy(view, payload, "dimension", "player", "focus");
 			}

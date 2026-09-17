@@ -55,7 +55,7 @@ The dashboard's cursor seeks by server tick across the window, loading the neare
 
 The time window is also bounded by memory: 64 MiB by default, with images limited to half that budget. Budget/type limits can shorten retained evidence before ten minutes; `droppedByType` reports this loss. `expiredByType` counts normal age eviction separately. A frame that is still pixel-identical can span the window boundary; its old capture timestamp remains visible instead of pretending it was captured again. The browser maintains a smaller working set and can seek back to the server's retained evidence.
 
-World changes and runtime reloads start fresh recording sessions. Leaving a world freezes the last retained interval so it can still be exported before another world is joined. No continuous recording files accumulate on disk; only explicitly exported incidents persist. Minecraft's own logs and evaluator output keep their existing retention behavior.
+World changes and runtime reloads start fresh recording sessions. Leaving a world freezes the last retained interval so it can still be exported before another world is joined. Normal clients do not continuously accumulate recording files on disk; only explicitly exported incidents persist. The opt-in [automatic playtest mode](automatic-playtest.md) streams flight records and live observations to disk from world load, then finalizes a required Recorder Play when the planner reports a suspected bug. Minecraft's own logs and evaluator output keep their existing retention behavior.
 
 ```yaml
 debugDashboard:

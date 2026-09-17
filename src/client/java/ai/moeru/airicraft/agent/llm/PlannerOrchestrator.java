@@ -168,11 +168,11 @@ public final class PlannerOrchestrator {
 
 	public CompletableFuture<ExternalPlannerToolResult> executeExternalTool(String name, JsonObject arguments) {
 		PlannerToolCall toolCall = PlannerToolCatalog.parseToolCall(name, arguments, toolRegistry);
-		return requestExternalPlannerTool(toolCall).thenApply(outcome -> new ExternalPlannerToolResult(
-			toolCall.name(),
-			outcome.toolResultText(),
-			outcome instanceof ImageToolExecutionOutcome imageOutcome ? imageOutcome.imageAttachment() : null
-		));
+		return requestExternalPlannerTool(toolCall).thenApply(outcome -> {
+			if (!outcome.toolResultText().startsWith("TOOL_ERROR:")) toolRegistry.afterResultCommitted(toolCall.name());
+			return new ExternalPlannerToolResult(toolCall.name(), outcome.toolResultText(),
+				outcome instanceof ImageToolExecutionOutcome imageOutcome ? imageOutcome.imageAttachment() : null);
+		});
 	}
 
 	public boolean hasInFlight() {
@@ -1165,6 +1165,8 @@ public final class PlannerOrchestrator {
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
 		contextAggregator.retainConversation(completedToolConversation);
 		// Completed effects remain evidence even when safety invalidates the next decision.
+		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
+			&& !toolOutcome.toolResultText().startsWith("TOOL_ERROR:");
 		boolean safetyContextChanged = isStaleSafetyRequest(snapshot.request());
 		boolean toolMayReleaseHold = toolExecution.toolCalls().stream().anyMatch(PlannerOrchestrator::isSideEffectTool);
 		boolean sameEpochHoldRelease = safetyContextChanged
@@ -1177,20 +1179,21 @@ public final class PlannerOrchestrator {
 			committedSnapshotGenerations.remove(toolExecution.generation());
 			turnJournal.markSuperseded(toolExecution.generation());
 			endTurnSpan();
-			if (!safetyLaunchBlocked) {
+			if (terminalTool) toolExecution.toolCalls().forEach(call -> toolRegistry.afterResultCommitted(call.name()));
+			else if (!safetyLaunchBlocked) {
 				startQueuedWorkIfPossible();
 			}
 			return null;
 		}
 
-		if (toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
-			&& !toolOutcome.toolResultText().startsWith("TOOL_ERROR:")) {
+		if (terminalTool) {
 			commitRecordedToolExchanges(toolExecution.generation());
 			for (ToolExecutionResult toolResult : toolResults)
 				lifecycleListener.onToolCompleted(toolExecution.generation(), toolResult.toolResultText(), toolResult.imageAttached());
 			sessionCoordinator.finishGeneration(toolExecution.generation(), true);
 			committedSnapshotGenerations.remove(toolExecution.generation());
 			endTurnSpan();
+			toolExecution.toolCalls().forEach(call -> toolRegistry.afterResultCommitted(call.name()));
 			return null;
 		}
 		sessionCoordinator.submitToolFollowUp(
@@ -1436,6 +1439,8 @@ public final class PlannerOrchestrator {
 		boolean imageAttached
 	) {
 		turnJournal.recordToolExchange(generation, snapshot, assistantRawContent, toolCall, toolResultText, imageAttached);
+		if (toolRegistry.endsTurn(toolCall.name()))
+			debugRecorder.recordTerminalTool(snapshot.request().tick(), toolCall, toolResultText, imageAttached);
 		lifecycleListener.onToolExchange(toolCall, toolResultText, imageAttached);
 	}
 

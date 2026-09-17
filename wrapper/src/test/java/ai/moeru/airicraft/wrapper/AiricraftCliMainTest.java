@@ -65,6 +65,20 @@ class AiricraftCliMainTest {
 	}
 
 	@Test
+	void statusExposesAutomaticPlaytestOutcomeAndEvidenceDirectory() {
+		TestTransport transport = new TestTransport();
+		transport.when("GET", "/v1/status").payload = linkedMap(
+			"available", true,
+			"automaticPlaytest", linkedMap("enabled", true, "state", "REPORTED", "outputDir", "/tmp/playtests/report-1", "error", "")
+		);
+		CliResult result = execute(transport, "status");
+		assertEquals(0, result.exitCode());
+		assertTrue(result.output().contains("[automaticPlaytest]\n"));
+		assertTrue(result.output().contains("state: REPORTED\n"));
+		assertTrue(result.output().contains("outputDir: /tmp/playtests/report-1\n"));
+	}
+
+	@Test
 	void reloadRendersDeterministicText() {
 		TestTransport transport = new TestTransport();
 		transport.when("POST", "/v1/reload").payload = linkedMap(

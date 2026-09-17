@@ -88,6 +88,10 @@ source .envrc && ./gradlew runClient
 jdb -attach 127.0.0.1:5005
 ```
 
+### Automatic playtests
+
+Run `scripts/automatic-playtest --world <saved-world-directory> --recorder-jar <profile> --objective <instruction>`. The planner can call `something_wrong` with a natural-language bug report to pause the game and archive the shared evaluation flight records, live RGB, required Recorder Play, and paused world checkpoint under `automatic_playtest/`. See [automatic playtest reports](docs/automatic-playtest.md) for the shutdown/finalization flow and offline review.
+
 ### Realtime debug dashboard
 
 Every Airicraft client starts its own read-only debug dashboard. The client binds the first available LAN port starting at `8765` and prints a clickable viewer-token URL in the log, in `airicraft status`, and once in Minecraft chat after a world loads.

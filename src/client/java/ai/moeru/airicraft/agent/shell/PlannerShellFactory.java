@@ -182,7 +182,7 @@ public final class PlannerShellFactory {
 				: client.getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT);
 		});
 		plannerGoal.refreshWorld();
-		var sharedProviders = List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
+		var sharedProviders = new java.util.ArrayList<>(List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
 			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
 			new ai.moeru.airicraft.agent.spatial.TravelPolicyToolProvider(),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
@@ -194,7 +194,13 @@ public final class PlannerShellFactory {
 			new ai.moeru.airicraft.agent.llm.PathfindSettingsToolProvider(),
 			new ReiRecipeSearchToolProvider(),
 			new MapPlannerToolProvider(MapIntegrationBridge::registry)
-		);
+		));
+		if (ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime.enabled()) {
+			sharedProviders.add(new ai.moeru.airicraft.playtest.SomethingWrongToolProvider(
+				description -> ai.moeru.airicraft.AiricraftClient.runtimeController().automaticPlaytest().report(description),
+				() -> ai.moeru.airicraft.AiricraftClient.runtimeController().automaticPlaytest().resultCommitted(),
+				command -> MinecraftClient.getInstance().execute(command)));
+		}
 		boolean dual = config.llm().thinkingPlanner().enabled();
 		if (dual && config.llm().plannerBackend() != AgentConfig.PlannerBackend.OPENAI_COMPATIBLE)
 			throw new IllegalArgumentException("thinkingPlanner requires the openai-compatible backend");

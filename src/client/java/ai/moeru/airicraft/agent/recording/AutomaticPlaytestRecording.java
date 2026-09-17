@@ -1,0 +1,145 @@
+package ai.moeru.airicraft.agent.recording;
+
+import ai.moeru.airicraft.agent.EmbodiedAgentRuntime;
+import ai.moeru.airicraft.dashboard.DashboardObservationStore;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+/** One local playtest recording; only a completed incident is moved into the review queue. */
+public final class AutomaticPlaytestRecording {
+	private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+	private final String id;
+	private final Path pendingDirectory;
+	private final Path incidentDirectory;
+	private final RuntimeFlightRecorder recorder;
+	private long nextSampleTick;
+	private Map<String, Object> report;
+	private long visualCursor;
+	private long visualCount;
+	private boolean visualTruncated;
+	private String visualSession;
+
+	public AutomaticPlaytestRecording(Path root, Map<String, Object> context) throws IOException {
+		this(root, Instant.now().toString().replace(':', '-') + "-" + UUID.randomUUID(), context);
+	}
+
+	public AutomaticPlaytestRecording(Path root, String id, Map<String, Object> context) throws IOException {
+		if (!id.matches("[A-Za-z0-9._-]+") || id.equals(".") || id.equals("..")) throw new IllegalArgumentException("Invalid playtest run ID");
+		this.id = id;
+		incidentDirectory = root.toAbsolutePath().normalize().resolve(id);
+		pendingDirectory = root.toAbsolutePath().normalize().resolve(".in-progress").resolve(id);
+		recorder = new RuntimeFlightRecorder(pendingDirectory);
+		Files.writeString(pendingDirectory.resolve("recording-start.json"), GSON.toJson(Map.of("id", id,
+			"startedAt", Instant.now().toString(), "context", context)) + "\n", StandardOpenOption.CREATE_NEW);
+	}
+
+	public Path incidentDirectory() { return incidentDirectory; }
+	public Path pendingDirectory() { return pendingDirectory; }
+	public String id() { return id; }
+
+	/** The caller flushes the integrated server while its tick gate is paused before invoking this. */
+	public void saveWorldCheckpoint(Path world, Map<String, Object> metadata) throws IOException {
+		Path checkpoint = pendingDirectory.resolve(".world-save");
+		try (var files = Files.walk(world)) {
+			for (Path source : files.toList()) {
+				if (source.getFileName().toString().equals("session.lock")) continue;
+				Path target = checkpoint.resolve(world.relativize(source));
+				if (Files.isDirectory(source)) Files.createDirectories(target);
+				else Files.copy(source, target);
+			}
+		}
+		Files.move(checkpoint, pendingDirectory.resolve("world-save"));
+		writeJson("world-save.json", metadata);
+	}
+
+	public void recordTick(EmbodiedAgentRuntime runtime, DashboardObservationStore history) throws IOException {
+		recorder.recordTick(runtime);
+		recordVisualHistory(history);
+		if (runtime.tickCount() >= nextSampleTick) {
+			Files.writeString(pendingDirectory.resolve("status-samples.jsonl"), GSON.toJson(Map.of(
+				"collectedAt", Instant.now().toString(), "kind", "automatic_playtest", "tick", runtime.tickCount(),
+				"session", runtime.sessionSnapshot(), "activeJob", runtime.activeJob(), "taskExecution", runtime.taskExecutionSnapshot()
+			)) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+			nextSampleTick = runtime.tickCount() + 100;
+		}
+	}
+
+	public void report(String description, long tick) throws IOException {
+		if (report == null) {
+			report = Map.of("id", id, "kind", "suspected_interface_bug", "description", description,
+				"reportedAt", Instant.now().toString(), "clientTick", tick);
+		}
+		writeJson("bug-report.json", report);
+	}
+
+	public void finish(EmbodiedAgentRuntime runtime, DashboardObservationStore history,
+		Map<String, Object> pause, byte[] screenshot) throws IOException {
+		recordTick(runtime, history);
+		recorder.writeFinalSnapshots(runtime);
+		writeJson("pause.json", pause);
+		if (screenshot.length > 0) Files.write(pendingDirectory.resolve("paused.png"), screenshot);
+		Files.writeString(pendingDirectory.resolve("live-recording.jsonl"), GSON.toJson(Map.of(
+			"recordType", "export_complete", "observations", visualCount, "truncated", visualTruncated)) + "\n", StandardOpenOption.APPEND);
+		Map<String, Object> summary = new LinkedHashMap<>(recorder.statusPayload());
+		summary.put("id", id);
+		summary.put("status", "CAPTURE_READY");
+		summary.put("visualHistoryTruncated", visualTruncated);
+		summary.put("finishedAt", Instant.now().toString());
+		summary.put("outputDir", incidentDirectory.toString());
+		writeJson("summary.json", summary);
+		// The launcher closes the client, validates the required Recorder Play, then publishes the directory.
+	}
+
+	public void interrupted(String reason) throws IOException {
+		writeJson("summary.json", Map.of("id", id, "status", "INTERRUPTED", "reason", reason,
+			"recording", recorder.statusPayload()));
+	}
+
+	private void recordVisualHistory(DashboardObservationStore history) throws IOException {
+		var status = history.recordingStatus();
+		long through = ((Number) status.get("latestSequence")).longValue();
+		long to = ((Number) status.get("serverTickId")).longValue();
+		String session = (String) status.get("sessionId");
+		if (visualSession != null && !visualSession.equals(session)) throw new IOException("Visual recording session changed during playtest");
+		if (visualSession == null) {
+			var manifest = new LinkedHashMap<>(status);
+			manifest.put("recordType", "manifest");
+			manifest.put("includesFrames", true);
+			Files.writeString(pendingDirectory.resolve("live-recording.jsonl"), GSON.toJson(manifest) + "\n", StandardOpenOption.CREATE_NEW);
+			// Sequence numbers span dashboard sessions; earlier title-screen observations are not lost playtest data.
+			visualCursor = ((Number) status.get("oldestSequence")).longValue() - 1L;
+			visualSession = session;
+		}
+		if (through <= visualCursor) return;
+		try (var writer = Files.newBufferedWriter(pendingDirectory.resolve("live-recording.jsonl"), StandardOpenOption.APPEND)) {
+			while (true) {
+				var page = history.recordingPage(0, to, visualCursor, through, 100, Set.of(), true);
+				for (Object observation : (java.util.List<?>) page.get("observations")) {
+					long sequence = ((JsonObject) observation).get("sequence").getAsLong();
+					visualTruncated |= sequence > visualCursor + 1L;
+					writer.write(GSON.toJson(observation) + "\n");
+					visualCursor = sequence;
+					visualCount++;
+				}
+				long next = ((Number) page.get("nextCursor")).longValue();
+				visualTruncated |= next > visualCursor;
+				visualCursor = next;
+				if (!Boolean.TRUE.equals(page.get("hasMore"))) break;
+			}
+		}
+	}
+
+	private void writeJson(String name, Object payload) throws IOException {
+		Files.writeString(pendingDirectory.resolve(name), GSON.toJson(payload) + "\n");
+	}
+}
