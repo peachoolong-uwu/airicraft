@@ -52,14 +52,15 @@ class AutomaticPlaytestRecordingTest {
 		assertNotEquals(first.incidentDirectory(), second.incidentDirectory());
 		var runtime = EmbodiedAgentRuntime.createForTests(new NoopExecutor());
 		var history = new DashboardObservationStore(1024 * 1024);
-		history.append("visual_frame", 1, 1, Map.of("imageBase64", "last frame before leaving"));
+		history.append("visual_frame", 1, 1, Map.of("imageBase64", jpeg(1)));
 		first.finish(runtime, history, "world_left");
 		assertTrue(Files.readString(first.pendingDirectory().resolve("summary.json")).contains("FINISHED"));
 		for (String file : new String[]{"planner-calls.jsonl", "agent-status-final.json", "agent-events-final.json",
 			"agent-debug-timeline-final.json", "agent-debug-llm-calls-final.json", "world-evidence-final.json"})
 			assertTrue(Files.isRegularFile(first.pendingDirectory().resolve(file)), file);
 		var lines = Files.readAllLines(first.pendingDirectory().resolve("live-recording.jsonl"));
-		assertTrue(lines.stream().anyMatch(line -> line.contains("last frame before leaving")));
+		assertTrue(lines.stream().anyMatch(line -> line.contains("visual_frame")));
+		assertFalse(lines.stream().anyMatch(line -> line.contains("imageBase64")));
 		assertTrue(lines.getLast().contains("export_complete"));
 		assertFalse(Files.exists(first.pendingDirectory().resolve("bug-report.json")));
 		assertFalse(Files.exists(first.pendingDirectory().resolve("pause.json")));
@@ -82,15 +83,17 @@ class AutomaticPlaytestRecordingTest {
 		history.append("log", 0, 0, Map.of("message", "title screen"));
 		history.startSession("world_joined", 1, 1);
 		history.advanceClock(1, false, true);
-		history.append("visual_frame", 1, 1, Map.of("imageBase64", "early-frame"));
+		history.append("visual_frame", 1, 1, Map.of("imageBase64", jpeg(1)));
 		recording.recordTick(runtime, history);
 		history.advanceClock(20000, false, true);
-		history.append("visual_frame", 20000, 2, Map.of("imageBase64", "late-frame"));
+		history.append("visual_frame", 20000, 2, Map.of("imageBase64", jpeg(2)));
 		recording.report("bug", 20000);
 		recording.finish(runtime, history, Map.of(), new byte[0]);
 		var lines = Files.readAllLines(recording.pendingDirectory().resolve("live-recording.jsonl"));
-		assertTrue(lines.stream().anyMatch(line -> line.contains("early-frame")));
-		assertTrue(lines.stream().anyMatch(line -> line.contains("late-frame")));
+		assertTrue(lines.stream().anyMatch(line -> line.contains("visual_frame")));
+		assertFalse(lines.stream().anyMatch(line -> line.contains("imageBase64")));
+		assertEquals(2, Files.readAllLines(recording.pendingDirectory().resolve("screen-frames.jsonl")).size());
+		assertTrue(Files.size(recording.pendingDirectory().resolve("screen.mp4")) > 0);
 		assertFalse(JsonParser.parseString(lines.getLast()).getAsJsonObject().get("truncated").getAsBoolean());
 	}
 
@@ -111,6 +114,14 @@ class AutomaticPlaytestRecordingTest {
 		assertEquals("paused state", Files.readString(recording.pendingDirectory().resolve("world-save/level.dat")));
 		assertFalse(Files.exists(recording.pendingDirectory().resolve("world-save/session.lock")));
 		assertTrue(Files.readString(recording.pendingDirectory().resolve("world-save.json")).contains("42"));
+	}
+
+	private static String jpeg(int color) throws IOException {
+		var image = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB);
+		image.setRGB(0, 0, color);
+		var output = new java.io.ByteArrayOutputStream();
+		javax.imageio.ImageIO.write(image, "jpeg", output);
+		return java.util.Base64.getEncoder().encodeToString(output.toByteArray());
 	}
 
 	private static final class NoopExecutor implements WorldTaskExecutor {

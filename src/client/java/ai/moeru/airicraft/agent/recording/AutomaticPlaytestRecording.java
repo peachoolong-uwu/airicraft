@@ -28,6 +28,7 @@ public final class AutomaticPlaytestRecording {
 	private long visualCount;
 	private boolean visualTruncated;
 	private String visualSession;
+	private final PlaytestVideoRecorder video;
 
 	public AutomaticPlaytestRecording(Path root, Map<String, Object> context) throws IOException {
 		this(root, Instant.now().toString().replace(':', '-') + "-" + UUID.randomUUID(), context);
@@ -39,6 +40,7 @@ public final class AutomaticPlaytestRecording {
 		incidentDirectory = root.toAbsolutePath().normalize().resolve(id);
 		pendingDirectory = root.toAbsolutePath().normalize().resolve(".in-progress").resolve(id);
 		recorder = new RuntimeFlightRecorder(pendingDirectory);
+		video = new PlaytestVideoRecorder(pendingDirectory);
 		Files.writeString(pendingDirectory.resolve("recording-start.json"), GSON.toJson(Map.of("id", id,
 			"startedAt", Instant.now().toString(), "context", context)) + "\n", StandardOpenOption.CREATE_NEW);
 	}
@@ -97,6 +99,7 @@ public final class AutomaticPlaytestRecording {
 	private void finish(EmbodiedAgentRuntime runtime, DashboardObservationStore history, String status, String reason) throws IOException {
 		recordTick(runtime, history);
 		recorder.writeFinalSnapshots(runtime);
+		video.close();
 		Files.writeString(pendingDirectory.resolve("live-recording.jsonl"), GSON.toJson(Map.of(
 			"recordType", "export_complete", "observations", visualCount, "truncated", visualTruncated)) + "\n", StandardOpenOption.APPEND);
 		Map<String, Object> summary = new LinkedHashMap<>(recorder.statusPayload());
@@ -104,6 +107,7 @@ public final class AutomaticPlaytestRecording {
 		summary.put("status", status);
 		summary.put("reason", reason);
 		summary.put("visualHistoryTruncated", visualTruncated);
+		summary.put("screenVideoRequired", true);
 		summary.put("finishedAt", Instant.now().toString());
 		summary.put("outputDir", incidentDirectory.toString());
 		writeJson("summary.json", summary);
@@ -111,6 +115,7 @@ public final class AutomaticPlaytestRecording {
 	}
 
 	private void recordVisualHistory(DashboardObservationStore history) throws IOException {
+		video.checkFailure();
 		var status = history.recordingStatus();
 		long through = ((Number) status.get("latestSequence")).longValue();
 		long to = ((Number) status.get("serverTickId")).longValue();
@@ -119,7 +124,8 @@ public final class AutomaticPlaytestRecording {
 		if (visualSession == null) {
 			var manifest = new LinkedHashMap<>(status);
 			manifest.put("recordType", "manifest");
-			manifest.put("includesFrames", true);
+			manifest.put("includesFrames", false);
+			manifest.put("screenVideo", "screen.mp4");
 			Files.writeString(pendingDirectory.resolve("live-recording.jsonl"), GSON.toJson(manifest) + "\n", StandardOpenOption.CREATE_NEW);
 			// Sequence numbers span dashboard sessions; earlier title-screen observations are not lost playtest data.
 			visualCursor = ((Number) status.get("oldestSequence")).longValue() - 1L;
@@ -130,7 +136,12 @@ public final class AutomaticPlaytestRecording {
 			while (true) {
 				var page = history.recordingPage(0, to, visualCursor, through, 100, Set.of(), true);
 				for (Object observation : (java.util.List<?>) page.get("observations")) {
-					long sequence = ((JsonObject) observation).get("sequence").getAsLong();
+					JsonObject entry = (JsonObject) observation;
+					long sequence = entry.get("sequence").getAsLong();
+					if (entry.get("type").getAsString().equals("visual_frame")) {
+						video.append(entry);
+						entry.getAsJsonObject("payload").remove("imageBase64");
+					}
 					visualTruncated |= sequence > visualCursor + 1L;
 					writer.write(GSON.toJson(observation) + "\n");
 					visualCursor = sequence;

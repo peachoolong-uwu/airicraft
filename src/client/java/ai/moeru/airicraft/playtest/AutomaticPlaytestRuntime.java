@@ -32,6 +32,7 @@ public final class AutomaticPlaytestRuntime {
 		try {
 			if (state == State.IDLE) {
 				Map<String, Object> context = Map.of(
+					"clock", ai.moeru.airicraft.debug.ServerTickDebugRuntime.tickAnchor(),
 					"worldPath", client.getServer().getSavePath(WorldSavePath.ROOT).toString(),
 					"dimension", client.world.getRegistryKey().getValue().toString());
 				String runId = System.getProperty("airicraft.automaticPlaytestId");

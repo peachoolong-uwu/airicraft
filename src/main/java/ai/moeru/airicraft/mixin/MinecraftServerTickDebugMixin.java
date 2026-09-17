@@ -20,6 +20,6 @@ public class MinecraftServerTickDebugMixin {
 
 	@Inject(method = "tick", at = @At("TAIL"))
 	private void airicraft$completeServerTick(BooleanSupplier shouldKeepTicking, CallbackInfo callback) {
-		ServerTickDebugRuntime.completeServerTick();
+		ServerTickDebugRuntime.completeServerTick(((MinecraftServer) (Object) this).getTicks());
 	}
 }

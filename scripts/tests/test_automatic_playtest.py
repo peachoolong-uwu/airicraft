@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("automatic_playtest", Path(__file__).resolve().parents[1] / "automatic_playtest.py")
 playtest = importlib.util.module_from_spec(spec)
@@ -34,6 +35,14 @@ class PlaytestPublicationTest(unittest.TestCase):
         (self.pending / "planner-calls.jsonl").touch()
         (self.pending / "live-recording.jsonl").write_text('{"recordType":"export_complete"}\n')
 
+    def evidence(self, run):
+        summary = json.loads((run / "summary.json").read_text())
+        return run.parent / summary["artifactPlayPath"] / "extensions/airicraft.playtest"
+
+    def assert_world(self, run, expected):
+        with zipfile.ZipFile(self.evidence(run) / "world-save.zip") as archive:
+            self.assertEqual(expected, archive.read("level.dat"))
+
     def write_checkpoint(self):
         (self.pending / "world-save").mkdir()
         (self.pending / "world-save/level.dat").write_bytes(b"paused world")
@@ -43,7 +52,9 @@ class PlaytestPublicationTest(unittest.TestCase):
         play = self.pending / "recorder/v1/server/players/player/plays/connection"
         (play / "capture").mkdir(parents=True)
         (play / "metadata.json").write_text(json.dumps({
-            "connection": {"endedAt": "2026-09-17T00:00:00Z" if complete else None, "endServerTick": 20 if complete else None},
+            "server": {"instanceId": "00000000-0000-4000-8000-000000000001"},
+            "player": {"uuid": "00000000-0000-4000-8000-000000000002"},
+            "connection": {"id": "00000000-0000-4000-8000-000000000003", "startServerTick": 1, "endedAt": "2026-09-17T00:00:00Z" if complete else None, "endServerTick": 20 if complete else None},
             "capture": {"events": "capture/events.jsonl", "replay": "capture/replay.zip", "replayFormat": "flashback"},
         }))
         (play / "capture/events.jsonl").write_text('{"serverTick":1}\n')
@@ -61,8 +72,8 @@ class PlaytestPublicationTest(unittest.TestCase):
         self.assertFalse(self.pending.exists())
         summary = json.loads((path / "summary.json").read_text())
         self.assertEqual("REPORTED", summary["status"])
-        self.assertEqual(relative, summary["recorderPlayPath"])
-        self.assertEqual(b"paused world", (path / "world-save/level.dat").read_bytes())
+        self.assertEqual("../" + relative.removeprefix("recorder/"), summary["recorderPlayPath"])
+        self.assert_world(path, b"paused world")
 
     def test_missing_or_unfinished_replay_never_publishes_a_success(self):
         self.write_play(complete=False)
@@ -70,7 +81,7 @@ class PlaytestPublicationTest(unittest.TestCase):
         path, code = playtest.finalize_recording(self.pending, self.destination, self.world, {"minecraftExited": True}, None, "bug_report")
         self.assertEqual(1, code)
         self.assertEqual(self.destination, path)
-        self.assertTrue((path / "bug-report.json").is_file())
+        self.assertTrue((self.evidence(path) / "bug-report.json").is_file())
         self.assertEqual("CAPTURE_ERROR", json.loads((path / "summary.json").read_text())["harnessStatus"])
 
     def test_never_moves_an_active_writer(self):
@@ -80,11 +91,76 @@ class PlaytestPublicationTest(unittest.TestCase):
         self.assertFalse(self.destination.exists())
         self.assertFalse((path / "world-save").exists())
 
+    def test_extension_keeps_primitive_capture_bytes_and_binds_exact_identity(self):
+        import hashlib
+        play = self.write_play()
+        self.write_checkpoint()
+        hashes = {name: hashlib.sha256((play / name).read_bytes()).hexdigest()
+                  for name in ("metadata.json", "capture/events.jsonl", "capture/replay.zip")}
+        path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
+            {"minecraftExited": True}, None, "bug_report")
+        self.assertEqual(0, code)
+        extension = self.evidence(path)
+        published = extension.parent.parent
+        for name, digest in hashes.items():
+            self.assertEqual(digest, hashlib.sha256((published / name).read_bytes()).hexdigest())
+        manifest = json.loads((extension / "manifest.json").read_text())
+        self.assertEqual("airicraft.playtest", manifest["extensionType"])
+        self.assertEqual("00000000-0000-4000-8000-000000000003", manifest["play"]["connectionId"])
+        self.assertTrue(all((extension / asset["path"]).is_file() for asset in manifest["assets"]))
+        self.assertFalse((path / "live-recording.jsonl").exists())
+
+    def test_recovery_after_atomic_publication_does_not_duplicate_or_lose_evidence(self):
+        self.write_play()
+        self.write_checkpoint()
+        with patch.object(playtest.artifact, "discard_published_sources", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                playtest.finalize_recording(self.pending, self.destination, self.world,
+                    {"minecraftExited": True}, None, "bug_report")
+        self.assertTrue(self.pending.exists())
+        self.assertFalse(self.destination.exists())
+        path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
+            {"minecraftExited": True}, None, "recovered")
+        self.assertEqual(0, code)
+        self.assert_world(path, b"paused world")
+        self.assertEqual(1, len(list(path.parent.glob("v1/*/players/*/plays/*/metadata.json"))))
+
+    def test_publication_failure_preserves_original_sources(self):
+        self.write_play()
+        self.write_checkpoint()
+        with patch.object(playtest.artifact, "_copy_evidence", side_effect=OSError("disk full")):
+            path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
+                {"minecraftExited": True}, None, "bug_report")
+        self.assertEqual(1, code)
+        self.assertTrue((path / "live-recording.jsonl").is_file())
+        self.assertTrue((path / "world-save/level.dat").is_file())
+        self.assertTrue(list((path / "recorder").rglob("metadata.json")))
+
+    def test_prejoin_failure_remains_a_harness_archive_without_fabricated_play(self):
+        path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
+            {"minecraftExited": True}, "Could not join", "startup_failed")
+        self.assertEqual(1, code)
+        self.assertNotIn("artifactPlayPath", json.loads((path / "summary.json").read_text()))
+        self.assertTrue((path / "live-recording.jsonl").is_file())
+
+    def test_interrupted_report_keeps_other_evidence_viewable(self):
+        self.write_play()
+        self.write_checkpoint()
+        (self.pending / "bug-report.json").write_bytes(b'{"description":')
+        path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
+            {"minecraftExited": True}, "Client crashed", "crash")
+        self.assertEqual(1, code)
+        extension = self.evidence(path)
+        self.assertEqual(b'{"description":', (extension / "bug-report.json").read_bytes())
+        descriptor = json.loads((extension / "playtest.json").read_text())
+        self.assertFalse(descriptor["run"]["recordingComplete"])
+        self.assertIsNone(descriptor["bugReport"])
+
     def test_normal_exits_and_time_limits_archive_the_complete_dataset_without_a_bug(self):
         for reason in ("manual_interrupt", "client_exit", "world_left", "time_limit"):
             with self.subTest(reason=reason):
                 if self.destination.exists():
-                    self.destination.rename(self.pending)
+                    self.setUp()
                 (self.pending / "bug-report.json").unlink(missing_ok=True)
                 (self.pending / "summary.json").write_text(json.dumps({"status": "FINISHED"}))
                 if not (self.pending / "recorder").exists():
@@ -97,8 +173,8 @@ class PlaytestPublicationTest(unittest.TestCase):
                 self.assertTrue(summary["recordingComplete"])
                 self.assertFalse(summary["bugReported"])
                 self.assertEqual(reason, summary["terminationReason"])
-                self.assertEqual(b"stopped world", (path / "world-save/level.dat").read_bytes())
-                self.assertFalse(json.loads((path / "world-save.json").read_text())["capturedWhilePaused"])
+                self.assert_world(path, b"stopped world")
+                self.assertFalse(json.loads((self.evidence(path) / "world-save.json").read_text())["capturedWhilePaused"])
 
     def test_crash_archives_partial_evidence_without_claiming_it_is_complete(self):
         (self.pending / "bug-report.json").unlink()
@@ -118,8 +194,9 @@ class PlaytestPublicationTest(unittest.TestCase):
         self.assertFalse(summary["recordingComplete"])
         self.assertFalse(summary["bugReported"])
         self.assertIn("agent-status-final.json", summary["missingArtifacts"])
-        self.assertEqual(b'{"event":"last flush"}\n{"partial":', (path / "events.jsonl").read_bytes())
-        self.assertEqual(b"unfinished replay data", (path / "recorder/server-replay/unfinished/chunks").read_bytes())
+        self.assertEqual(b'{"event":"last flush"}\n{"partial":', __import__("gzip").decompress((self.evidence(path) / "events.jsonl.gz").read_bytes()))
+        with zipfile.ZipFile(self.evidence(path) / "recorder-server-replay.zip") as archive:
+            self.assertEqual(b"unfinished replay data", archive.read("unfinished/chunks"))
 
     def test_recovery_refuses_a_live_launcher_without_touching_recording(self):
         (self.pending / "launch.json").write_text(json.dumps({"launcherPid": os.getpid(), "workerDirectory": str(self.world.parent)}))
@@ -140,7 +217,7 @@ class PlaytestPublicationTest(unittest.TestCase):
         self.write_play()
         self.assertEqual(1, playtest.recover_recording(self.pending))
         self.assertFalse(self.pending.exists())
-        self.assertEqual(b"legacy saved world", (self.destination / "world-save/level.dat").read_bytes())
+        self.assert_world(self.destination, b"legacy saved world")
         self.assertEqual("INCOMPLETE", json.loads((self.destination / "summary.json").read_text())["status"])
 
     def test_recovery_refuses_an_old_live_world_without_process_metadata(self):
@@ -168,7 +245,7 @@ class PlaytestPublicationTest(unittest.TestCase):
             {"minecraftExited": True}, None, "bug_report")
         self.assertEqual(1, code)
         self.assertFalse(json.loads((path / "summary.json").read_text())["recordingComplete"])
-        self.assertTrue((path / "live-recording.jsonl").exists())
+        self.assertTrue((self.evidence(path) / "live-recording.jsonl.gz").exists())
 
     def test_a_torn_summary_write_keeps_its_bytes_and_the_rest_of_the_capture(self):
         self.write_play()
@@ -176,7 +253,7 @@ class PlaytestPublicationTest(unittest.TestCase):
         path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
             {"minecraftExited": True}, "Client crashed", "crash")
         self.assertEqual(1, code)
-        self.assertEqual(b'{"status":', (path / "summary-incomplete.json").read_bytes())
+        self.assertEqual(b'{"status":', (self.evidence(path) / "summary-incomplete.json").read_bytes())
         self.assertEqual("INCOMPLETE", json.loads((path / "summary.json").read_text())["status"])
 
     def test_completed_play_cannot_substitute_for_a_missing_paused_checkpoint(self):

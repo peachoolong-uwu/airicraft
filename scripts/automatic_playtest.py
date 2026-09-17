@@ -12,6 +12,7 @@ from pathlib import Path
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -23,6 +24,9 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 evaluation = importlib.util.module_from_spec(spec)
 sys.modules[loader.name] = evaluation
 loader.exec_module(evaluation)
+artifact_spec = importlib.util.spec_from_file_location("playtest_artifact", REPO / "scripts/playtest_artifact.py")
+artifact = importlib.util.module_from_spec(artifact_spec)
+artifact_spec.loader.exec_module(artifact)
 
 
 def prepare_game(world: Path, worker: Path, pending: Path) -> Path:
@@ -47,6 +51,15 @@ def finalize_recording(pending: Path, destination: Path, world: Path, client_exi
             "harnessStatus": "CAPTURE_ERROR", "clientExit": client_exit,
             "message": "Minecraft did not exit; recording writers may still be active"})
         return pending, 1
+    # A crashed JVM closes the encoder pipe; wait for the final MP4 fragment before publication.
+    encoder = artifact.read_json(pending / "screen-encoder.json", {})
+    encoder_deadline = time.monotonic() + 30
+    while evaluation.process_alive(encoder.get("pid", -1)):
+        if time.monotonic() >= encoder_deadline:
+            evaluation.write_json(pending / "harness-summary.json", {
+                "harnessStatus": "CAPTURE_ERROR", "message": "Screen encoder is still writing; recover after it exits"})
+            return pending, 1
+        time.sleep(0.2)
     summary_file = pending / "summary.json"
     try:
         summary = json.loads(summary_file.read_text()) if summary_file.exists() else {}
@@ -54,6 +67,10 @@ def finalize_recording(pending: Path, destination: Path, world: Path, client_exi
         shutil.copy2(summary_file, pending / "summary-incomplete.json")
         summary = {}
         failure = failure or "Interrupted summary write"
+    if summary.get("artifactPlayPath") and artifact.published_play(pending, destination.parent) is not None:
+        artifact.discard_published_sources(pending)
+        pending.rename(destination)
+        return destination, 0 if summary.get("recordingComplete") else 1
     flight_finished = summary.get("status") in ("CAPTURE_READY", "FINISHED")
     reported = (pending / "bug-report.json").is_file()
     harness = {"harnessStatus": "OK", "message": failure, "clientExit": client_exit}
@@ -93,6 +110,21 @@ def finalize_recording(pending: Path, destination: Path, world: Path, client_exi
                    outputDir=str(destination))
     evaluation.write_json(pending / "harness-summary.json", harness)
     evaluation.write_json(summary_file, summary)
+    try:
+        play = artifact.publish(pending, destination.parent)
+        if play is not None:
+            summary = json.loads(summary_file.read_text())
+            complete = summary["recordingComplete"]
+            harness["recorderPlayPath"] = summary["recorderPlayPath"]
+            harness["harnessStatus"] = summary["harnessStatus"]
+            harness["message"] = summary.get("message")
+            evaluation.write_json(pending / "harness-summary.json", harness)
+            artifact.discard_published_sources(pending)
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        complete = False
+        summary.update(status="INCOMPLETE", recordingComplete=False, harnessStatus="CAPTURE_ERROR",
+                       message=f"Playtest extension publication failed: {error}")
+        evaluation.write_json(summary_file, summary)
     # Retain partial/crashed runs too; dataset consumers select recordingComplete explicitly.
     pending.rename(destination)
     return destination, 0 if complete else 1
@@ -102,6 +134,12 @@ def recover_recording(pending: Path) -> int:
     pending = pending.resolve()
     if pending.parent.name != ".in-progress":
         raise ValueError("--recover requires a run directory under .in-progress")
+    if artifact.published_play(pending, pending.parent.parent) is not None:
+        # The canonical move proves writers stopped. Cleanup may already have removed launch.json.
+        result, code = finalize_recording(pending, pending.parent.parent / pending.name, pending / "world-save",
+            {"method": "OFFLINE_RECOVERY", "minecraftExited": True}, None, "recovered")
+        print(json.dumps({"outputDir": str(result), "status": json.loads((result / "summary.json").read_text())["status"]}))
+        return code
     launch = json.loads((pending / "launch.json").read_text())
     worker = Path(launch["workerDirectory"])
     processes_file = pending / "processes.json"
@@ -129,6 +167,8 @@ def interrupt_run(signum, frame):
 
 
 def run(args: argparse.Namespace) -> int:
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise ValueError("Automatic playtests require ffmpeg and ffprobe on PATH for MP4 screen capture")
     world = args.world.resolve()
     if not (world / "level.dat").is_file():
         raise ValueError(f"Not a Minecraft world directory: {world}")
