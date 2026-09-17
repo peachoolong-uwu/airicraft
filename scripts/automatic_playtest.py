@@ -5,6 +5,7 @@ import argparse
 import importlib.machinery
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -86,7 +87,8 @@ def run(args: argparse.Namespace) -> int:
     game = prepare_game(world, worker, pending)
     bridge_file = worker / "bridge-state.json"
     evaluation.write_json(pending / "launch.json", {"id": run_id, "sourceWorld": str(world), "objective": args.objective,
-                                                   "workerDirectory": str(worker), "recordingProfile": str(profile)})
+                                                   "workerDirectory": str(worker), "recordingProfile": str(profile),
+                                                   "maxSeconds": args.max_seconds})
     command = shlex.join([
         "./gradlew", "--no-daemon", "-Pairicraft.includeEvaluator=true",
         "-Pairicraft.automaticPlaytest=true", f"-Pairicraft.automaticPlaytestId={run_id}",
@@ -107,7 +109,7 @@ def run(args: argparse.Namespace) -> int:
         if len(worlds) != 1:
             raise RuntimeError("Expected exactly one copied playtest world")
         evaluation.bridge_json(bridge, "POST", "/v1/worlds/join", {"worldId": worlds[0]["worldId"]})
-        deadline = time.monotonic() + args.max_seconds
+        deadline = time.monotonic() + args.max_seconds if args.max_seconds else math.inf
         objective_sent = not bool(args.objective)
         while time.monotonic() < deadline:
             if client.process.poll() is not None:
@@ -118,7 +120,7 @@ def run(args: argparse.Namespace) -> int:
                 if error.status != 500:
                     raise
                 # World loading can hold the render thread past the bridge's short timeout.
-                # The wall-clock run budget still bounds an actually hung client.
+                # A configured wall-clock run budget still bounds an actually hung client.
                 time.sleep(0.5)
                 continue
             except OSError:
@@ -165,11 +167,13 @@ def main() -> int:
     parser.add_argument("--objective", help="Send this instruction to the planner after joining; omit to use in-game chat.")
     parser.add_argument("--recorder-jar", help="Prebuilt recording profile; defaults to AIRICRAFT_RECORDER_JAR.")
     parser.add_argument("--output", type=Path, default=REPO / "automatic_playtest")
-    parser.add_argument("--max-seconds", type=float, default=1800, help="Wall-clock budget after joining, including hangs (default 1800).")
+    parser.add_argument("--max-seconds", type=float, default=1800, help="Wall-clock budget after joining, including hangs; 0 means no time limit (default 1800).")
     parser.add_argument("--startup-timeout", type=float, default=240)
     args = parser.parse_args()
-    if args.max_seconds <= 0 or args.startup_timeout <= 0:
-        parser.error("Timeouts must be positive")
+    if not math.isfinite(args.max_seconds) or args.max_seconds < 0:
+        parser.error("--max-seconds must be finite and nonnegative; 0 means no time limit")
+    if not math.isfinite(args.startup_timeout) or args.startup_timeout <= 0:
+        parser.error("--startup-timeout must be finite and positive")
     try:
         return run(args)
     except (ValueError, OSError, evaluation.RunnerError) as error:
