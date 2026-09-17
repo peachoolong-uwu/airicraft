@@ -2,6 +2,7 @@ package ai.moeru.airicraft.evaluator;
 
 import ai.moeru.airicraft.Airicraft;
 import ai.moeru.airicraft.agent.EmbodiedAgentRuntime;
+import ai.moeru.airicraft.agent.recording.RuntimeFlightRecorder;
 import ai.moeru.airicraft.agent.evaluation.EvaluationReport;
 import ai.moeru.airicraft.agent.evaluation.EvaluationScenario;
 import ai.moeru.airicraft.agent.evaluation.EvaluationStatus;
@@ -15,7 +16,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -27,13 +27,8 @@ public final class EvaluationFlightRecorder {
 	private EvaluationScenario scenario;
 	private String startedAt;
 	private long nextStatusSampleTick;
-	private Long latestEventSeqNo;
-	private Long latestTimelineEntryId;
-	private Long latestLlmSequenceId;
-	private boolean eventsTruncated;
-	private boolean timelineTruncated;
-	private boolean llmCallsTruncated;
 	private boolean terminalWritten;
+	private RuntimeFlightRecorder runtimeRecorder;
 
 	public void start(
 		EvaluationScenario nextScenario,
@@ -44,15 +39,9 @@ public final class EvaluationFlightRecorder {
 		this.scenario = nextScenario;
 		this.startedAt = now();
 		this.nextStatusSampleTick = 0L;
-		this.latestEventSeqNo = null;
-		this.latestTimelineEntryId = null;
-		this.latestLlmSequenceId = null;
-		this.eventsTruncated = false;
-		this.timelineTruncated = false;
-		this.llmCallsTruncated = false;
 		this.terminalWritten = false;
 		try {
-			Files.createDirectories(outputDir);
+			runtimeRecorder = new RuntimeFlightRecorder(outputDir);
 			writeJson(outputDir.resolve("recording-start.json"), Map.of(
 				"startedAt", startedAt,
 				"scenario", nextScenario.id(),
@@ -81,9 +70,8 @@ public final class EvaluationFlightRecorder {
 		try {
 			Files.createDirectories(outputDir);
 			String collectedAt = now();
-			drainEvents(runtime, collectedAt);
-			drainTimeline(runtime, collectedAt);
-			drainLlmCalls(runtime, collectedAt);
+			if (runtimeRecorder == null) runtimeRecorder = new RuntimeFlightRecorder(outputDir);
+			runtimeRecorder.recordTick(runtime);
 			boolean terminal = terminal(report.status());
 			if (runtime.tickCount() >= nextStatusSampleTick || terminal) {
 				appendJsonl(outputDir.resolve("status-samples.jsonl"), Map.of(
@@ -109,51 +97,24 @@ public final class EvaluationFlightRecorder {
 		payload.put("active", outputDir != null);
 		payload.put("outputDir", outputDir == null ? null : outputDir.toString());
 		payload.put("scenarioId", scenario == null ? null : scenario.id());
-		payload.put("eventsTruncated", eventsTruncated);
-		payload.put("timelineTruncated", timelineTruncated);
-		payload.put("llmCallsTruncated", llmCallsTruncated);
+		payload.put("eventsTruncated", recordingStatus().get("eventsTruncated"));
+		payload.put("timelineTruncated", recordingStatus().get("debugTimelineTruncated"));
+		payload.put("llmCallsTruncated", recordingStatus().get("llmCallsTruncated"));
 		return payload;
 	}
 
 	public void reset() {
+		runtimeRecorder = null;
 		outputDir = null;
 		scenario = null;
 		startedAt = null;
 		nextStatusSampleTick = 0L;
-		latestEventSeqNo = null;
-		latestTimelineEntryId = null;
-		latestLlmSequenceId = null;
-		eventsTruncated = false;
-		timelineTruncated = false;
-		llmCallsTruncated = false;
 		terminalWritten = false;
 	}
 
-	private void drainEvents(EmbodiedAgentRuntime runtime, String collectedAt) throws IOException {
-		var result = runtime.recentEvents(latestEventSeqNo);
-		latestEventSeqNo = result.latestSeqNo();
-		eventsTruncated = eventsTruncated || result.truncated();
-		for (var event : result.events()) {
-			appendJsonl(outputDir.resolve("events.jsonl"), Map.of("collectedAt", collectedAt, "event", event));
-		}
-	}
-
-	private void drainTimeline(EmbodiedAgentRuntime runtime, String collectedAt) throws IOException {
-		var result = runtime.debugTimeline(latestTimelineEntryId);
-		latestTimelineEntryId = result.latestEntryId();
-		timelineTruncated = timelineTruncated || result.truncated();
-		for (var entry : result.entries()) {
-			appendJsonl(outputDir.resolve("debug-timeline.jsonl"), Map.of("collectedAt", collectedAt, "entry", entry));
-		}
-	}
-
-	private void drainLlmCalls(EmbodiedAgentRuntime runtime, String collectedAt) throws IOException {
-		var result = runtime.llmFlightRecords(latestLlmSequenceId);
-		latestLlmSequenceId = result.latestSequenceId();
-		llmCallsTruncated = llmCallsTruncated || result.truncated();
-		for (var record : result.records()) {
-			appendJsonl(outputDir.resolve("llm-calls.jsonl"), Map.of("collectedAt", collectedAt, "record", record));
-		}
+	private Map<String, Object> recordingStatus() {
+		return runtimeRecorder == null ? Map.of("eventsTruncated", false, "debugTimelineTruncated", false, "llmCallsTruncated", false)
+			: runtimeRecorder.statusPayload();
 	}
 
 	private void writeSummary(EvaluationReport report, String finishedAt) throws IOException {
@@ -171,12 +132,7 @@ public final class EvaluationFlightRecorder {
 		summary.put("plannerTurns", report.plannerTurns());
 		summary.put("evidenceReviewRequired", report.evidenceReviewRequired());
 		summary.put("outputDir", outputDir.toString());
-		summary.put("latestEventSeqNo", latestEventSeqNo);
-		summary.put("debugTimelineLatestEntryId", latestTimelineEntryId);
-		summary.put("llmCallsLatestSequenceId", latestLlmSequenceId);
-		summary.put("eventsTruncated", eventsTruncated);
-		summary.put("debugTimelineTruncated", timelineTruncated);
-		summary.put("llmCallsTruncated", llmCallsTruncated);
+		summary.putAll(recordingStatus());
 		writeJson(outputDir.resolve("summary.json"), summary);
 	}
 
@@ -185,23 +141,9 @@ public final class EvaluationFlightRecorder {
 		EmbodiedAgentRuntime runtime,
 		Supplier<Map<String, Object>> evidenceSupplier
 	) throws IOException {
-		runtime.finalizePlannerCallRecordsForEvaluation();
+		runtimeRecorder.writeFinalSnapshots(runtime);
 		writeJson(outputDir.resolve("results-final.json"), Map.of("available", true, "report", report));
 		writeJson(outputDir.resolve("evidence-final.json"), evidenceSupplier.get());
-		writeJson(outputDir.resolve("agent-status-final.json"), Map.of(
-			"available", true,
-			"session", runtime.sessionSnapshot(),
-			"task", runtime.taskSnapshot(),
-			"taskExecution", runtime.taskExecutionSnapshot(),
-			"missionExecution", runtime.missionExecutionSnapshot(),
-			"activeJob", runtime.activeJob(),
-			"degraded", runtime.isDegraded()
-		));
-		writeJson(outputDir.resolve("agent-events-final.json"), runtime.recentEvents(null));
-		writeJson(outputDir.resolve("agent-debug-timeline-final.json"), runtime.debugTimeline(null));
-		writeJson(outputDir.resolve("agent-debug-llm-calls-final.json"), runtime.llmFlightRecords(null));
-		writeJsonlSnapshot(outputDir.resolve("planner-calls.jsonl"), runtime.plannerCallRecords());
-		writeJson(outputDir.resolve("world-evidence-final.json"), runtime.currentWorldEvidence());
 	}
 
 	private static boolean terminal(EvaluationStatus status) {
@@ -221,19 +163,6 @@ public final class EvaluationFlightRecorder {
 		Files.writeString(
 			path,
 			GSON.toJson(value) + "\n",
-			StandardOpenOption.CREATE,
-			StandardOpenOption.TRUNCATE_EXISTING
-		);
-	}
-
-	private static void writeJsonlSnapshot(Path path, List<?> values) throws IOException {
-		StringBuilder content = new StringBuilder();
-		for (Object value : values) {
-			content.append(GSON.toJson(value)).append('\n');
-		}
-		Files.writeString(
-			path,
-			content,
 			StandardOpenOption.CREATE,
 			StandardOpenOption.TRUNCATE_EXISTING
 		);
