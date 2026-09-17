@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
@@ -57,15 +58,27 @@ def video_index(run: Path, offset: int) -> dict:
     if not video.is_file() or not index.is_file():
         return {"frames": [], "complete": False}
     result = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "packet=pts_time", "-of", "json", str(video)], capture_output=True, text=True, timeout=60)
+        "-show_entries", "packet=pts_time:stream=width,height,r_frame_rate", "-of", "json", str(video)], capture_output=True, text=True, timeout=60)
     # A crash can leave an incomplete final fragment. Expose only the retained packet range.
-    packets = json.loads(result.stdout or "{}").get("packets", [])
+    probe = json.loads(result.stdout or "{}")
+    packets = probe.get("packets", [])
     end = max((float(packet["pts_time"]) for packet in packets if "pts_time" in packet), default=-1)
     raw = list(complete_lines(index))
     frames = [{"videoSeconds": frame["videoSeconds"],
                "serverTick": str(int(frame["serverTickId"]) - offset)}
               for frame in raw if frame["videoSeconds"] <= end]
-    return {"frames": frames, "complete": result.returncode == 0 and bool(frames) and len(frames) == len(raw)}
+    with index.open("rb") as source:
+        if index.stat().st_size:
+            source.seek(-1, 2)
+        index_finished = source.read() == b"\n"
+    stream = next(iter(probe.get("streams", [])), {})
+    numerator, denominator = map(float, stream.get("r_frame_rate", "1/1").split("/"))
+    if not math.isfinite(numerator) or not math.isfinite(denominator) or numerator <= 0 or denominator <= 0:
+        raise ValueError("Screen video has no valid frame rate")
+    fps = numerator / denominator
+    return {"frames": frames, "complete": result.returncode == 0 and index_finished and bool(frames) and len(frames) == len(raw),
+            "width": stream.get("width", 0), "height": stream.get("height", 0), "framesPerSecond": fps,
+            "frameCount": str(len(packets)), "durationSeconds": end + 1 / fps, "sizeBytes": str(video.stat().st_size)}
 
 
 def _asset(path: str, role: str, media: str, schema: str) -> dict:
@@ -120,15 +133,30 @@ def publish(run: Path, artifacts: Path) -> Path | None:
     start = int(connection["startServerTick"])
     end = connection.get("endServerTick")
     warnings = []
+    consolidated = set()
 
     def optional_evidence(name):
         try:
-            return read_json(run / name, {})
+            value = read_json(run / name, {})
+            consolidated.add(name)
+            return value
         except json.JSONDecodeError:
             warnings.append(f"Interrupted {name}; original bytes retained")
             return {}
 
-    context = optional_evidence("recording-start.json").get("context", {})
+    recording_start = optional_evidence("recording-start.json")
+    context = recording_start.get("context", {})
+    launch = optional_evidence("launch.json")
+    checkpoint = optional_evidence("world-save.json")
+    pause_snapshot = optional_evidence("pause.json")
+    optional_evidence("processes.json")
+    optional_evidence("screen-encoder.json")
+    final_state = {}
+    for name, key in (("agent-status-final.json", "agent"), ("agent-events-final.json", "events"),
+                      ("agent-debug-timeline-final.json", "debugTimeline"), ("agent-debug-llm-calls-final.json", "llmCalls"),
+                      ("world-evidence-final.json", "world")):
+        if (run / name).exists():
+            final_state[key] = optional_evidence(name)
     clock = context.get("clock")
     offset = int(clock["debugServerTick"]) - int(clock["serverTick"]) if clock else None
     try:
@@ -153,6 +181,13 @@ def publish(run: Path, artifacts: Path) -> Path | None:
     pause = optional_evidence("pause-verification.json")
     if report and offset is not None and "serverTickId" in pause:
         report = {**report, "serverTick": str(int(pause["serverTickId"]) - offset)}
+    pause_details = {key: pause[key] for key in ("paused", "serverPaused", "frameStatus", "clientTickId") if key in pause}
+    if "serverTickId" in pause and offset is not None:
+        pause_details["serverTick"] = str(int(pause["serverTickId"]) - offset)
+    if "serverTickId" in checkpoint and offset is not None:
+        checkpoint["serverTick"] = str(int(checkpoint.pop("serverTickId")) - offset)
+    if (run / "world-save").is_dir():
+        checkpoint["asset"] = "world-save.zip"
     if warnings:
         summary.update(recordingComplete=False, status="INCOMPLETE", harnessStatus="CAPTURE_ERROR",
                        publicationWarnings=warnings, message=summary.get("message") or warnings[0])
@@ -163,13 +198,28 @@ def publish(run: Path, artifacts: Path) -> Path | None:
     extension = parent / EXTENSION_TYPE
     temporary = parent / ("." + EXTENSION_TYPE + "-" + str(uuid.uuid4()))
     temporary.mkdir(parents=True)
-    assets = [_asset("playtest.json", "playtest", "application/json", SCHEMA),
-              _asset("video-index.json", "video_index", "application/json", "airicraft.screen-index.v1")]
+    assets = [_asset("playtest.json", "playtest", "application/json", SCHEMA)]
     files = []
     try:
-        write_json(temporary / "video-index.json", video)
+        # Media has one canonical home, shared with replay-derived FPV videos.
+        # Build it before the server directory's atomic publication; sources survive failures.
+        if (run / "screen.mp4").is_file():
+            renders = play / "renders"
+            renders.mkdir(exist_ok=True)
+            shutil.copyfile(run / "screen.mp4", renders / "fpv.mp4")
+            write_json(renders / "fpv.json", {"schemaVersion": 1, **identity,
+                **{key: value for key, value in video.items() if key != "error"}})
+            if video["complete"]:
+                consolidated.add("screen-frames.jsonl")
+        consolidated.update(("summary.json", "harness-summary.json", "screen.mp4"))
+        if final_state:
+            final_path = temporary / "flight-final.json.gz"
+            with gzip.open(final_path, "wt", compresslevel=3) as output:
+                json.dump(final_state, output, ensure_ascii=False, separators=(",", ":"))
+            assets.append(_asset(final_path.name, "final_state", "application/gzip", "airicraft.evidence.v1"))
+            files.append({"path": final_path.name, "bytes": final_path.stat().st_size})
         for source in sorted(run.iterdir()):
-            if source.name == "recorder":
+            if source.name == "recorder" or source.name in consolidated:
                 continue
             if source.is_symlink():
                 raise ValueError(f"Evidence cannot contain symlinks: {source}")
@@ -180,7 +230,7 @@ def publish(run: Path, artifacts: Path) -> Path | None:
             else:
                 name, media = _copy_evidence(source, temporary / source.name)
                 target = temporary / name
-            role = {"screen.mp4": "screen_video", "live-recording.jsonl.gz": "observations",
+            role = {"live-recording.jsonl.gz": "observations",
                     "world-save.zip": "world_checkpoint"}.get(target.name, "evidence")
             assets.append(_asset(target.name, role, media, "airicraft.evidence.v1"))
             files.append({"path": target.name, "bytes": target.stat().st_size})
@@ -198,12 +248,25 @@ def publish(run: Path, artifacts: Path) -> Path | None:
                 target = temporary / name
             assets.append(_asset(target.name, "recorder_scratch", media, "airicraft.evidence.v1"))
             files.append({"path": target.name, "bytes": target.stat().st_size})
-        write_json(temporary / "summary.json", summary)
-        write_json(temporary / "harness-summary.json", harness)
-        for file in files:
-            file["bytes"] = (temporary / file["path"]).stat().st_size
-        write_json(temporary / "playtest.json", {"schemaVersion": 1, "run": summary,
-            "timeline": timeline, "debugTickOffset": offset, "bugReport": report, "files": files})
+        # Operational staging files are a journal, not the portable dataset schema.
+        # Keep each analysis fact once; process IDs and vanished worker paths have no durable meaning.
+        portable_run = {key: summary[key] for key in ("id", "status", "terminationReason", "recordingComplete",
+            "harnessStatus", "message", "missingArtifacts", "finishedAt", "publicationWarnings") if key in summary}
+        portable_run.update(startedAt=recording_start.get("startedAt"), objective=launch.get("objective"),
+                            maxSeconds=launch.get("maxSeconds"))
+        capture = {key: summary[key] for key in ("eventsTruncated", "debugTimelineTruncated", "llmCallsTruncated",
+            "visualHistoryTruncated", "latestEventSeqNo", "debugTimelineLatestEntryId", "llmCallsLatestSequenceId") if key in summary}
+        capture["screenComplete"] = video["complete"]
+        if video.get("error"):
+            capture["screenError"] = video["error"]
+        client_exit = harness.get("clientExit", {})
+        execution = {key: client_exit[key] for key in ("method", "finalReturnCode", "minecraftExited") if key in client_exit}
+        write_json(temporary / "playtest.json", {"schemaVersion": 1, "run": portable_run,
+            "timeline": timeline, "debugTickOffset": offset, "bugReport": report,
+            "environment": {"dimension": context.get("dimension"),
+                "sourceWorld": Path(launch["sourceWorld"]).name if launch.get("sourceWorld") else None},
+            "capture": capture, "execution": execution, "pause": pause_details or None,
+            "checkpoint": checkpoint or None, "pausedState": pause_snapshot.get("snapshot"), "files": files})
         write_json(temporary / "manifest.json", {"manifestVersion": 1, "extensionType": EXTENSION_TYPE,
             "play": identity, "timeDomain": "PLAY_EXTENSION_TIME_DOMAIN_SERVER_TICK", "assets": assets})
         if extension.exists():
@@ -228,9 +291,9 @@ def publish(run: Path, artifacts: Path) -> Path | None:
 
 
 def discard_published_sources(run: Path):
-    """The small run index remains; all evidence now belongs to the published extension."""
+    """The small run index remains; all evidence now belongs to the published Play."""
     for source in run.iterdir():
-        if source.name in ("summary.json", "harness-summary.json"):
+        if source.name == "summary.json":
             continue
         if source.is_dir():
             shutil.rmtree(source)

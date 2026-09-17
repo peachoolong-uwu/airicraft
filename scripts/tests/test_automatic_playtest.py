@@ -81,7 +81,7 @@ class PlaytestPublicationTest(unittest.TestCase):
         path, code = playtest.finalize_recording(self.pending, self.destination, self.world, {"minecraftExited": True}, None, "bug_report")
         self.assertEqual(1, code)
         self.assertEqual(self.destination, path)
-        self.assertTrue((self.evidence(path) / "bug-report.json").is_file())
+        self.assertEqual("suspected interface bug", json.loads((self.evidence(path) / "playtest.json").read_text())["bugReport"]["description"])
         self.assertEqual("CAPTURE_ERROR", json.loads((path / "summary.json").read_text())["harnessStatus"])
 
     def test_never_moves_an_active_writer(self):
@@ -109,6 +109,47 @@ class PlaytestPublicationTest(unittest.TestCase):
         self.assertEqual("00000000-0000-4000-8000-000000000003", manifest["play"]["connectionId"])
         self.assertTrue(all((extension / asset["path"]).is_file() for asset in manifest["assets"]))
         self.assertFalse((path / "live-recording.jsonl").exists())
+
+    def test_native_fpv_and_consolidated_metadata_have_single_homes(self):
+        self.write_play()
+        self.write_checkpoint()
+        (self.pending / "screen.mp4").write_bytes(b"video")
+        (self.pending / "screen-frames.jsonl").write_text('{"videoSeconds":0,"serverTickId":20}\n')
+        (self.pending / "recording-start.json").write_text(json.dumps({
+            "startedAt": "2026-09-17T00:00:00Z", "context": {"clock": {"serverTick": 10, "debugServerTick": 20}, "dimension": "minecraft:overworld"}}))
+        (self.pending / "launch.json").write_text(json.dumps({"objective": "Build and survive", "maxSeconds": 0, "launcherPid": 123}))
+        probe = subprocess.CompletedProcess([], 0, json.dumps({"packets": [{"pts_time": "0"}],
+            "streams": [{"width": 640, "height": 360, "r_frame_rate": "1/1"}]}), "")
+        with patch.object(playtest.artifact.subprocess, "run", return_value=probe):
+            path, code = playtest.finalize_recording(self.pending, self.destination, self.world,
+                {"minecraftExited": True}, None, "bug_report")
+        self.assertEqual(0, code)
+        extension = self.evidence(path)
+        renders = extension.parent.parent / "renders"
+        self.assertEqual(b"video", (renders / "fpv.mp4").read_bytes())
+        fpv = json.loads((renders / "fpv.json").read_text())
+        self.assertEqual([{"serverTick": "10", "videoSeconds": 0}], fpv["frames"])
+        self.assertEqual("5", fpv["sizeBytes"])
+        metadata = json.loads((extension / "playtest.json").read_text())
+        self.assertEqual("Build and survive", metadata["run"]["objective"])
+        self.assertEqual("10", metadata["checkpoint"]["serverTick"])
+        self.assertEqual("10", metadata["bugReport"]["serverTick"])
+        self.assertTrue((extension / "flight-final.json.gz").exists())
+        self.assertEqual({"manifest.json", "playtest.json"}, {file.name for file in extension.glob("*.json")})
+        self.assertFalse((extension / "screen.mp4").exists())
+        self.assertFalse((extension / "screen-frames.jsonl.gz").exists())
+        self.assertNotIn("launcherPid", json.dumps(metadata))
+        self.assertEqual(["summary.json"], [file.name for file in path.iterdir()])
+
+    def test_partial_video_index_retains_its_original_tail(self):
+        (self.pending / "screen.mp4").write_bytes(b"retained video")
+        (self.pending / "screen-frames.jsonl").write_bytes(b'{"videoSeconds":0,"serverTickId":20}\n{"videoSeconds":')
+        probe = subprocess.CompletedProcess([], 0, json.dumps({"packets": [{"pts_time": "0"}],
+            "streams": [{"width": 640, "height": 360, "r_frame_rate": "1/1"}]}), "")
+        with patch.object(playtest.artifact.subprocess, "run", return_value=probe):
+            result = playtest.artifact.video_index(self.pending, 0)
+        self.assertFalse(result["complete"])
+        self.assertEqual([{"serverTick": "20", "videoSeconds": 0}], result["frames"])
 
     def test_recovery_after_atomic_publication_does_not_duplicate_or_lose_evidence(self):
         self.write_play()
@@ -174,7 +215,7 @@ class PlaytestPublicationTest(unittest.TestCase):
                 self.assertFalse(summary["bugReported"])
                 self.assertEqual(reason, summary["terminationReason"])
                 self.assert_world(path, b"stopped world")
-                self.assertFalse(json.loads((self.evidence(path) / "world-save.json").read_text())["capturedWhilePaused"])
+                self.assertFalse(json.loads((self.evidence(path) / "playtest.json").read_text())["checkpoint"]["capturedWhilePaused"])
 
     def test_crash_archives_partial_evidence_without_claiming_it_is_complete(self):
         (self.pending / "bug-report.json").unlink()
