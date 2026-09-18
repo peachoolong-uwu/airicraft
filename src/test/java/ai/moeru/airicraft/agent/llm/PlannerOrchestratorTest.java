@@ -1011,6 +1011,55 @@ class PlannerOrchestratorTest {
 		}
 	}
 
+	@Test void temporaryCompactionFailureCanRetryOnNextTrigger() throws Exception {
+		try (CompactionTestServer server = CompactionTestServer.start(503, "temporarily unavailable")) {
+			var config = new AgentConfig.LlmConfig("http://127.0.0.1:" + server.port(), "test-key", "test-model",
+				"https://api.openai.com/v1", "", "", 15_000, 10_000, 8, 65_536, "low", false);
+			var backend = new RecordingBackend();
+			var orchestrator = newCompactionOrchestrator(config, backend);
+			try {
+				orchestrator.submit(requestAt(10, 1000, "Alice", "Inspect"));
+				backend.awaitCalls(1, Duration.ofSeconds(1));
+				backend.responses.get(0).complete(LlmCallResult.of(replyOnly("Inspected"), new LlmUsageSnapshot(70000, 10, 70010)));
+				awaitResult(orchestrator);
+				orchestrator.onAcceptedReplyRecorded();
+				orchestrator.submit(requestAt(20, 2000, "Alice", "Continue"));
+				assertFalse(awaitCompaction(orchestrator).succeeded());
+				orchestrator.submit(requestAt(30, 3000, "Alice", "Continue"));
+				assertFalse(awaitCompaction(orchestrator).succeeded());
+				assertEquals(2, server.requestCount());
+			} finally { orchestrator.shutdown(); }
+		}
+	}
+
+	@Test void permanentCompactionFailureStopsAutomaticRetriesButAllowsExplicitRetry() throws Exception {
+		try (CompactionTestServer server = CompactionTestServer.start(400, "invalid image count")) {
+			var config = new AgentConfig.LlmConfig("http://127.0.0.1:" + server.port(), "test-key", "test-model",
+				"https://api.openai.com/v1", "", "", 15_000, 10_000, 8, 65_536, "low", false);
+			var backend = new RecordingBackend();
+			var orchestrator = newCompactionOrchestrator(config, backend);
+			try {
+				orchestrator.submit(requestAt(10, 1000, "Alice", "Inspect"));
+				backend.awaitCalls(1, Duration.ofSeconds(1));
+				backend.responses.get(0).complete(LlmCallResult.of(replyOnly("Inspected"), new LlmUsageSnapshot(70000, 10, 70010)));
+				awaitResult(orchestrator);
+				orchestrator.onAcceptedReplyRecorded();
+				orchestrator.submit(requestAt(20, 2000, "Alice", "Continue"));
+				assertFalse(awaitCompaction(orchestrator).succeeded());
+				assertEquals(1, server.requestCount());
+				for (int i = 0; i < 20; i++) {
+					orchestrator.submit(requestAt(30+i, 3000+i*100, "Alice", "Continue"));
+					orchestrator.poll();
+					Thread.sleep(10);
+				}
+				assertEquals(1, server.requestCount(), "Permanent 400 must not resend on queued triggers");
+				assertTrue(orchestrator.startDebugCompaction());
+				assertFalse(awaitCompaction(orchestrator).succeeded());
+				assertEquals(2, server.requestCount(), "Explicit retry remains available after repair");
+			} finally { orchestrator.shutdown(); }
+		}
+	}
+
 	@Test
 	void debugCompactionCompletesWithoutPlannerRequest() throws Exception {
 		try (CompactionTestServer server = CompactionTestServer.start()) {
@@ -4110,17 +4159,21 @@ class PlannerOrchestratorTest {
 		}
 
 		private static CompactionTestServer start(String responseBody) throws IOException {
+			return start(200, responseBody);
+		}
+
+		private static CompactionTestServer start(int status, String responseBody) throws IOException {
 			HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
 			CompactionTestServer holder = new CompactionTestServer(server);
 			server.setExecutor(Executors.newCachedThreadPool());
-			server.createContext("/chat/completions", exchange -> holder.handle(exchange, responseBody));
+			server.createContext("/chat/completions", exchange -> holder.handle(exchange, status, responseBody));
 			server.start();
 			return holder;
 		}
 
-		private void handle(HttpExchange exchange, String responseBody) throws IOException {
+		private void handle(HttpExchange exchange, int status, String responseBody) throws IOException {
 			requestCount++;
-			writeResponse(exchange, 200, responseBody);
+			writeResponse(exchange, status, responseBody);
 		}
 
 		private int port() {

@@ -257,7 +257,31 @@ public final class OpenAiCompatibleChatClient {
 			payload.put("tools", toolRegistry.openAiTools());
 			payload.put("tool_choice", "auto");
 		}
-		payload.put("messages", toolRegistry.references().presentMessages(canonicalRequestMessages(conversation)));
+		var messages = toolRegistry.references().presentMessages(canonicalRequestMessages(conversation));
+		if (options.equals(LlmRequestOptions.compaction())) {
+			// Bound the entire serialized history, including raw replay content. Work on a copy:
+			// the live transcript and tool-call/result pairs must survive compaction failure intact.
+			var bounded = GSON.toJsonTree(messages).getAsJsonArray();
+			int remainingImages = 8;
+			for (int m = bounded.size() - 1; m >= 0; m--) {
+				var content = bounded.get(m).getAsJsonObject().get("content");
+				if (content == null || !content.isJsonArray()) continue;
+				var parts = content.getAsJsonArray();
+				for (int p = parts.size() - 1; p >= 0; p--) {
+					if (!parts.get(p).isJsonObject()) continue;
+					var part = parts.get(p).getAsJsonObject();
+					if (!part.has("type") || !"image_url".equals(part.get("type").getAsString())) continue;
+					if (remainingImages-- > 0) continue;
+					var omitted = new JsonObject();
+					omitted.addProperty("type", "text");
+					omitted.addProperty("text", "[Older image omitted for compaction; surrounding observations retained.]");
+					parts.set(p, omitted);
+				}
+			}
+			payload.put("messages", bounded);
+		} else {
+			payload.put("messages", messages);
+		}
 		return payload;
 	}
 

@@ -26,6 +26,46 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
+	@Test void compactionLimitsNewestImagesWithoutChangingTranscriptOrToolPairing() throws Exception {
+		var messages = new java.util.ArrayList<LlmChatMessage>();
+		messages.add(LlmChatMessage.system("summarize"));
+		for (int i = 0; i < 9; i++) messages.add(LlmChatMessage.userWithImage("view " + i,
+			LlmMessageKind.TOOL_RESULT, new LlmImageAttachment("image/png", new byte[]{(byte)i}, "low")));
+		// Raw multimodal history is serialized differently from image attachments.
+		var raw = new JsonArray();
+		var image = new JsonObject(); image.addProperty("type", "image_url");
+		var url = new JsonObject(); url.addProperty("url", "https://example.invalid/newest.png");
+		image.add("image_url", url); raw.add(image);
+		messages.add(LlmChatMessage.assistant("Inspect the latest view"));
+		messages.add(new LlmChatMessage("user", "raw view", LlmMessageKind.TOOL_RESULT, null, raw));
+		messages.add(LlmChatMessage.assistantToolCall("", new PlannerToolCall("call-1", "inspect_inventory", new JsonObject(), null, null)));
+		messages.add(LlmChatMessage.tool("call-1", "inventory retained"));
+		var conversation = LlmConversation.of(messages);
+		var captured = new AtomicReference<String>();
+		try (TestServer server = TestServer.start(captured, "{}")) {
+			var client = new OpenAiCompatibleChatClient(config(server.port(), false));
+			client.complete(conversation, LlmRequestOptions.compaction());
+			var sent = JsonParser.parseString(captured.get()).getAsJsonObject().getAsJsonArray("messages");
+			int images = 0;
+			for (var entry : sent) {
+				var content = entry.getAsJsonObject().get("content");
+				if (content != null && content.isJsonArray()) for (var part : content.getAsJsonArray())
+					if (part.getAsJsonObject().get("type").getAsString().equals("image_url")) images++;
+			}
+			assertEquals(8, images);
+			assertTrue(sent.toString().contains("view 0"));
+			assertTrue(sent.toString().contains("newest.png"));
+			assertTrue(sent.toString().contains("inventory retained"));
+			assertEquals("call-1", sent.get(sent.size()-1).getAsJsonObject().get("tool_call_id").getAsString());
+			assertFalse(sent.toString().contains("data:image/png;base64,AA=="));
+			assertFalse(sent.toString().contains("data:image/png;base64,AQ=="));
+			assertTrue(conversation.messages().get(1).hasImageAttachment());
+			assertEquals("image_url", raw.get(0).getAsJsonObject().get("type").getAsString());
+			client.complete(conversation, LlmRequestOptions.plain());
+			assertTrue(JsonParser.parseString(captured.get()).getAsJsonObject().getAsJsonArray("messages").get(1).toString().contains("image_url"));
+		}
+	}
+
 	@Test void repairsEncodedToolStructuresAndRetainsRawResponseEvidence() throws Exception {
 		var registry = PlannerToolRegistry.of(new ai.moeru.airicraft.agent.memory.PlaceMemoryToolProvider(
 			() -> { throw new AssertionError("No world access during parsing"); }, Runnable::run));

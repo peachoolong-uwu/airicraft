@@ -956,6 +956,14 @@ public final class PlannerOrchestrator {
 		if (sessionCoordinator.hasInFlight() || pendingToolExecution != null || compactionService.hasInFlight()) {
 			return true;
 		}
+		// The HTTP adapter prefixes errors with their status. Validation/auth failures cannot
+		// recover by resending this history. Preserve it and the visible failure until explicit
+		// debug compaction or reset; timeouts, rate limits and server errors remain retryable.
+		if (lastCompactionResult != null && lastCompactionResult.failureType() == LlmFailureType.PROVIDER_ERROR
+			&& lastCompactionResult.failureMessage() != null
+			&& lastCompactionResult.failureMessage().matches("(?s)^Provider returned HTTP (400|401|403|404|405|413|415|422)(?:\\D.*|$)")) {
+			return false;
+		}
 		return compactionService.submit(contextAggregator.buildCompactionConversation());
 	}
 
