@@ -2585,6 +2585,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		refreshWorkHistory();
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
 		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
+		if (survivalReflexRuntime.awaitingTacticalPlan() && workHistory.current().isEmpty()
+			&& !List.of("configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy").contains(call.name())) {
+			releaseSafetyHoldForReplacement("planner_tactical_replacement");
+		}
 		if (survivalReflexRuntime.snapshot().holdId() != null && !List.of("configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy").contains(call.name())) {
 			if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_ERROR: run_policy work_in_safety_hold");
 			return CompletableFuture.completedFuture("Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(Map.of(
@@ -4595,6 +4599,14 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			+ (holdId == null
 				? ". Review the consolidated safety episode; no interrupted task requires resumption."
 				: ". Review the consolidated safety episode and explicitly resume_task with this holdId, replace the task, or cancel it.");
+		if ("combat_stalemate".equals(reason)) {
+			message += " Combat is still unresolved and made no target-health or closing progress for "
+				+ event.payload().get("noProgressTicks") + " ticks. Position=" + event.payload().get("position")
+				+ "; remainingThreats=" + event.payload().get("remainingThreats")
+				+ ". Inspect local geometry and inventory, then execute a concrete escape or cover plan. Do not resume the same stalled pursuit."
+				+ " You have a bounded recovery window: ordinary mob pressure will not preempt your action for 600 ticks after releasing the hold."
+				+ " Critical health, an imminent creeper, or drowning can interrupt. Mining steps or towering may be needed to escape a pit.";
+		}
 		if ("combat_approach_stalled".equals(reason)) {
 			message += " Combat is unresolved: pursuit made no closer approach to the distant threats for "
 				+ event.payload().get("noProgressTicks") + " ticks. Position=" + event.payload().get("position")

@@ -46,6 +46,7 @@ final class MinecraftCombatPositioning {
 	private double desiredDistance = 2.6;
 	private List<CombatPositioning.Threat> liveThreats;
 	private List<CombatPositioning.Threat> plannedThreats;
+	private boolean witchSprinting;
 
 	CombatPositioning.Decision plan(MinecraftClient client, List<LivingEntity> entities, LivingEntity focus, long tick, boolean shielding, double fightingDistance) {
 		if (desiredDistance != fightingDistance) invalidate();
@@ -62,7 +63,7 @@ final class MinecraftCombatPositioning {
 				2.4 + Math.max(0, (entity.getWidth() - .6) / 2), SurvivalReflexRuntime.isRangedThreat(entity), entity.getVelocity().x, entity.getVelocity().z));
 			if (entity == focus) {
 				var t = threats.getLast();
-				focusThreat = new CombatPositioning.Threat(t.x(), t.y(), t.z(), t.blocksPerTick(), t.reach(), t.ranged(), t.velocityX(), t.velocityZ(), desiredDistance);
+				focusThreat = new CombatPositioning.Threat(t.x(), t.y(), t.z(), t.blocksPerTick(), t.reach(), t.ranged(), t.velocityX(), t.velocityZ(), desiredDistance, (entities.size() > 1 || t.ranged()) && !shielding && desiredDistance <= 3);
 			}
 		}
 		liveThreats = List.copyOf(threats);
@@ -135,6 +136,7 @@ final class MinecraftCombatPositioning {
 		evidence.put("attackReady", plannedAttackReady);
 		evidence.put("desiredDistance", desiredDistance);
 		evidence.put("crowd", liveThreats);
+		evidence.put("witchSprinting", witchSprinting);
 		evidence.put("terrainCells", terrainCells);
 		evidence.put("planningMicros", planningNanos / 1000);
 		evidence.put("plannedTick", plannedTick);
@@ -183,6 +185,7 @@ final class MinecraftCombatPositioning {
 	}
 
 	CombatTraversal.Control control(MinecraftClient client, CombatPositioning.Cell target, Vec3d facing, Vec3d focus, long tick) {
+		witchSprinting = false;
 		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
 		var context = new CalculationContext(baritone);
 		if (traversal == null) traversal = new CombatTraversal();
@@ -209,6 +212,38 @@ final class MinecraftCombatPositioning {
 		}
 		preciseWaypoint = preciseWaypoint(client, context, target, focus);
 		return new CombatTraversal.Control(steering(client, target, preciseWaypoint, facing), false, false);
+	}
+
+	record SprintStrafe(Vec3d facing, CombatPositioning.Steering steering) { }
+
+	SprintStrafe witchSprint(MinecraftClient client, CombatPositioning.Cell target, Vec3d focus) {
+		var player = client.player;
+		if (!player.isOnGround() || target.y() != player.getBlockY() || preciseWaypoint == null
+			|| traversal != null && traversal.destination() != null || player.getHungerManager().getFoodLevel() <= 6) return null;
+		double distance = player.getPos().distanceTo(focus);
+		if (distance < 2 || distance > 4) return null;
+		Vec3d direction = preciseWaypoint.subtract(player.getPos()).multiply(1, 0, 1).normalize();
+		Vec3d radial = focus.subtract(player.getPos()).multiply(1, 0, 1).normalize();
+		if (direction.lengthSquared() < .5 || Math.abs(direction.dotProduct(radial)) > .65) return null;
+		var context = new CalculationContext(BaritoneAPI.getProvider().getPrimaryBaritone());
+		// Sweep three sprint ticks, including support and nearby melee clearance.
+		for (double travel : new double[]{.3, .6, .9}) {
+			Vec3d point = player.getPos().add(direction.multiply(travel));
+			BlockPos cell = BlockPos.ofFloored(point);
+			if ((cell.getX() != player.getBlockX() || cell.getZ() != player.getBlockZ())
+				&& (cell.getX() != target.x() || cell.getZ() != target.z())) return null;
+			if (!dryAndSafe(context, cell.getX(), cell.getY(), cell.getZ())
+				|| !client.world.isSpaceEmpty(player, player.getBoundingBox().offset(point.subtract(player.getPos())))
+				|| CombatPositioning.crowdClearancePenalty(point.x, point.z, liveThreats) > 0
+				|| point.distanceTo(focus) < 2) return null;
+		}
+		Vec3d left = new Vec3d(direction.z, 0, -direction.x);
+		double side = left.dotProduct(radial) >= 0 ? 1 : -1;
+		Vec3d facing = player.getPos().add(direction.add(left.multiply(side)).normalize().multiply(8));
+		var keys = steering(client, target, preciseWaypoint, facing);
+		if (!keys.forward() || keys.back() || keys.left() == keys.right()) return null;
+		witchSprinting = true;
+		return new SprintStrafe(facing, keys);
 	}
 
 	private Vec3d preciseWaypoint(MinecraftClient client, CalculationContext context, CombatPositioning.Cell target, Vec3d focus) {

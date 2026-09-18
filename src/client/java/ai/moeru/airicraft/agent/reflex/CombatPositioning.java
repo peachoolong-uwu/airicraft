@@ -19,7 +19,10 @@ public final class CombatPositioning {
 			if (!Double.isFinite(ticks) || ticks <= 0) throw new IllegalArgumentException("positive finite travel time required");
 		}
 	}
-	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ, double desiredDistance) {
+	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ, double desiredDistance, boolean orbit) {
+		public Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ, double desiredDistance) {
+			this(x, y, z, blocksPerTick, reach, ranged, velocityX, velocityZ, desiredDistance, false);
+		}
 		public Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ) {
 			this(x, y, z, blocksPerTick, reach, ranged, velocityX, velocityZ, 2.6);
 		}
@@ -128,6 +131,15 @@ public final class CombatPositioning {
 				score += orbitPenalty(cells.getFirst(), cells.get(1), List.of(focus)) * 2;
 			}
 			double distance = Math.hypot(focus.x() - end.x() - .5, focus.z() - end.z() - .5);
+			if (focus.orbit()) {
+				Cell start = cells.getFirst();
+				double rx = start.x() + .5 - focus.x(), rz = start.z() + .5 - focus.z();
+				double radius = Math.hypot(rx, rz);
+				if (radius >= 2 && radius <= 4) {
+					double tangent = (-(end.x() - start.x()) * rz + (end.z() - start.z()) * rx) / radius;
+					score -= Math.clamp(tangent, -1, 1) * 18;
+				}
+			}
 			if (attackReady && focus.desiredDistance() <= 3 && distance >= 2 && distance <= 2.8) score -= 12;
 		}
 		score += Math.pow(Math.max(0, distance(end, anchor) - 3), 2) * 2;
@@ -211,7 +223,7 @@ public final class CombatPositioning {
 			|| dx * focus.velocityX() + dz * focus.velocityZ() <= 0) return focus;
 		double ticks = Math.min(4, .5 / speed);
 		return new Threat(focus.x() + focus.velocityX() * ticks, focus.y(), focus.z() + focus.velocityZ() * ticks,
-			focus.blocksPerTick(), focus.reach(), focus.ranged(), focus.velocityX(), focus.velocityZ(), focus.desiredDistance());
+			focus.blocksPerTick(), focus.reach(), focus.ranged(), focus.velocityX(), focus.velocityZ(), focus.desiredDistance(), focus.orbit());
 	}
 
 	private static double engagementPenalty(Cell cell, Threat focus) {

@@ -282,4 +282,13 @@ class CombatPositioningTest {
 		assertTrue(crowdClearancePenalty(.5, .5, List.of(front, rear)) > crowdClearancePenalty(.5, .5, List.of(front)));
 		assertEquals(0, crowdClearancePenalty(.5, .5, List.of(new Threat(.5, 64, .5, 0, 2.4, true))));
 	}
+	@Test void closeWitchEncouragesOrbitWithoutRunningIntoMeleeFlanker() {
+		var witch = new Threat(3.1, 64, .5, .1, 2.4, true, 0, 0, 2.6, true);
+		var clear = choose(ORIGIN, grid(8, Set.of()), List.of(witch), null, ORIGIN, true, witch);
+		assertNotNull(clear.nextStep());
+		assertNotEquals(0, clear.nextStep().z(), clear.toString());
+		var flanker = new Threat(.5, 64, clear.nextStep().z() * 2.5 + .5, .1, 2.4, false);
+		var crowded = choose(ORIGIN, grid(8, Set.of()), List.of(witch, flanker), null, ORIGIN, true, witch);
+		assertNotEquals(clear.nextStep(), crowded.nextStep());
+	}
 }

@@ -341,4 +341,10 @@ class SurvivalReflexRuntimeTest {
 		assertTrue(SurvivalReflexRuntime.shouldGuardBow(true, 20));
 		assertFalse(SurvivalReflexRuntime.shouldGuardBow(false, 20));
 	}
+	@Test void tacticalWindowIsBoundedAndCriticalHealthInterrupts() {
+		var window = new SurvivalReflexRuntime.TacticalWindow(600);
+		assertTrue(window.active(599, 20));
+		assertFalse(window.active(600, 20));
+		assertFalse(window.active(100, 4));
+	}
 }
