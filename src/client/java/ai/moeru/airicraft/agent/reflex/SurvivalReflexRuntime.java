@@ -61,6 +61,7 @@ public final class SurvivalReflexRuntime {
 	private boolean shieldUseOwned;
 	private ShieldGuard shieldGuard;
 	private CombatStalemate combatStalemate;
+	private MinecraftCombatPositioning combatPositioning;
 	private ReflexPolicy policyOverride;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
@@ -116,6 +117,7 @@ public final class SurvivalReflexRuntime {
 		evidence.put("policy", policy());
 		evidence.put("combatTarget", combatTarget);
 		evidence.put("combatStalemate", combatStalemate);
+		evidence.put("combatPositioning", combatPositioning == null ? null : combatPositioning.evidence());
 		evidence.put("shieldUseOwned", shieldUseOwned);
 		evidence.put("shieldGuard", shieldGuard);
 		evidence.put("secureEscapeTicks", secureEscapeTicks);
@@ -165,7 +167,8 @@ public final class SurvivalReflexRuntime {
 			combatStalemate = CombatStalemate.observe(combatStalemate, tick, player.getPos(), positions,
 				immediateCombatDanger(client, player, threats, tick));
 		}
-		boolean mobDanger = !combatDeferred() && !threats.isEmpty();
+		boolean mobDanger = !combatDeferred() && threats.stream().anyMatch(threat ->
+			policy().acceptsMob(isRangedThreat(threat.entity()), threat.distance(), threat.lineOfSight()));
 		if (shouldBeginReflex(snapshot.state(), drowningDanger || mobDanger)) {
 			SurvivalReflexCause cause = drowningDanger ? SurvivalReflexCause.DROWNING : SurvivalReflexCause.MOB_ATTACK;
 			boolean hasInterruptedWork = interruptedWork != null && interruptedWork.hasInterruptedWork();
@@ -187,7 +190,8 @@ public final class SurvivalReflexRuntime {
 		}
 		else if (drowningDanger || snapshot.cause() == SurvivalReflexCause.DROWNING) {
 			releaseShield(client);
-			tickDrowning(client, player, drowningDanger, threats, tick);
+			tickDrowning(client, player, drowningDanger, threats.stream().filter(threat ->
+				policy().acceptsMob(isRangedThreat(threat.entity()), threat.distance(), threat.lineOfSight())).toList(), tick);
 		}
 		else {
 			tickMobAttack(client, player, threats, tick);
@@ -417,7 +421,7 @@ public final class SurvivalReflexRuntime {
 			resolve(client, player, threats, tick, "combat_approach_stalled", true);
 			return;
 		}
-		if (threats.isEmpty()) {
+		if (threats.stream().noneMatch(threat -> policy().acceptsMob(isRangedThreat(threat.entity()), threat.distance(), threat.lineOfSight()))) {
 			resolve(client, player, threats, tick, "no_eligible_threats", false);
 			return;
 		}
@@ -426,6 +430,7 @@ public final class SurvivalReflexRuntime {
 		}
 		equipBestCombatItem(client, player);
 		if (blockShieldThreat(client, player, threats, tick)) {
+			if (shouldReposition(threats.size())) reposition(client, threats, tick, true);
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
 			return;
 		}
@@ -445,7 +450,14 @@ public final class SurvivalReflexRuntime {
 		}
 		secureEscapeTicks = 0;
 		try {
-			if (!threats.isEmpty()) {
+			if (shouldReposition(threats.size())) {
+				reposition(client, threats, tick, false);
+			}
+			else if (!threats.isEmpty()) {
+				if (combatPositioning != null) {
+					combatPositioning = null;
+					stopCombatNavigation();
+				}
 				defend(client, player, closestVisibleThreat(threats), tick);
 			}
 			else {
@@ -533,12 +545,14 @@ public final class SurvivalReflexRuntime {
 		if (shieldGuard == null) return false;
 		movementController.stop(client);
 		ResolvedThreat approach = threats.isEmpty() ? null : closestVisibleThreat(threats);
-		if (fuseProgress == null && approach != null && approach.distance() > MELEE_ATTACK_DISTANCE
-			&& baritone != null && baritone.isLoaded()) {
-			updateCombatNavigation(goal(approach.entity().getBlockPos()), tick);
-		}
-		else {
-			stopCombatNavigation();
+		if (!shouldReposition(threats.size())) {
+			if (fuseProgress == null && approach != null && approach.distance() > MELEE_ATTACK_DISTANCE
+				&& baritone != null && baritone.isLoaded()) {
+				updateCombatNavigation(goal(approach.entity().getBlockPos()), tick);
+			}
+			else {
+				stopCombatNavigation();
+			}
 		}
 		cameraController.lookAtNow(client, new Vec3d(shieldGuard.facing().x, player.getEyeY(), shieldGuard.facing().z));
 		client.options.useKey.setPressed(true);
@@ -612,6 +626,46 @@ public final class SurvivalReflexRuntime {
 		else {
 			movementController.stop(client);
 		}
+	}
+
+	static boolean shouldReposition(int threatCount) { return threatCount >= 2; }
+
+	private void reposition(MinecraftClient client, List<ResolvedThreat> threats, long tick, boolean shielding) {
+		movementController.stop(client);
+		if (baritone == null || !baritone.isLoaded()) {
+			stopCombatNavigation();
+			return;
+		}
+		if (combatPositioning == null) {
+			stopCombatNavigation();
+			combatPositioning = new MinecraftCombatPositioning();
+		}
+		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), tick, shielding);
+		var step = decision.nextStep();
+		if (step == null) {
+			stopCombatNavigation();
+			return;
+		}
+		if (!combatPositioning.canStepTo(step)) {
+			stopCombatNavigation();
+			combatPositioning.invalidate();
+			return;
+		}
+		GoalPosition target = new GoalPosition(step.x(), step.y(), step.z(), true);
+		if (updatePositioningNavigation(target, tick)) pendingEvents.add(new SurvivalReflexEvent("reflex.combat_reposition", Map.of(
+			"target", target, "threatCount", threats.size(), "risk", decision.risk(), "standingRisk", decision.standingRisk(),
+			"route", decision.route(), "shielding", shielding, "tick", tick)));
+	}
+
+	boolean updatePositioningNavigation(GoalPosition target, long tick) {
+		if (!target.equals(combatTarget) || !baritone.processActive() && tick - combatRouteTick >= 6) {
+			// Near-goals can finish two blocks before the scored escape cell, still inside the pincer.
+			baritone.startNavigate(target);
+			combatTarget = target;
+			combatRouteTick = tick;
+			return true;
+		}
+		return false;
 	}
 
 	void updateCombatNavigation(GoalPosition target, long tick) {
@@ -965,7 +1019,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private SurvivalReflexAction chooseMobAction(ClientPlayerEntity player, List<ResolvedThreat> threats) {
-		// Once an aggressor owns this encounter, fight regardless of health or mob count.
+		// DEFEND includes terrain-aware repositioning against multiple attackers.
 		return SurvivalReflexAction.DEFEND;
 	}
 
@@ -985,6 +1039,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void resetSecurityProgress() {
+		combatPositioning = null;
 		secureEscapeTicks = 0;
 		mobRoutesTick = Long.MIN_VALUE;
 		mobRoutes = Map.of();
@@ -1025,11 +1080,10 @@ public final class SurvivalReflexRuntime {
 			// Remote clients may not receive AI targets; damage observations remain authoritative there.
 			boolean targetsUs = targetingPlayer.contains(mob.getUuidAsString())
 				|| mob.getTarget() != null && player.getUuid().equals(mob.getTarget().getUuid());
-			if (!shouldDetectProactiveThreat(targetsUs, mob.isAlive())
-				|| !policy().acceptsMob(isRangedThreat(mob), player.distanceTo(mob), player.canSee(mob))) {
-				continue;
-			}
-			if (classifyThreatSecurity(computeMobRoute(player, mob).status(), player.canSee(mob)) == SecurityKind.SEALED) {
+			boolean visibleHostile = mob.getType().getSpawnGroup() == net.minecraft.entity.SpawnGroup.MONSTER
+				&& !(mob instanceof net.minecraft.entity.mob.Angerable) && player.canSee(mob);
+			if (!shouldDetectProactiveThreat(targetsUs || visibleHostile, mob.isAlive())
+				|| !policy().observesMob(player.distanceTo(mob))) {
 				continue;
 			}
 			String uuid = mob.getUuidAsString();
@@ -1040,7 +1094,7 @@ public final class SurvivalReflexRuntime {
 				Registries.ENTITY_TYPE.getId(mob.getType()).toString(), tick);
 			observedThreats.put(uuid, observed);
 			pendingEvents.add(new SurvivalReflexEvent("reflex.threat_detected", mapOfNullable(
-				"source", "aggro_target", "uuid", uuid, "name", observed.name(),
+				"source", targetsUs ? "aggro_target" : "visible_hostile", "uuid", uuid, "name", observed.name(),
 				"entityTypeId", observed.entityTypeId(), "distance", player.distanceTo(mob),
 				"lineOfSight", player.canSee(mob), "tick", tick)));
 		}
@@ -1135,7 +1189,7 @@ public final class SurvivalReflexRuntime {
 			}
 			double distance = player.distanceTo(entity);
 			boolean lineOfSight = player.canSee(entity);
-			if (!policy().acceptsMob(isRangedThreat(living), distance, lineOfSight)) {
+			if (!policy().observesMob(distance)) {
 				continue;
 			}
 			resolved.add(new ResolvedThreat(observed, living, distance, lineOfSight));

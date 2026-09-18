@@ -17,4 +17,9 @@ public record ReflexPolicy(boolean combatEnabled, boolean drowningEnabled,
 		return combatEnabled && distance <= maxThreatDistance && (ranged || distance <= 6D)
 			&& (!requireLineOfSight || lineOfSight);
 	}
+
+	/** Awareness is wider than the engagement gate, so a flanker is not forgotten outside melee range. */
+	public boolean observesMob(double distance) {
+		return combatEnabled && distance <= maxThreatDistance;
+	}
 }
