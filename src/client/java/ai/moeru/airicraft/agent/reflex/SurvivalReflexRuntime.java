@@ -486,6 +486,11 @@ public final class SurvivalReflexRuntime {
 		}
 		if (!player.getOffHandStack().isOf(net.minecraft.item.Items.SHIELD)
 			|| player.getItemCooldownManager().isCoolingDown(player.getOffHandStack())) return false;
+		if (shieldGuard != null) for (var t : threats) {
+			if (t.observed().uuid().equals(shieldGuard.source()) && t.entity() instanceof net.minecraft.entity.mob.CreeperEntity c
+				&& !shouldBlockCreeper(t.distance(), c.getFuseSpeed(), c.getLerpedFuseTime(1), c.isCharged())) shieldGuard = null;
+			if (shieldGuard == null) break;
+		}
 		net.minecraft.util.math.Vec3d aim = null;
 		String source = null;
 		double earliest = Double.POSITIVE_INFINITY;
@@ -526,7 +531,7 @@ public final class SurvivalReflexRuntime {
 				var offHand = entity.getOffHandStack();
 				boolean loadedCrossbow = (mainHand.isOf(net.minecraft.item.Items.CROSSBOW) && net.minecraft.item.CrossbowItem.isCharged(mainHand))
 					|| (offHand.isOf(net.minecraft.item.Items.CROSSBOW) && net.minecraft.item.CrossbowItem.isCharged(offHand));
-				if (drawingBow || loadedCrossbow) {
+				if (shouldGuardBow(drawingBow, entity.getItemUseTime()) || loadedCrossbow) {
 					aim = shieldFacingPoint(player.getEyePos(), entity.getPos(), Vec3d.ZERO);
 					source = entity.getUuidAsString();
 					break;
@@ -566,15 +571,24 @@ public final class SurvivalReflexRuntime {
 		return true;
 	}
 
+	static boolean shouldGuardBow(boolean drawing, int useTicks) {
+		// Skeleton draw lasts 20 ticks; allow five ticks for shield startup plus one margin.
+		return drawing && useTicks >= 14;
+	}
+
+	static boolean creeperShouldKite(float cooldown, float fuseProgress) {
+		return cooldown < .92F || fuseProgress >= .2F;
+	}
+
 	static boolean shouldBlockCreeper(double distance, int fuseSpeed, float fuseProgress, boolean charged) {
-		// Start before the final rush: the vanilla shield needs five ticks to become active.
-		return fuseSpeed > 0 && fuseProgress >= 0.3F && distance <= (charged ? 12 : 6);
+		// Last resort: preserve time for shield activation, but let early fuse movement escape.
+		return fuseSpeed > 0 && fuseProgress >= 0.7F && distance <= (charged ? 12 : 6);
 	}
 
 	record ShieldGuard(Vec3d facing, String source, long throughTick) {}
 
 	static ShieldGuard nextShieldGuard(ShieldGuard previous, Vec3d facing, String source, long tick) {
-		if (facing != null) return new ShieldGuard(facing, source, tick + 20);
+		if (facing != null) return new ShieldGuard(facing, source, tick + 6);
 		return previous != null && tick <= previous.throughTick() ? previous : null;
 	}
 
@@ -640,14 +654,14 @@ public final class SurvivalReflexRuntime {
 			stopCombatNavigation();
 			combatPositioning = new MinecraftCombatPositioning();
 		}
-		var focus = focusedThreat(threats);
-		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), focus.entity(), tick, shielding);
+		var focus = threats.stream().filter(t -> t.entity() instanceof net.minecraft.entity.mob.CreeperEntity c
+			&& t.distance() < 7 && c.getFuseSpeed() > 0).min(java.util.Comparator.comparingDouble(ResolvedThreat::distance))
+			.orElseGet(() -> focusedThreat(threats));
+		boolean kiting = focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity c
+			&& creeperShouldKite(client.player.getAttackCooldownProgress(0), c.getLerpedFuseTime(1));
+		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), focus.entity(), tick, shielding, kiting ? 5 : 2.6);
 		var step = decision.nextStep();
-		if (step == null) {
-			stopCombatNavigation();
-			movementController.stop(client);
-			return;
-		}
+		if (step == null) step = new CombatPositioning.Cell(client.player.getBlockX(), client.player.getBlockY(), client.player.getBlockZ());
 		if (!combatPositioning.canStepTo(step)) {
 			stopCombatNavigation();
 			movementController.stop(client);
@@ -659,9 +673,11 @@ public final class SurvivalReflexRuntime {
 		// A raised shield keeps its selected shooter/blast heading; movement is relative to that heading.
 		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
 		cameraController.lookAtNow(client, facing);
-		var steering = combatPositioning.steering(client, step, facing);
-		movementController.moveDirectional(client, steering.forward(), steering.back(), steering.left(), steering.right(), false,
-			step.y() > client.player.getBlockY() && client.player.isOnGround(), tick);
+		var control = combatPositioning.control(client, step, facing, focus.entity().getPos(), tick);
+		var steering = control.steering();
+		movementController.moveDirectional(client, steering.forward(), steering.back(), steering.left(), steering.right(), !shielding && !kiting && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
+				&& !control.sneak() && client.player.getHungerManager().getFoodLevel() > 6,
+			control.jump(), control.sneak(), tick);
 		if (!target.equals(combatTarget)) pendingEvents.add(new SurvivalReflexEvent("reflex.combat_reposition", Map.of(
 			"target", target, "threatCount", threats.size(), "risk", decision.risk(), "standingRisk", decision.standingRisk(),
 			"route", decision.route(), "shielding", shielding, "facing", facing, "steering", steering, "tick", tick)));
@@ -749,11 +765,15 @@ public final class SurvivalReflexRuntime {
 		if (!shouldAttackCloseThreat(threat.distance(), threat.lineOfSight(), cooldown)) {
 			return;
 		}
+		// Early-fuse strikes can interrupt the approach; late fuse belongs to escape/blocking.
+		if (threat.entity() instanceof net.minecraft.entity.mob.CreeperEntity c && c.getLerpedFuseTime(1) >= .2F) return;
 		cameraController.lookAtNow(client, threat.entity().getBoundingBox().getCenter());
+		boolean sprintHit = player.isSprinting();
 		client.interactionManager.attackEntity(player, threat.entity());
 		player.swingHand(Hand.MAIN_HAND);
 		pendingEvents.add(new SurvivalReflexEvent("reflex.close_quarter_attack", mapOfNullable(
 			"threatUuid", threat.observed().uuid(),
+			"sprinting", sprintHit,
 			"weaponItemId", Registries.ITEM.getId(player.getMainHandStack().getItem()).toString(),
 			"entityTypeId", threat.observed().entityTypeId(),
 			"distance", threat.distance(),
@@ -1039,14 +1059,15 @@ public final class SurvivalReflexRuntime {
 				|| net.minecraft.item.CrossbowItem.isCharged(entity.getOffHandStack())
 				|| entity instanceof net.minecraft.entity.mob.CreeperEntity creeper && creeper.getFuseSpeed() > 0;
 			return new CombatFocus.Candidate(t.observed().uuid(), t.distance(), t.lineOfSight(),
-				closingSpeed, isRangedThreat(entity), preparingAttack);
+				closingSpeed, isRangedThreat(entity), preparingAttack, t.observed().entityTypeId(), entity.isBaby());
 		}).toList();
 		String id = CombatFocus.select(candidates);
 		if (!java.util.Objects.equals(id, reportedCombatFocus)) {
 			reportedCombatFocus = id;
 			pendingEvents.add(new SurvivalReflexEvent("reflex.combat_focus", Map.of("threatUuid", id,
 				"candidates", candidates.stream().map(c -> Map.of("threatUuid", c.id(), "distance", c.distance(),
-					"visible", c.visible(), "closingSpeed", c.closingSpeed(), "preparingAttack", c.preparingAttack(), "priority", c.priority())).toList())));
+					"visible", c.visible(), "closingSpeed", c.closingSpeed(), "preparingAttack", c.preparingAttack(), "priority", c.priority(),
+					"entityTypeId", c.entityTypeId(), "baby", c.baby(), "rank", CombatFocus.rank(c, CombatFocus.meleePressure(candidates)))).toList())));
 		}
 		return threats.stream().filter(t -> t.observed().uuid().equals(id)).findFirst().orElseThrow();
 	}

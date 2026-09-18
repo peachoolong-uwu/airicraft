@@ -19,7 +19,10 @@ public final class CombatPositioning {
 			if (!Double.isFinite(ticks) || ticks <= 0) throw new IllegalArgumentException("positive finite travel time required");
 		}
 	}
-	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ) {
+	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ, double desiredDistance) {
+		public Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ) {
+			this(x, y, z, blocksPerTick, reach, ranged, velocityX, velocityZ, 2.6);
+		}
 		public Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged) {
 			this(x, y, z, blocksPerTick, reach, ranged, 0, 0);
 		}
@@ -36,6 +39,7 @@ public final class CombatPositioning {
 		public Cell nextStep() { return route.size() > 1 ? route.get(1) : null; }
 	}
 	public record Steering(boolean forward, boolean back, boolean left, boolean right) { }
+	public record Splash(double x, double y, double z, double ticks) { }
 
 	/** Map a world-space waypoint to keys while the camera continues facing the threat group. */
 	public static Steering steering(double x, double z, double targetX, double targetZ, double facingX, double facingZ) {
@@ -66,7 +70,14 @@ public final class CombatPositioning {
 
 	public static Decision choose(Cell origin, Map<Cell, List<Edge>> graph, List<Threat> threats,
 		Cell previousStep, Cell anchor, boolean attackReady, Threat focus) {
-		Route standing = scored(List.of(origin), 0, 0, threats, graph, threats, previousStep, anchor, attackReady, focus);
+		return choose(origin, graph, threats, previousStep, anchor, attackReady, focus, List.of());
+	}
+
+	public static Decision choose(Cell origin, Map<Cell, List<Edge>> graph, List<Threat> threats,
+		Cell previousStep, Cell anchor, boolean attackReady, Threat focus, List<Splash> splashes) {
+		// Local approach remains bounded, but an old melee anchor must not pin us under ranged fire.
+		if (focus != null && (focus.ranged() || focus.desiredDistance() > 3)) anchor = origin;
+		Route standing = scored(List.of(origin), 0, 0, threats, graph, threats, previousStep, anchor, attackReady, focus, splashes);
 		Route best = standing;
 		List<Route> beam = List.of(standing);
 		int expanded = 0;
@@ -83,7 +94,7 @@ public final class CombatPositioning {
 					cells.add(edge.destination());
 					Pursuit pursuit = pursue(route.end(), edge.destination(), edge.ticks(), route.pursuers());
 					Route next = scored(List.copyOf(cells), route.ticks() + edge.ticks(), route.exposure() + pursuit.exposure(),
-						pursuit.threats(), graph, threats, previousStep, anchor, attackReady, focus);
+						pursuit.threats(), graph, threats, previousStep, anchor, attackReady, focus, splashes);
 					Arrival key = new Arrival(next.end(), cells.get(1), (int) (next.ticks() / 3));
 					Route existing = arrivals.get(key);
 					if (existing == null || ORDER.compare(next, existing) < 0) arrivals.put(key, next);
@@ -100,7 +111,7 @@ public final class CombatPositioning {
 		.thenComparing(route -> route.cells().toString());
 
 	private static Route scored(List<Cell> cells, double ticks, double exposure, List<Threat> pursuers,
-		Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep, Cell anchor, boolean attackReady, Threat focus) {
+		Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep, Cell anchor, boolean attackReady, Threat focus, List<Splash> splashes) {
 		Cell end = cells.getLast();
 		// Compare every route, including standing still, over the same time horizon.
 		Pursuit rest = pursue(end, end, HORIZON_TICKS - ticks, pursuers);
@@ -112,15 +123,83 @@ public final class CombatPositioning {
 			// Other threats retain their exposure/pincer costs but cannot change the target.
 			score += engagementPenalty(end, focus);
 			score += engagementPenalty(cells.size() > 1 ? cells.get(1) : end, interceptFocus(cells.getFirst(), focus));
-			if (cells.size() > 1 && !focus.ranged()) {
+			if (cells.size() > 1 && !focus.ranged() && focus.desiredDistance() <= 3) {
 				score += orbitPenalty(cells.getFirst(), end, List.of(focus));
 				score += orbitPenalty(cells.getFirst(), cells.get(1), List.of(focus)) * 2;
 			}
 			double distance = Math.hypot(focus.x() - end.x() - .5, focus.z() - end.z() - .5);
-			if (attackReady && distance >= 2 && distance <= 2.8) score -= 12;
+			if (attackReady && focus.desiredDistance() <= 3 && distance >= 2 && distance <= 2.8) score -= 12;
 		}
 		score += Math.pow(Math.max(0, distance(end, anchor) - 3), 2) * 2;
+		Cell immediate = cells.size() > 1 ? cells.get(1) : end;
+		score += crowdClearancePenalty(immediate.x() + .5, immediate.z() + .5, threats);
+		score += splashPenalty(cells, graph, splashes);
 		return new Route(cells, ticks, exposure, pursuers, score);
+	}
+
+	static double preciseScore(double x, double y, double z, double focusX, double focusY, double focusZ, List<Splash> splashes) {
+		return preciseScore(x, y, z, focusX, focusY, focusZ, splashes, 2.6);
+	}
+
+	static double preciseScore(double x, double y, double z, double focusX, double focusY, double focusZ, List<Splash> splashes, double desiredDistance) {
+		double distance = Math.sqrt(Math.pow(x-focusX, 2) + Math.pow(y-focusY, 2) + Math.pow(z-focusZ, 2));
+		double score = Math.pow(distance - desiredDistance, 2) * 16;
+		for (Splash splash : splashes) if (Math.abs(y - splash.y()) <= 3)
+			score += Math.pow(Math.max(0, 4 - Math.hypot(x-splash.x(), z-splash.z())), 2) * 80;
+		return score;
+	}
+
+	/** Clearance from every melee attacker, including flankers outside the attack focus. */
+	static double crowdClearancePenalty(double x, double z, List<Threat> threats) {
+		double penalty = 0;
+		for (Threat threat : threats) {
+			if (threat.ranged()) continue;
+			double dx = x - threat.x(), dz = z - threat.z(), distance = Math.hypot(dx, dz);
+			double closing = distance < .001 ? 0 : (dx * threat.velocityX() + dz * threat.velocityZ()) / distance;
+			double clearance = threat.reach() + .3 + Math.clamp(closing * 3, 0, .8);
+			penalty += Math.pow(Math.max(0, clearance - distance), 2) * 80;
+		}
+		return penalty;
+	}
+
+	static double preciseScore(double x, double y, double z, double focusX, double focusY, double focusZ,
+		List<Splash> splashes, double desiredDistance, List<Threat> threats) {
+		return preciseScore(x, y, z, focusX, focusY, focusZ, splashes, desiredDistance)
+			+ crowdClearancePenalty(x, z, threats);
+	}
+
+	static boolean crowdMoved(List<Threat> planned, List<Threat> current) {
+		if (planned.size() != current.size()) return true;
+		for (int i = 0; i < current.size(); i++) {
+			var a = planned.get(i); var b = current.get(i);
+			if (Math.hypot(a.x() - b.x(), a.z() - b.z()) >= .5
+				|| Math.hypot(a.velocityX() - b.velocityX(), a.velocityZ() - b.velocityZ()) >= .1) return true;
+		}
+		return false;
+	}
+
+	static double splashPenalty(List<Cell> cells, Map<Cell, List<Edge>> graph, List<Splash> splashes) {
+		double penalty = 0;
+		for (Splash splash : splashes) {
+			double remaining = splash.ticks();
+			Cell last = cells.getLast();
+			double x = last.x() + .5, y = last.y(), z = last.z() + .5;
+			for (int i = 1; i < cells.size(); i++) {
+				Cell from = cells.get(i - 1), to = cells.get(i);
+				double travel = graph.get(from).stream().filter(e -> e.destination().equals(to)).findFirst().orElseThrow().ticks();
+				if (remaining <= travel) {
+					double fraction = Math.max(0, remaining / travel);
+					x = from.x() + .5 + (to.x() - from.x()) * fraction;
+					y = from.y() + (to.y() - from.y()) * fraction;
+					z = from.z() + .5 + (to.z() - from.z()) * fraction;
+					break;
+				}
+				remaining -= travel;
+			}
+			if (Math.abs(y - splash.y()) <= 3)
+				penalty += Math.pow(Math.max(0, 4 - Math.hypot(x - splash.x(), z - splash.z())), 2) * 80;
+		}
+		return penalty;
 	}
 
 	/** Only anticipate an approaching melee target over the next steering update, never a long chase. */
@@ -132,12 +211,13 @@ public final class CombatPositioning {
 			|| dx * focus.velocityX() + dz * focus.velocityZ() <= 0) return focus;
 		double ticks = Math.min(4, .5 / speed);
 		return new Threat(focus.x() + focus.velocityX() * ticks, focus.y(), focus.z() + focus.velocityZ() * ticks,
-			focus.blocksPerTick(), focus.reach(), focus.ranged(), focus.velocityX(), focus.velocityZ());
+			focus.blocksPerTick(), focus.reach(), focus.ranged(), focus.velocityX(), focus.velocityZ(), focus.desiredDistance());
 	}
 
 	private static double engagementPenalty(Cell cell, Threat focus) {
 		double distance = Math.sqrt(Math.pow(focus.x() - cell.x() - .5, 2)
 			+ Math.pow(focus.y() - cell.y(), 2) + Math.pow(focus.z() - cell.z() - .5, 2));
+		if (focus.desiredDistance() > 3) return Math.pow(distance - focus.desiredDistance(), 2) * 40;
 		// Crossing the attack cutoff loses an entire strike, not just a little spacing.
 		return Math.pow(Math.max(0, distance - 2.7), 2) * 16
 			+ (distance > 3 ? 30 : 0)

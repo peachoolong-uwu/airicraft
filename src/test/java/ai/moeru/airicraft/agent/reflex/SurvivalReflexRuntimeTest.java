@@ -54,7 +54,8 @@ class SurvivalReflexRuntimeTest {
 	}
 
 	@Test void blocksAnApproachingCreeperBlastBeforeShieldStartupDelay() {
-		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(3.03, 1, 0.35F, false));
+		assertFalse(SurvivalReflexRuntime.shouldBlockCreeper(3.03, 1, 0.35F, false));
+		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(3.03, 1, 0.7F, false));
 		assertTrue(SurvivalReflexRuntime.shouldBlockCreeper(8, 1, 0.8F, true));
 		assertFalse(SurvivalReflexRuntime.shouldBlockCreeper(8, 1, 0.8F, false));
 		assertFalse(SurvivalReflexRuntime.shouldBlockCreeper(3, -1, 0.35F, false));
@@ -103,9 +104,9 @@ class SurvivalReflexRuntimeTest {
 		guard = SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 14963);
 		assertNotNull(guard, "Releasing here restarts shield startup before the incoming arrow");
 		assertEquals(shooter, guard.facing());
-		guard = SurvivalReflexRuntime.nextShieldGuard(guard, shooter, "skeleton", 14981);
-		assertNotNull(SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 14986));
-		assertNull(SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 15002), "Eventually release to advance and attack");
+		guard = SurvivalReflexRuntime.nextShieldGuard(guard, shooter, "skeleton", 14966);
+		assertNotNull(SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 14972));
+		assertNull(SurvivalReflexRuntime.nextShieldGuard(guard, null, null, 14973), "Eventually release to advance and attack");
 	}
 
 	@Test void incomingArrowsExcludeRecedingStoppedAndPassingProjectiles() {
@@ -327,5 +328,17 @@ class SurvivalReflexRuntimeTest {
 			state, SurvivalReflexCause.DROWNING, SurvivalReflexAction.SWIM_TO_AIR, 2L, holdId,
 			"job-1", "action-1", List.of(), 10.0F, 20.0F, 100, 300, 10L, 20L, 0, null
 		);
+	}
+	@Test void creeperRetreatsDuringCooldownOrFuseButReengagesAfterReset() {
+		assertTrue(SurvivalReflexRuntime.creeperShouldKite(.2F, 0));
+		assertTrue(SurvivalReflexRuntime.creeperShouldKite(1, .3F));
+		assertFalse(SurvivalReflexRuntime.creeperShouldKite(1, 0));
+	}
+	@Test void bowGuardLeavesEarlyDrawForMovementAndAttacks() {
+		assertFalse(SurvivalReflexRuntime.shouldGuardBow(true, 0));
+		assertFalse(SurvivalReflexRuntime.shouldGuardBow(true, 13));
+		assertTrue(SurvivalReflexRuntime.shouldGuardBow(true, 14));
+		assertTrue(SurvivalReflexRuntime.shouldGuardBow(true, 20));
+		assertFalse(SurvivalReflexRuntime.shouldGuardBow(false, 20));
 	}
 }

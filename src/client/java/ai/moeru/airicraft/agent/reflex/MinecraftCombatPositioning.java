@@ -39,19 +39,17 @@ final class MinecraftCombatPositioning {
 	private long plannedTick = Long.MIN_VALUE;
 	private CombatPositioning.Decision decision;
 	private int terrainCells;
+	private List<CombatPositioning.Splash> incomingSplashes = List.of();
 	private long planningNanos;
+	private CombatTraversal traversal;
+	private Vec3d preciseWaypoint;
+	private double desiredDistance = 2.6;
+	private List<CombatPositioning.Threat> liveThreats;
+	private List<CombatPositioning.Threat> plannedThreats;
 
-	CombatPositioning.Decision plan(MinecraftClient client, List<LivingEntity> entities, LivingEntity focus, long tick, boolean shielding) {
-		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
-		BlockPos feet = baritone.getPlayerContext().playerFeet();
-		CombatPositioning.Cell origin = cell(feet);
-		if (anchor == null) anchor = origin;
-		boolean attackReady = !shielding && client.player.getAttackCooldownProgress(0) >= .92F;
-		if (decision != null && focus.getUuidAsString().equals(plannedFocus) && attackReady == plannedAttackReady && shielding == plannedShielding && tick - plannedTick < REPLAN_TICKS
-			&& focus.getVelocity().subtract(plannedFocusVelocity).horizontalLengthSquared() < .01
-			&& !origin.equals(decision.nextStep())) return decision;
-		long started = System.nanoTime();
-		var context = new CalculationContext(baritone);
+	CombatPositioning.Decision plan(MinecraftClient client, List<LivingEntity> entities, LivingEntity focus, long tick, boolean shielding, double fightingDistance) {
+		if (desiredDistance != fightingDistance) invalidate();
+		desiredDistance = fightingDistance;
 		List<CombatPositioning.Threat> threats = new ArrayList<>();
 		CombatPositioning.Threat focusThreat = null;
 		for (LivingEntity entity : entities) {
@@ -62,14 +60,32 @@ final class MinecraftCombatPositioning {
 				entity.getPos().subtract(old.position()).horizontalLength() / (tick - old.tick()));
 			threats.add(new CombatPositioning.Threat(entity.getX(), entity.getY(), entity.getZ(), speed,
 				2.4 + Math.max(0, (entity.getWidth() - .6) / 2), SurvivalReflexRuntime.isRangedThreat(entity), entity.getVelocity().x, entity.getVelocity().z));
-			if (entity == focus) focusThreat = threats.getLast();
+			if (entity == focus) {
+				var t = threats.getLast();
+				focusThreat = new CombatPositioning.Threat(t.x(), t.y(), t.z(), t.blocksPerTick(), t.reach(), t.ranged(), t.velocityX(), t.velocityZ(), desiredDistance);
+			}
 		}
+		liveThreats = List.copyOf(threats);
 		previous.keySet().retainAll(entities.stream().map(LivingEntity::getUuidAsString).toList());
+		if (traversal != null && traversal.destination() != null && decision != null) return decision;
+		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+		BlockPos feet = baritone.getPlayerContext().playerFeet();
+		CombatPositioning.Cell origin = cell(feet);
+		if (anchor == null) anchor = origin;
+		boolean attackReady = !shielding && client.player.getAttackCooldownProgress(0) >= .92F;
+		incomingSplashes = predictSplashes(client);
+		if (incomingSplashes.isEmpty() && plannedThreats != null && !CombatPositioning.crowdMoved(plannedThreats, liveThreats) && decision != null && focus.getUuidAsString().equals(plannedFocus) && attackReady == plannedAttackReady && shielding == plannedShielding && tick - plannedTick < REPLAN_TICKS
+			&& focus.getVelocity().subtract(plannedFocusVelocity).horizontalLengthSquared() < .01
+			&& !origin.equals(decision.nextStep())) return decision;
+		long started = System.nanoTime();
+		var context = new CalculationContext(baritone);
+
 		// Facing the pack uses walking/backpedaling, never a forward sprint away from it.
 		double slowdown = (context.canSprint ? 1.3 : 1) * (shielding ? 5 : 1);
 		Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> graph = terrain(context, origin, slowdown);
 		terrainCells = graph.size();
-		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep(), anchor, attackReady, focusThreat);
+		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep(), anchor, attackReady, focusThreat, incomingSplashes);
+		plannedThreats = liveThreats;
 		plannedTick = tick;
 		plannedFocus = focus.getUuidAsString();
 		plannedFocusVelocity = focus.getVelocity();
@@ -79,12 +95,46 @@ final class MinecraftCombatPositioning {
 		return decision;
 	}
 
+	private static List<CombatPositioning.Splash> predictSplashes(MinecraftClient client) {
+		var result = new ArrayList<CombatPositioning.Splash>();
+		for (var potion : client.world.getEntitiesByClass(net.minecraft.entity.projectile.thrown.PotionEntity.class,
+			client.player.getBoundingBox().expand(16), e -> e.isAlive() && e.getOwner() != client.player)) {
+			Vec3d position = potion.getPos(), velocity = potion.getVelocity();
+			for (int tick = 1; tick <= 24; tick++) {
+				// Vanilla 1.21.8 applies gravity and drag before moving the thrown entity.
+				if (!potion.hasNoGravity()) velocity = velocity.add(0, -.05, 0);
+				boolean water = client.world.getFluidState(BlockPos.ofFloored(position)).isIn(net.minecraft.registry.tag.FluidTags.WATER);
+				velocity = velocity.multiply(water ? .8F : .99F);
+				Vec3d next = position.add(velocity);
+				var hit = client.world.raycast(new net.minecraft.world.RaycastContext(position, next,
+					net.minecraft.world.RaycastContext.ShapeType.COLLIDER, net.minecraft.world.RaycastContext.FluidHandling.NONE, potion));
+				if (hit.getType() != net.minecraft.util.hit.HitResult.Type.MISS) {
+					result.add(new CombatPositioning.Splash(hit.getPos().x, hit.getPos().y, hit.getPos().z, tick));
+					break;
+				}
+				var contact = client.player.getBoundingBox().expand(.3).raycast(position, next);
+				if (contact.isPresent()) {
+					Vec3d point = contact.get();
+					result.add(new CombatPositioning.Splash(point.x, point.y, point.z, tick));
+					break;
+				}
+				position = next;
+			}
+		}
+		return List.copyOf(result);
+	}
+
 	Map<String, Object> evidence() {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("decision", decision);
+		evidence.put("traversal", traversal == null ? Map.of("phase", "idle") : traversal.evidence());
+		evidence.put("preciseWaypoint", preciseWaypoint == null ? null : new double[]{preciseWaypoint.x, preciseWaypoint.y, preciseWaypoint.z});
+		evidence.put("incomingSplashes", incomingSplashes);
 		evidence.put("anchor", anchor);
 		evidence.put("focusUuid", plannedFocus);
 		evidence.put("attackReady", plannedAttackReady);
+		evidence.put("desiredDistance", desiredDistance);
+		evidence.put("crowd", liveThreats);
 		evidence.put("terrainCells", terrainCells);
 		evidence.put("planningMicros", planningNanos / 1000);
 		evidence.put("plannedTick", plannedTick);
@@ -94,6 +144,7 @@ final class MinecraftCombatPositioning {
 
 	/** Fresh validation prevents a cached escape hop surviving a block change or knockback. */
 	boolean canStepTo(CombatPositioning.Cell target) {
+		if (traversal != null && target.equals(traversal.destination())) return true;
 		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
 		var context = new CalculationContext(baritone);
 		var origin = cell(baritone.getPlayerContext().playerFeet());
@@ -104,12 +155,13 @@ final class MinecraftCombatPositioning {
 	void invalidate() { plannedTick = Long.MIN_VALUE; decision = null; }
 
 	/** Quantized keys must not cut a corner or step sideways off the validated route. */
-	CombatPositioning.Steering steering(MinecraftClient client, CombatPositioning.Cell target, Vec3d facing) {
+	CombatPositioning.Steering steering(MinecraftClient client, CombatPositioning.Cell target, Vec3d waypoint, Vec3d facing) {
 		var player = client.player;
 		Vec3d forward = new Vec3d(facing.x - player.getX(), 0, facing.z - player.getZ()).normalize();
 		Vec3d left = new Vec3d(forward.z, 0, -forward.x);
-		Vec3d desired = new Vec3d(target.x() + .5 - player.getX(), 0, target.z() + .5 - player.getZ()).normalize();
-		var preferred = CombatPositioning.steering(player.getX(), player.getZ(), target.x() + .5, target.z() + .5, facing.x, facing.z);
+		if (player.getPos().subtract(waypoint).horizontalLengthSquared() < .0064) return new CombatPositioning.Steering(false, false, false, false);
+		Vec3d desired = new Vec3d(waypoint.x - player.getX(), 0, waypoint.z - player.getZ()).normalize();
+		var preferred = CombatPositioning.steering(player.getX(), player.getZ(), waypoint.x, waypoint.z, facing.x, facing.z);
 		CombatPositioning.Steering best = new CombatPositioning.Steering(false, false, false, false);
 		double bestProgress = 0;
 		for (int f = -1; f <= 1; f++) for (int l = -1; l <= 1; l++) {
@@ -130,6 +182,50 @@ final class MinecraftCombatPositioning {
 		return best;
 	}
 
+	CombatTraversal.Control control(MinecraftClient client, CombatPositioning.Cell target, Vec3d facing, Vec3d focus, long tick) {
+		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+		var context = new CalculationContext(baritone);
+		if (traversal == null) traversal = new CombatTraversal();
+		if (traversal.destination() == null && target.y() != client.player.getBlockY() && client.player.isOnGround()) {
+			var source = baritone.getPlayerContext().playerFeet();
+			var result = new MutableMoveResult();
+			for (Moves move : MOVES) {
+				result.reset();
+				move.apply(context, source.x, source.y, source.z, result);
+				if (result.x == target.x() && result.y == target.y() && result.z == target.z() && Double.isFinite(result.cost)) {
+					var movement = move.apply0(context, source);
+					if (movement.toBreak(context.bsi).isEmpty() && movement.toPlace(context.bsi).isEmpty()) {
+						traversal.start(movement, target, tick);
+						break;
+					}
+				}
+			}
+		}
+		if (traversal.destination() != null) {
+			preciseWaypoint = null;
+			var control = traversal.tick(client, context, facing, tick);
+			if (traversal.destination() == null) invalidate();
+			return control;
+		}
+		preciseWaypoint = preciseWaypoint(client, context, target, focus);
+		return new CombatTraversal.Control(steering(client, target, preciseWaypoint, facing), false, false);
+	}
+
+	private Vec3d preciseWaypoint(MinecraftClient client, CalculationContext context, CombatPositioning.Cell target, Vec3d focus) {
+		var player = client.player;
+		Vec3d best = player.getPos();
+		double bestScore = Double.POSITIVE_INFINITY;
+		for (double ox : new double[]{.32, .5, .68}) for (double oz : new double[]{.32, .5, .68}) {
+			Vec3d point = new Vec3d(target.x() + ox, target.y(), target.z() + oz);
+			if (!dryAndSafe(context, target.x(), target.y(), target.z())) continue;
+			if (!client.world.isSpaceEmpty(player, player.getBoundingBox().offset(point.subtract(player.getPos())))) continue;
+			double score = CombatPositioning.preciseScore(point.x, point.y, point.z, focus.x, focus.y, focus.z, incomingSplashes, desiredDistance, liveThreats);
+			score += point.distanceTo(player.getPos()) * .1;
+			if (score < bestScore) { best = point; bestScore = score; }
+		}
+		return best;
+	}
+
 	private static Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> terrain(
 		CalculationContext context, CombatPositioning.Cell origin, double slowdown) {
 		var graph = new LinkedHashMap<CombatPositioning.Cell, List<CombatPositioning.Edge>>();
@@ -142,7 +238,7 @@ final class MinecraftCombatPositioning {
 			for (var edge : edges(context, from, slowdown)) {
 				var to = edge.destination();
 				if (Math.abs(to.x() - origin.x()) > RADIUS || Math.abs(to.z() - origin.z()) > RADIUS
-					|| Math.abs(to.y() - origin.y()) > 2) continue;
+					|| Math.abs(to.y() - origin.y()) > 3) continue;
 				if (!graph.containsKey(to)) {
 					if (graph.size() >= MAX_CELLS) continue;
 					graph.put(to, List.of());
@@ -165,7 +261,7 @@ final class MinecraftCombatPositioning {
 			result.reset();
 			move.apply(context, from.x(), from.y(), from.z(), result);
 			if (!Double.isFinite(result.cost) || result.cost <= 0 || result.cost > CombatPositioning.HORIZON_TICKS
-				|| Math.abs(result.y - from.y()) > 1) continue;
+				|| result.y - from.y() > 1 || from.y() - result.y > 3) continue;
 			if (!WorldTravelPolicy.permitsMovement(context.world, from.x(), from.y(), from.z(), result.x, result.y, result.z,
 				result.y > from.y())) continue;
 			if (!dryAndSafe(context, result.x, result.y, result.z)) continue;

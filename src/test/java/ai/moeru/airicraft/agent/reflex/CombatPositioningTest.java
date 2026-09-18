@@ -12,6 +12,34 @@ import static ai.moeru.airicraft.agent.reflex.CombatPositioning.*;
 class CombatPositioningTest {
 	private static final Cell ORIGIN = new Cell(0, 64, 0);
 
+	@Test void subblockPositionCanImproveMeleeSpacingWithoutChangingCells() {
+		assertTrue(preciseScore(.68, 64, .5, 3.28, 64, .5, List.of())
+			< preciseScore(.5, 64, .5, 3.28, 64, .5, List.of()));
+	}
+
+	@Test void subblockPositionTradesAttackSpacingForSplashClearance() {
+		var splash = List.of(new Splash(1.5, 64, .5, 8));
+		assertTrue(preciseScore(.32, 64, .5, 3.1, 64, .5, splash)
+			< preciseScore(.68, 64, .5, 3.1, 64, .5, splash));
+	}
+
+	@Test void rangedApproachCanLeaveOldEncounterAnchor() {
+		var shooter = new Threat(5.5, 64, .5, .3, 2.4, true);
+		var result = choose(ORIGIN, grid(8, Set.of()), List.of(shooter), null, new Cell(-6, 64, 0), true, shooter);
+		assertNotNull(result.nextStep());
+		assertEquals(1, result.nextStep().x());
+	}
+
+	@Test void incomingSplashChangesRouteAwayFromPredictedImpact() {
+		var shooter = new Threat(5.5, 64, .5, .3, 2.4, true);
+		var graph = grid(8, Set.of());
+		var baseline = choose(ORIGIN, graph, List.of(shooter), null, ORIGIN, true, shooter);
+		var splashes = List.of(new Splash(2.5, 64, .5, 12));
+		var dodge = choose(ORIGIN, graph, List.of(shooter), null, ORIGIN, true, shooter, splashes);
+		assertNotEquals(baseline.route(), dodge.route());
+		assertTrue(splashPenalty(dodge.route(), graph, splashes) < splashPenalty(baseline.route(), graph, splashes));
+	}
+
 	@Test void retreatFacesThePackAndUsesBackpedalingRegardlessOfWorldOrientation() {
 		assertEquals(new Steering(false, true, false, false), steering(0, 0, 0, -1, 0, 5));
 		assertEquals(new Steering(false, true, false, false), steering(0, 0, -1, 0, 5, 0));
@@ -223,5 +251,35 @@ class CombatPositioningTest {
 			graph.put(from, List.copyOf(edges));
 		}
 		return graph;
+	}
+	@Test void creeperKiteRouteOpensDistanceInsteadOfHoldingMeleeRange() {
+		var creeper = new Threat(3.1, 64, .5, .25, 2.4, false, 0, 0, 5);
+		var result = choose(ORIGIN, grid(8, Set.of()), List.of(creeper), null, ORIGIN, false, creeper);
+		assertNotNull(result.nextStep());
+		assertTrue(result.nextStep().x() < 0);
+		assertTrue(preciseScore(.32, 64, .5, 3.1, 64, .5, List.of(), 5)
+			< preciseScore(.68, 64, .5, 3.1, 64, .5, List.of(), 5));
+	}
+	@Test void subblockWaypointMustNotMoveTowardAnAdjacentFlanker() {
+		// Focus east at (3.28,.68), flanker south at (.68,2.68).
+		// Both waypoints keep focus in reach, but the southern point invites contact.
+		var crowd = List.of(new Threat(.68, 64, 2.68, .1, 2.4, false));
+		double away = preciseScore(.68, 64, .32, 3.28, 64, .68, List.of(), 2.6, crowd);
+		double toward = preciseScore(.68, 64, .68, 3.28, 64, .68, List.of(), 2.6, crowd);
+		assertTrue(away < toward, "Prefer flanker clearance over exact focus distance");
+	}
+	@Test void movingFlankerInvalidatesRouteEvenWhenFocusIsStationary() {
+		var focus = mob(3, 0, 0);
+		var before = List.of(focus, mob(-4, 0, .2));
+		assertFalse(crowdMoved(before, before));
+		assertTrue(crowdMoved(before, List.of(focus, mob(-3.4, 0, .2))));
+		assertTrue(crowdMoved(before, List.of(focus)));
+	}
+
+	@Test void crowdClearanceIncludesEveryMeleeDirectionButNotRangedContact() {
+		var front = new Threat(2.5, 64, .5, .1, 2.4, false);
+		var rear = new Threat(-1.5, 64, .5, .1, 2.4, false);
+		assertTrue(crowdClearancePenalty(.5, .5, List.of(front, rear)) > crowdClearancePenalty(.5, .5, List.of(front)));
+		assertEquals(0, crowdClearancePenalty(.5, .5, List.of(new Threat(.5, 64, .5, 0, 2.4, true))));
 	}
 }

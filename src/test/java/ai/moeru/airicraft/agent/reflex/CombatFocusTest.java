@@ -29,4 +29,33 @@ class CombatFocusTest {
 	@Test void occludedThreatCannotDisplaceVisibleOpponent() {
 		assertEquals("visible", CombatFocus.select(List.of(new CombatFocus.Candidate("hidden", 1, false, .3, false, true), melee("visible", 3, .1))));
 	}
+	private static CombatFocus.Candidate mob(String type, double distance, boolean baby) {
+		return new CombatFocus.Candidate(type, distance, true, .1,
+			type.equals("witch") || type.equals("skeleton"), false, "minecraft:" + type, baby);
+	}
+
+	@Test void witchOutranksEvenContactingBabyZombie() {
+		assertEquals("witch", CombatFocus.select(List.of(mob("witch", 8, false), mob("zombie", 1.5, true))));
+	}
+
+	@Test void babyZombieOutranksSpiderAndUnpressuredSkeleton() {
+		assertEquals("zombie", CombatFocus.select(List.of(mob("zombie", 6, true), mob("spider", 6, false), mob("skeleton", 5, false))));
+	}
+
+	@Test void spiderOutranksAdultZombie() {
+		assertEquals("spider", CombatFocus.select(List.of(mob("zombie", 2, false), mob("spider", 4, false))));
+	}
+
+	@Test void skeletonPriorityDependsOnMeleePressure() {
+		assertEquals("skeleton", CombatFocus.select(List.of(mob("zombie", 6, false), mob("spider", 6, false), mob("skeleton", 5, false))));
+		assertEquals("zombie", CombatFocus.select(List.of(mob("zombie", 3, false), mob("skeleton", 5, false))));
+		assertEquals("spider", CombatFocus.select(List.of(mob("spider", 3, false), mob("skeleton", 5, false))));
+		var rushing = new CombatFocus.Candidate("rush", 5, true, .4, false, false, "minecraft:zombie", false);
+		assertEquals("rush", CombatFocus.select(List.of(rushing, mob("skeleton", 5, false))));
+	}
+
+	@Test void hiddenWitchDoesNotDisplaceVisibleZombie() {
+		var witch = new CombatFocus.Candidate("witch", 3, false, 0, true, false, "minecraft:witch", false);
+		assertEquals("zombie", CombatFocus.select(List.of(witch, mob("zombie", 3, false))));
+	}
 }

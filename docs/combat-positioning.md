@@ -10,16 +10,28 @@ An active swarm encounter uses a wider ten-block release distance (still capped
 by the configured radius), retaining briefly occluded pursuers. This prevents
 repeated release/reacquisition while circling along the six-block engagement edge.
 
-Combat recalculates target priority every tick from visibility, proximity, relative
-closing speed, and attack preparation (bow draw, loaded crossbow, or creeper fuse).
-Immediate melee contact and opponents within attack reach receive priority; faster
-approaching threats gain urgency sooner. There is no persistent target lock.
-Movement, camera facing, and attacks share the highest-priority focus. It targets a 2.3–2.7-block center-distance band through the whole
-attack cooldown; both the next step and route endpoint are penalized for leaving
-three-block attack reach. This also applies to a lone melee opponent. Other mobs
-still contribute exposure, body collision, pincer, and dead-end costs, encouraging
-isolation of the focus without backing away from the entire pack. Ranged enemies
-do not become safer by retreating; navigation closes to melee range.
+Combat recalculates attack focus each tick. Visible witches rank first, then baby
+zombie variants, armed skeleton variants when melee pressure is low, spiders, and
+ordinary melee mobs. Skeletons fall below melee targets when melee mobs are within
+four blocks or projected to contact within ten ticks from at most six blocks.
+Visibility takes precedence; proximity, closing speed and attack preparation break
+ties within a rank. There is no persistent target lock.
+
+The focus normally controls camera facing and a 2.3–2.7-block fighting distance.
+Other mobs contribute route exposure, body collision, pincer and dead-end costs.
+Both the immediate route step and sub-block waypoint also score clearance from
+all melee threats: reach +0.3 blocks, plus up to 0.8 blocks for three ticks of
+observed approach. Mob observations refresh each tick; a half-block displacement,
+0.1-block/tick velocity change, or crowd-size change invalidates route reuse.
+Ranged enemies do not gain fictional contact damage; navigation closes to melee
+range. Incoming thrown potions add predicted splash-impact avoidance costs.
+
+An igniting creeper within seven blocks temporarily overrides movement focus.
+Cooldown or fuse progress >=20% requests five-block separation; ready approaches
+request sprint when hunger permits. Attacks stop at >=20% fuse. The shield is a
+late fallback at >=70% fuse, not an intentional explosion strategy. Bow guarding
+starts at draw tick 14 of 20, or for incoming collision-course arrows, with a
+six-tick warning hold. These thresholds are heuristics, not guaranteed escapes.
 
 For a melee target already approaching within 3.5 blocks, next-step spacing uses
 its measured horizontal velocity to anticipate up to four ticks of motion, capped
@@ -32,15 +44,19 @@ cached movement decision, including after knockback.
 A bounded beam search projects short pursuit trajectories using each mob's movement
 attribute, velocity, and observed displacement. At adequate spacing, a consistent
 tangent around the selected opponent is preferred. The original encounter anchor
-limits movement to six blocks; knockback outside it permits inward steps. Shield
+limits melee movement to six blocks; knockback outside it permits inward steps.
+Ranged approaches and creeper retreats use a fresh local anchor. Shield
 defense remains active. This spacing is a preference, not a guarantee against hits.
 
 The client adapter builds at most 128 connected feet cells within six horizontal
-blocks and two vertical blocks, using Baritone's actual cardinal traverse/ascend/
+blocks and three vertical blocks, using Baritone's actual cardinal traverse/ascend/
 descend costs. It rejects unloaded terrain, edits, hazards, fluids, drops greater
-than one block, and movements outside travel bounds. Search considers at most eight
+than three blocks, and movements outside travel bounds. Search considers at most eight
 steps over 24 game ticks with a beam width of 24. It replans every six ticks or upon
-arrival and freshly checks the next movement before steering toward an exact adjacent waypoint. The player faces the selected
+arrival and freshly checks the next movement before steering toward a collision-checked sub-block waypoint. Baritone movement states execute
+ascents and descents while local steering retains combat aim. Committed terrain
+moves finish before replanning and time out after 60 ticks; no block placement or
+towering is implemented. The player faces the selected
 opponent and backpedals or strafes along that route; an active shield keeps its incoming
 attack heading. Travel-time estimates exclude sprinting.
 No pathfinding settings are reset or loosened. An unavailable route means hold and
@@ -48,9 +64,16 @@ defend, not blind backward movement.
 
 This is a local heuristic, not a globally optimal combat plan. Mob pursuit is a
 horizontal estimate, not a simulation of every mob's AI or terrain capabilities.
-It conservatively includes threats across elevation; special ranged attacks and
-teleportation are not predicted. Terrain can change after observation. Clustering
+It conservatively includes threats across elevation; potion impacts are approximate and
+teleportation is not predicted. Terrain can change after observation. Clustering
 and survival improvement require live evidence, separate from the deterministic tests.
 
 `reflex.combat_reposition` events record the route, nearby count, selected risk and
 standing risk. Reflex decision evidence includes the selected target UUID, search size, and planning time.
+
+The policy was integrated from `codex/natural-combat-experiments`; the endurance
+runner, automatic healing, cheat bridge and replay tooling remain on that branch.
+Live mixed-horde windows informed tuning, but were not matched trials. Complete
+creeper sprint-hit cycles and normal survival without experimental healing remain
+unvalidated. Focused regressions cover ranking, shielding, terrain state startup,
+route constraints and flanker clearance.
