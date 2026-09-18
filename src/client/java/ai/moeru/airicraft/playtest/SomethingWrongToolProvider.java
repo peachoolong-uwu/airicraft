@@ -30,7 +30,7 @@ public final class SomethingWrongToolProvider implements PlannerToolProvider {
 		return "This is an automatic playtest. Call something_wrong when observed behavior suggests a bug in Airicraft's tools, execution, observations or harness. Describe what you tried, expected behavior, actual behavior, and any useful work IDs in ordinary language. You do not need a root cause or certainty. Ordinary survival difficulty, missing materials, an unreachable target or your own mistaken plan alone are not interface bugs. A report pauses the game and preserves the recording for later review; do not continue gameplay after reporting.";
 	}
 	@Override public List<Map<String, Object>> openAiTools() {
-		return List.of(toolForProvider("something_wrong", "Report a suspected Airicraft/tool/harness bug in natural language. Pauses this local playtest and saves its recording for offline review.",
+		return List.of(toolForProvider("something_wrong", "Report a suspected Airicraft/tool/harness bug in natural language. Pauses this local playtest and preserves evidence for review.",
 			propertiesForProvider(propForProvider("description", stringForProvider("What seems wrong: attempted action, expected versus observed behavior, and relevant details. Up to 8192 characters."))), List.of("description")));
 	}
 	@Override public void validateArguments(String name, JsonObject args) {

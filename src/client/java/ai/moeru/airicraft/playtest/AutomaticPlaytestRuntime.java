@@ -68,7 +68,7 @@ public final class AutomaticPlaytestRuntime {
 		}
 		return "Tool result for something_wrong: reportId=" + (recording == null ? "unrecorded" : recording.id())
 			+ " state=" + state + " outputDir=" + (recording == null ? root : recording.incidentDirectory())
-			+ ". Report accepted; this playtest will pause. The launcher will close the client to finalize its Recorder Play and publish the complete incident."
+			+ ". Report accepted; this playtest will pause. The launcher will keep the client paused for a Codex parent, or close it to finalize the incident when running without one."
 			+ (error.isEmpty() ? "" : " Recording error: " + error);
 
 	}

@@ -48,6 +48,16 @@ class CodexFollowupTest(unittest.TestCase):
         data = json.loads(next((self.root / "run/automatic-playtest-handoffs").glob("*.json")).read_text())
         self.assertEqual("queued", data["notification"]["status"])
 
+    def test_live_report_queues_without_claiming_finalized_recording(self):
+        handoff = {"terminationReason": "bug_report", "liveDebug": True,
+                   "finalized": False, "bridgeStateFile": "/worker/bridge-state.json"}
+        with patch.object(playtest.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as queue:
+            playtest.notify_codex_parent("parent", handoff)
+        data = json.loads(next((self.root / "run/automatic-playtest-handoffs").glob("*.json")).read_text())
+        self.assertEqual("live_debug", data["followupMode"])
+        self.assertFalse(data["finalized"])
+        self.assertIn("paused for live debugging", queue.call_args.args[0][5])
+
     def test_manual_stops_never_queue(self):
         with patch.object(playtest.subprocess, "run") as dispatch:
             for reason in ("manual_interrupt", "client_exit", "world_left"):
@@ -201,6 +211,79 @@ class PlaytestPlannerDegradationTest(unittest.TestCase):
             self.assertEqual(1, sleep.call_count)
             self.assertEqual(1, sum(path == "/v1/agent/debug/chat" for _, path, _ in requests))
             self.assertEqual(("POST", "/v1/evaluation/client-stop", None), requests[-1])
+
+
+class PlaytestLiveDebugTest(unittest.TestCase):
+    def test_report_keeps_codex_client_alive_beyond_budget_until_manual_stop(self):
+        self.exercise_report("parent")
+
+    def test_report_without_parent_still_exits_immediately(self):
+        self.exercise_report(None)
+
+    def exercise_report(self, parent):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            world = root / "world"
+            world.mkdir()
+            (world / "level.dat").touch()
+            profile = root / "recorder.jar"
+            profile.touch()
+            args = SimpleNamespace(world=world, output=root / "output", recorder_jar=str(profile),
+                                   objective="Survive", max_seconds=2, startup_timeout=10)
+            client = Mock()
+            client.process.pid = 122
+            client.process.poll.return_value = None
+            client.line_queue.empty.return_value = True
+            bridge = SimpleNamespace(process_id=123)
+            pause = {"paused": True, "serverPaused": True, "serverTickId": 42}
+            handoff = {"parentThreadId": parent}
+
+            def bridge_json(connection, method, path, body=None):
+                if path == "/v1/worlds":
+                    return {"worlds": [{"worldId": "playtest"}]}
+                if path == "/v1/status":
+                    return {"worldLoaded": True, "automaticPlaytest": {"state": "CAPTURE_READY"}}
+                if path == "/v1/agent/debug/ticks/state":
+                    return pause
+                return {}
+
+            def notify(thread, context):
+                stop.assert_not_called()
+                finalize.assert_not_called()
+                self.assertEqual("parent", thread)
+                self.assertTrue(context["liveDebug"])
+                self.assertEqual(pause, context["pause"])
+                self.assertTrue(Path(context["bridgeStateFile"]).exists())
+
+            with (patch.object(playtest, "REPO", root),
+                  patch.object(playtest.uuid, "uuid4", return_value="run"),
+                  patch.object(playtest.evaluation, "local_timestamp", return_value="test"),
+                  patch.object(playtest.shutil, "which", return_value="available"),
+                  patch.object(playtest, "prepare_game", return_value=root / "game"),
+                  patch.object(playtest.evaluation, "start_client", return_value=client),
+                  patch.object(playtest.evaluation, "wait_for_title_bridge", return_value=(bridge, {})),
+                  patch.object(playtest.evaluation, "bridge_json", side_effect=bridge_json),
+                  patch.object(playtest.evaluation, "stop_client", return_value={"minecraftExited": True}) as stop,
+                  patch.object(playtest, "finalize_recording", return_value=(root / "final", 0)) as finalize,
+                  patch.object(playtest, "notify_codex_parent", side_effect=notify) as dispatch,
+                  patch.object(playtest.signal, "signal"),
+                  patch.object(playtest.time, "monotonic", side_effect=[0, 1, 100]),
+                  patch.object(playtest.time, "sleep", side_effect=[None, KeyboardInterrupt]) as sleep):
+                actual_bridge = root / "run/automatic-playtest-workers/test-run/bridge-state.json"
+                actual_bridge.parent.mkdir(parents=True)
+                actual_bridge.touch()
+                self.assertEqual(0, playtest.run(args, handoff))
+            stop.assert_called_once()
+            finalize.assert_called_once()
+            if parent:
+                dispatch.assert_called_once()
+                self.assertEqual(2, sleep.call_count)
+                self.assertEqual("manual_interrupt", handoff["terminationReason"])
+            else:
+                dispatch.assert_not_called()
+                sleep.assert_not_called()
+                self.assertEqual("bug_report", handoff["terminationReason"])
+            self.assertFalse(handoff["liveDebug"])
 
 
 class PlaytestPublicationTest(unittest.TestCase):
