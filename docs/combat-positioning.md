@@ -10,9 +10,11 @@ An active swarm encounter uses a wider ten-block release distance (still capped
 by the configured radius), retaining briefly occluded pursuers. This prevents
 repeated release/reacquisition while circling along the six-block engagement edge.
 
-Combat selects the nearest visible opponent and retains it until it disappears,
-loses line of sight, or moves beyond six blocks. Movement, camera facing, and attacks
-share this focus. It targets a 2.3–2.7-block center-distance band through the whole
+Combat recalculates target priority every tick from visibility, proximity, relative
+closing speed, and attack preparation (bow draw, loaded crossbow, or creeper fuse).
+Immediate melee contact and opponents within attack reach receive priority; faster
+approaching threats gain urgency sooner. There is no persistent target lock.
+Movement, camera facing, and attacks share the highest-priority focus. It targets a 2.3–2.7-block center-distance band through the whole
 attack cooldown; both the next step and route endpoint are penalized for leaving
 three-block attack reach. This also applies to a lone melee opponent. Other mobs
 still contribute exposure, body collision, pincer, and dead-end costs, encouraging

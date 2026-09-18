@@ -62,7 +62,7 @@ public final class SurvivalReflexRuntime {
 	private ShieldGuard shieldGuard;
 	private CombatStalemate combatStalemate;
 	private MinecraftCombatPositioning combatPositioning;
-	private final CombatFocus combatFocus = new CombatFocus();
+	private String reportedCombatFocus;
 	private ReflexPolicy policyOverride;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
@@ -1029,8 +1029,25 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private ResolvedThreat focusedThreat(List<ResolvedThreat> threats) {
-		String id = combatFocus.select(threats.stream().map(t ->
-			new CombatFocus.Candidate(t.observed().uuid(), t.distance(), t.lineOfSight())).toList());
+		var player = MinecraftClient.getInstance().player;
+		var candidates = threats.stream().map(t -> {
+			var entity = t.entity();
+			Vec3d towardPlayer = player.getPos().subtract(entity.getPos()).normalize();
+			double closingSpeed = entity.getVelocity().subtract(player.getVelocity()).dotProduct(towardPlayer);
+			boolean preparingAttack = entity.isUsingItem() && entity.getActiveItem().isOf(net.minecraft.item.Items.BOW)
+				|| net.minecraft.item.CrossbowItem.isCharged(entity.getMainHandStack())
+				|| net.minecraft.item.CrossbowItem.isCharged(entity.getOffHandStack())
+				|| entity instanceof net.minecraft.entity.mob.CreeperEntity creeper && creeper.getFuseSpeed() > 0;
+			return new CombatFocus.Candidate(t.observed().uuid(), t.distance(), t.lineOfSight(),
+				closingSpeed, isRangedThreat(entity), preparingAttack);
+		}).toList();
+		String id = CombatFocus.select(candidates);
+		if (!java.util.Objects.equals(id, reportedCombatFocus)) {
+			reportedCombatFocus = id;
+			pendingEvents.add(new SurvivalReflexEvent("reflex.combat_focus", Map.of("threatUuid", id,
+				"candidates", candidates.stream().map(c -> Map.of("threatUuid", c.id(), "distance", c.distance(),
+					"visible", c.visible(), "closingSpeed", c.closingSpeed(), "preparingAttack", c.preparingAttack(), "priority", c.priority())).toList())));
+		}
 		return threats.stream().filter(t -> t.observed().uuid().equals(id)).findFirst().orElseThrow();
 	}
 
@@ -1046,7 +1063,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void resetSecurityProgress() {
-		combatFocus.clear();
+		reportedCombatFocus = null;
 		combatPositioning = null;
 		secureEscapeTicks = 0;
 		mobRoutesTick = Long.MIN_VALUE;
