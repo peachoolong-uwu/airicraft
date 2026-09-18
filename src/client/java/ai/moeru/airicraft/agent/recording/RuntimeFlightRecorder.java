@@ -107,34 +107,26 @@ public final class RuntimeFlightRecorder {
 	}
 
 	private static void appendJsonl(Path path, Object value) throws IOException {
-		Files.writeString(
-			path,
-			GSON.toJson(value) + "\n",
-			StandardOpenOption.CREATE,
-			StandardOpenOption.APPEND
-		);
+		try (var writer = Files.newBufferedWriter(path, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+			GSON.toJson(value, writer);
+			writer.newLine();
+		}
 	}
 
 	private static void writeJson(Path path, Object value) throws IOException {
-		Files.writeString(
-			path,
-			GSON.toJson(value) + "\n",
-			StandardOpenOption.CREATE,
-			StandardOpenOption.TRUNCATE_EXISTING
-		);
+		try (var writer = Files.newBufferedWriter(path)) {
+			GSON.toJson(value, writer);
+			writer.newLine();
+		}
 	}
 
 	private static void writeJsonlSnapshot(Path path, List<?> values) throws IOException {
-		StringBuilder content = new StringBuilder();
-		for (Object value : values) {
-			content.append(GSON.toJson(value)).append('\n');
+		try (var writer = Files.newBufferedWriter(path)) {
+			for (Object value : values) {
+				GSON.toJson(value, writer);
+				writer.newLine();
+			}
 		}
-		Files.writeString(
-			path,
-			content,
-			StandardOpenOption.CREATE,
-			StandardOpenOption.TRUNCATE_EXISTING
-		);
 	}
 
 }

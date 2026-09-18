@@ -12,8 +12,11 @@ import java.util.Map;
 
 public final class LlmFlightRecorder {
 	private static final int DEFAULT_CAPACITY = 2048;
+	private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
 
 	private final int capacity;
+	private final long maxBytes;
+	private long retainedBytes;
 	private final ArrayDeque<MutableRecord> records = new ArrayDeque<>();
 	private final Map<Long, MutableRecord> pendingByThread = new HashMap<>();
 	private long nextSequenceId = 1L;
@@ -30,7 +33,12 @@ public final class LlmFlightRecorder {
 	}
 
 	public LlmFlightRecorder(int capacity) {
+		this(capacity, 64L * 1024 * 1024);
+	}
+
+	public LlmFlightRecorder(int capacity, long maxBytes) {
 		this.capacity = Math.max(1, capacity);
+		this.maxBytes = Math.max(1L, maxBytes);
 	}
 
 	public synchronized void recordRequest(
@@ -75,7 +83,7 @@ public final class LlmFlightRecorder {
 		}
 		records.addLast(record);
 		pendingByThread.put(javaThreadId, record);
-		trim();
+		updateRetention(record);
 	}
 
 	public synchronized java.util.function.Consumer<String> streamListener() {
@@ -83,10 +91,12 @@ public final class LlmFlightRecorder {
 		var preview = new ai.moeru.airicraft.agent.llm.PlannerStreamPreview();
 		return delta -> {
 			synchronized (LlmFlightRecorder.this) {
+				if (!record.retained) return;
 				if (!record.status.equals("REQUESTED") && !record.status.equals("STREAMING")) return;
 				preview.append(delta);
 				record.status = "STREAMING";
 				record.rawResponseBody = preview.text();
+				updateRetention(record);
 			}
 		};
 	}
@@ -98,7 +108,8 @@ public final class LlmFlightRecorder {
 		record.statusCode = statusCode;
 		record.responseModel = responseModel;
 		record.usage = usage;
-		record.rawResponseBody = rawResponseBody;
+		if (record.retained) record.rawResponseBody = rawResponseBody;
+		updateRetention(record);
 	}
 
 	public synchronized void recordParsedResponse(String parsedResponseKind, Integer statusCode, String responseModel, LlmUsageSnapshot usage, Object parsedResponse) {
@@ -109,7 +120,11 @@ public final class LlmFlightRecorder {
 		record.responseModel = responseModel;
 		record.usage = usage;
 		record.parsedResponseKind = parsedResponseKind;
-		record.parsedResponse = parsedResponse;
+		if (record.retained) {
+			record.parsedResponse = parsedResponse;
+			record.parsedBytes = jsonBytes(parsedResponse);
+		}
+		updateRetention(record);
 		pendingByThread.remove(record.javaThreadId);
 	}
 
@@ -118,13 +133,14 @@ public final class LlmFlightRecorder {
 		record.status = "FAILED";
 		record.completedAtMs = System.currentTimeMillis();
 		record.failureType = failureType;
-		record.failureMessage = failureMessage;
+		if (record.retained) record.failureMessage = failureMessage;
+		updateRetention(record);
 		pendingByThread.remove(record.javaThreadId);
 	}
 
 	public synchronized LlmFlightRecordQueryResult query(Long sinceSequenceId) {
 		long oldestSequenceId = records.isEmpty() ? nextSequenceId : records.peekFirst().sequenceId;
-		long latestSequenceId = records.isEmpty() ? 0L : records.peekLast().sequenceId;
+		long latestSequenceId = nextSequenceId - 1L;
 		long effectiveSince = sinceSequenceId == null ? 0L : sinceSequenceId.longValue();
 		ArrayList<LlmFlightRecord> matches = new ArrayList<>();
 		for (MutableRecord record : records) {
@@ -146,18 +162,51 @@ public final class LlmFlightRecorder {
 		synthetic.status = "UNMATCHED";
 		records.addLast(synthetic);
 		pendingByThread.put(javaThreadId, synthetic);
-		trim();
+		updateRetention(synthetic);
 		return synthetic;
 	}
 
-	private void trim() {
-		while (records.size() > capacity) {
+	private void updateRetention(MutableRecord record) {
+		if (!record.retained) return;
+		retainedBytes -= record.retainedBytes;
+		record.retainedBytes = 1024L + record.parsedBytes + jsonBytes(record.decisionContext);
+		for (String value : new String[] {record.requestBody, record.rawResponseBody, record.failureMessage,
+			record.requestKind, record.threadId, record.providerName, record.endpoint, record.model,
+			record.responseModel, record.parsedResponseKind, record.failureType}) {
+			if (value != null) record.retainedBytes += 2L * value.length();
+		}
+		retainedBytes += record.retainedBytes;
+		while (records.size() > capacity || retainedBytes > maxBytes) {
 			MutableRecord removed = records.removeFirst();
-			pendingByThread.remove(removed.javaThreadId, removed);
+			retainedBytes -= removed.retainedBytes;
+			removed.retained = false;
+			// In-flight callbacks may still hold this object. Keep its identity until completion,
+			// but release its payload and never resurrect an evicted record as a synthetic call.
+			removed.requestBody = "";
+			removed.rawResponseBody = "";
+			removed.parsedResponse = null;
+			removed.failureMessage = "";
+			removed.decisionContext = Map.of();
 		}
 	}
 
+	private static long jsonBytes(Object value) {
+		// Estimate parsed/context payloads without allocating another serialized body.
+		var counter = new java.io.Writer() {
+			long characters;
+			@Override public void write(char[] chars, int offset, int length) { characters += length; }
+			@Override public void write(String text, int offset, int length) { characters += length; }
+			@Override public void flush() {}
+			@Override public void close() {}
+		};
+		GSON.toJson(value, counter);
+		return 2L * counter.characters;
+	}
+
 	private static final class MutableRecord {
+		private boolean retained = true;
+		private long retainedBytes;
+		private long parsedBytes;
 		private final long sequenceId;
 		private final long requestedAtMs;
 		private final long javaThreadId;

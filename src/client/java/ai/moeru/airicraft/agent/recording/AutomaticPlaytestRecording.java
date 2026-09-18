@@ -143,7 +143,8 @@ public final class AutomaticPlaytestRecording {
 						entry.getAsJsonObject("payload").remove("imageBase64");
 					}
 					visualTruncated |= sequence > visualCursor + 1L;
-					writer.write(GSON.toJson(observation) + "\n");
+					GSON.toJson(observation, writer);
+					writer.newLine();
 					visualCursor = sequence;
 					visualCount++;
 				}
