@@ -84,7 +84,7 @@ record EmbodiedPlannerActionToolExecutor(
 			case PlannerToolCatalog.UPDATE_EVENT_POLICY, PlannerToolCatalog.CONFIGURE_PATHFIND,
 				PlannerToolCatalog.CONFIGURE_LIGHTING -> ToolPolicy.DEAD_SAFE;
 			case PlannerToolCatalog.START_ACTION_GOAL, PlannerToolCatalog.EAT_FOOD -> ToolPolicy.TASK_MUTATION;
-			case PlannerToolCatalog.CLOSE_CONTAINER, PlannerToolCatalog.TRANSFER_CONTAINER, PlannerToolCatalog.FOLLOW_PLAYER, PlannerToolCatalog.NAVIGATE_TO,
+			case "run_policy", PlannerToolCatalog.CLOSE_CONTAINER, PlannerToolCatalog.TRANSFER_CONTAINER, PlannerToolCatalog.FOLLOW_PLAYER, PlannerToolCatalog.NAVIGATE_TO,
 				PlannerToolCatalog.RETURN_TO_SURFACE, PlannerToolCatalog.MINE_BLOCKS,
 				PlannerToolCatalog.ENSURE_BLOCKS_IN_INVENTORY, PlannerToolCatalog.COLLECT_RESOURCE,
 				PlannerToolCatalog.SMELT_ITEMS, PlannerToolCatalog.COLLECT_SMELTED_ITEMS,

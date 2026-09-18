@@ -15,6 +15,11 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EmbodiedPlannerActionToolExecutorTest {
+	@Test void policyCannotPreemptExistingGraphOrSafetyOwner() {
+		assertTrue(execute("run_policy", ActionGraphExecutionState.REPLANNING, false, false, SurvivalReflexState.IDLE, false).contains("active_action_graph_in_progress"));
+		assertTrue(execute("run_policy", ActionGraphExecutionState.REPLANNING, false, false, SurvivalReflexState.ACTIVE, false).contains("reflex_active"));
+		assertTrue(execute("run_policy", ActionGraphExecutionState.REPLANNING, false, false, SurvivalReflexState.IDLE, true).contains("player_dead"));
+	}
 	@Test void reflexPolicyCanBeChangedWhileReflexOwnsABusyGraph() {
 		assertEquals("executed:configure_reflex", execute("configure_reflex",
 			ActionGraphExecutionState.WAITING_PRIMITIVE, true, false, SurvivalReflexState.ACTIVE, false));

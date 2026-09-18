@@ -207,6 +207,19 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void rejectedPolicyDoesNotBecomeATerminalToolReceipt() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var args = JsonParser.parseString("{\"source\":\"function* main() { return {}; }\",\"input\":{}}").getAsJsonObject();
+			String result = runtime.executePlannerAction(new PlannerToolCall("policy-test", "run_policy", args, null, null)).join();
+			assertTrue(result.startsWith("TOOL_ERROR:"), result);
+			setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.AWAITING_PLANNER, "policy-hold", null, null));
+			String held = runtime.executePlannerAction(new PlannerToolCall("held-policy-test", "run_policy", args, null, null)).join();
+			assertEquals("TOOL_ERROR: run_policy work_in_safety_hold", held);
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void idlePlannerEvidenceRefreshesWithoutAProjectedSemanticTask() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		try {

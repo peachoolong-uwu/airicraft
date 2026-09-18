@@ -266,6 +266,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final EmbodiedPlannerActionToolExecutor plannerActionToolExecutor;
 	private final MinecraftBlockAcquisitionKnowledgeService blockAcquisitionKnowledgeService = new MinecraftBlockAcquisitionKnowledgeService();
 	private final boolean codexDriverActive;
+	private ai.moeru.airicraft.policy.PolicyRuntime policyRuntime;
+	private ai.moeru.airicraft.agent.work.WorkHandle policyWork;
 
 	private boolean initialized;
 	private volatile long tickCount;
@@ -415,6 +417,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		eventPolicyState.clear();
 		eventPipeline.clearPlannerFeed();
 		completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=world_left");
+		cancelPolicy("world_left");
 		cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.WORLD_LEFT);
 		dialogueRuntime.clear();
 		worldTaskExecutor.onWorldLeave();
@@ -450,6 +453,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	public void onClientTick(MinecraftClient client) {
 		try { tickClient(client); }
 		finally { refreshWorkHistory(); }
+		tickPolicy();
 	}
 
 	private void tickClient(MinecraftClient client) {
@@ -511,7 +515,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		WorldEvidence worldEvidence = currentWorldEvidence(client);
 		// Idle/primitive jobs may not project a semantic task, but every planner trigger needs fresh evidence.
 		missionExecutionSnapshot = missionExecutionSnapshot.withEvidence(worldEvidence);
-		dialogueRuntime.updateGameplayWorkIdle(!actionGraphCoordinator.hasNonterminal()
+		dialogueRuntime.updateGameplayWorkIdle(!policyActive() && !actionGraphCoordinator.hasNonterminal()
 			&& isIdleForIdleIdeaScheduling(activeJobRuntime.current()) && activeGoal().isEmpty()
 			&& !playerItemUseController.eating());
 		DialogueResponse completedDialogueResponse = dialogueRuntime.poll(
@@ -540,6 +544,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			}
 			lastKnownPlayerHealth = currentPlayerHealth(client);
 			return;
+		}
+
+		if (policyActive()) {
+			behaviorTreeRuntime.stop(client);
+			lastKnownPlayerHealth = currentPlayerHealth(client);
+			return; // The policy owns normal actuation; its host is advanced after work refresh.
 		}
 
 		TaskSnapshot previousTaskSnapshot = taskSnapshot;
@@ -692,7 +702,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		}
 		String actuator = survivalReflexRuntime.snapshot().state() == SurvivalReflexState.ACTIVE ? "reflex"
 			: survivalReflexRuntime.snapshot().holdsNormalTasks() ? "safety_hold"
-			: activeTaskInProgress() ? "work" : "idle";
+			: policyActive() ? "policy" : activeTaskInProgress() ? "work" : "idle";
 		return new ai.moeru.airicraft.agent.llm.PlannerDecisionContext(worldSession, tickCount, integratedServerTick(),
 			dialogueRuntime.decisionOwner(), actuator, facts, eventBuffer.query(null));
 	}
@@ -744,6 +754,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		followCapability.clear();
 		followState = FollowState.idle();
 		completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=survival_reflex");
+		cancelPolicy("survival_reflex");
 		cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.SURVIVAL_REFLEX);
 		playerItemUseController.reset(client);
 	}
@@ -882,6 +893,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		chatService.clear();
 		taskExecutionSnapshot = TaskExecutionSnapshot.idle();
 		completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=player_died");
+		cancelPolicy("player_died");
 		cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.PLAYER_DIED);
 		idleIdeaScheduler.reset();
 
@@ -936,6 +948,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		eventPipeline.clearForShutdown();
 		primaryInteractionResolver.clear();
 		completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=runtime_shutdown");
+		cancelPolicy("runtime_shutdown");
 		cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.RUNTIME_SHUTDOWN);
 		dialogueRuntime.shutdown();
 		observability.shutdown();
@@ -1384,6 +1397,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		evaluationPlannerSuppressed = true;
 		eventPipeline.clearPlannerFeed();
 		completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=evaluation_finished");
+		cancelPolicy("evaluation_finished");
 		cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.EVALUATION_FINISHED);
 		dialogueRuntime.clear();
 		actionGraphCoordinator.cancelAll("runtime_reset", tickCount);
@@ -1534,6 +1548,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			String plannerSender = DialogueSpeakerLabels.SAME_CLIENT_ADMIN;
 			if (dialogueRuntime.handleResetCommand(plannerSender, plainTextMessage, tickCount, eventBuffer)) {
 				completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=planner_reset");
+				cancelPolicy("planner_reset");
 				cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.PLANNER_RESET);
 				eventPolicyState.clear();
 				drainEventPipeline();
@@ -1554,6 +1569,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 		if (dialogueRuntime.handleResetCommand(senderName, plainTextMessage, tickCount, eventBuffer)) {
 			completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=planner_reset");
+			cancelPolicy("planner_reset");
 			cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.PLANNER_RESET);
 			eventPolicyState.clear();
 			drainEventPipeline();
@@ -1806,6 +1822,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	public TaskSnapshot cancelTask(String reason) {
+		cancelPolicy(reason == null ? "task_cancelled" : reason);
 		if (actionGraphCoordinator.hasNonterminal()) {
 			actionGraphCoordinator.cancelAll(reason == null || reason.isBlank() ? "cancelled" : reason, tickCount);
 			pendingActionGraphTerminalEvent = null;
@@ -2310,7 +2327,56 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	@Override
 	public CompletableFuture<String> execute(PlannerToolCall toolCall) {
+		if (policyRuntime != null && policyRuntime.active() && toolCall != null
+			&& !PlannerToolCatalog.isReadTool(toolCall.name())
+			&& !List.of("inspect_work", "list_work", "cancel_work", "wait_for_work", "configure_reflex").contains(toolCall.name())) {
+			return CompletableFuture.completedFuture("TOOL_ERROR: policy_active; inspect or cancel workId=" + policyWork.id());
+		}
 		return plannerActionToolExecutor.execute(toolCall);
+	}
+
+	private String startPolicy(PlannerToolCall call) {
+		new ai.moeru.airicraft.agent.llm.PolicyToolProvider(this).validateArguments(call.name(), call.arguments());
+		requireLivingPlayerForAction();
+		if (survivalReflexRuntime.snapshot().holdId() != null) throw new IllegalStateException("work_in_safety_hold");
+		if (activeTaskInProgress() || actionGraphCoordinator.hasNonterminal()) throw new IllegalStateException("active_task_in_progress");
+		var host = new ContainerPolicyHost(MinecraftClient.getInstance());
+		var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, java.util.UUID.randomUUID().toString());
+		String source = call.arguments().get("source").getAsString();
+		var input = call.arguments().get("input").deepCopy();
+		policyRuntime = new ai.moeru.airicraft.policy.PolicyRuntime(source, input, host, outcome -> {
+			var details = new LinkedHashMap<String, Object>();
+			details.put("source", source);
+			details.put("input", input);
+			details.put("reason", outcome.reason());
+			details.put("result", outcome.result());
+			details.put("effects", outcome.effects());
+			details.put("message", "Policy " + outcome.state() + ": " + outcome.reason()
+				+ ". Inspect work details for returned value and verified effects; committed effects are not rolled back.");
+			recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "",
+				ai.moeru.airicraft.agent.work.WorkSnapshot.State.valueOf(outcome.state()), "run_policy", "FINISHED", false, tickCount, details));
+		});
+		policyWork = handle;
+		var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING,
+			"run_policy", "POLICY", true, tickCount, Map.of("source", source, "input", input));
+		recordWork(work);
+		dialogueRuntime.waitForWork(work);
+		return "Tool result for run_policy: " + new com.google.gson.Gson().toJson(work.summary());
+	}
+
+	private boolean policyActive() { return policyRuntime != null && policyRuntime.active(); }
+
+	private void cancelPolicy(String reason) {
+		if (policyRuntime != null) policyRuntime.cancel(reason);
+	}
+
+	private void tickPolicy() {
+		if (policyRuntime == null || !policyRuntime.active()) return;
+		if (!sessionSnapshot.companionActuationAllowed() || sessionSnapshot.requiresRespawn()) cancelPolicy("world_or_player_unavailable");
+		else if (survivalReflexRuntime.snapshot().holdId() != null
+			|| survivalReflexRuntime.snapshot().state() == SurvivalReflexState.ACTIVE) cancelPolicy("safety_interruption");
+		else if (activeTaskInProgress() || actionGraphCoordinator.hasNonterminal()) cancelPolicy("actuator_ownership_changed");
+		else policyRuntime.tick();
 	}
 
 	private void drainInteractionEvidence(MinecraftClient client) {
@@ -2386,6 +2452,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
 		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
 		if (survivalReflexRuntime.snapshot().holdId() != null && !List.of("configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy").contains(call.name())) {
+			if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_ERROR: run_policy work_in_safety_hold");
 			return CompletableFuture.completedFuture("Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(Map.of(
 				"accepted",false,"reason","work_in_safety_hold","holdId",survivalReflexRuntime.snapshot().holdId(),
 				"requiredAction","Use inspect_work then cancel_work or resume_work with exact workId and current holdId before admitting another gameplay action.")));
@@ -2399,6 +2466,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			refreshWorkHistory();
 			var receipt = new LinkedHashMap<String, Object>();
 			boolean rejected = text.startsWith("TOOL_ERROR:") || text.startsWith("TOOL_UNAVAILABLE:");
+			// A rejected policy did not install a waiter. Preserve the error prefix so its
+			// endsTurn provider cannot strand the planner waiting for nonexistent work.
+			if (rejected && call.name().equals("run_policy")) return text;
 			boolean immediate = List.of("equip_item", "configure_reflex", "configure_pathfind", "configure_lighting", "update_event_policy", "close_container", "transfer_container").contains(call.name());
 			boolean eating = call.name().equals("eat_food") && playerItemUseController.eating();
 			boolean accepted = admitted.isPresent() || !rejected && (immediate || eating);
@@ -2453,6 +2523,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 								work.label(), "TRACKING_CANCELLED", false, tickCount, Map.of("reason", reason, "physicalEffect", "Furnace cooking and items were not changed.")));
 						}
 						case OPERATION -> {
+							if (handle.equals(policyWork) && policyRuntime != null && policyRuntime.active()) {
+								policyRuntime.cancel(reason);
+								break;
+							}
 							if (!work.phase().equals("EATING")) return "TOOL_ERROR: operation_not_cancellable";
 							playerItemUseController.reset(MinecraftClient.getInstance());
 							recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "", ai.moeru.airicraft.agent.work.WorkSnapshot.State.CANCELLED,
@@ -2526,6 +2600,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		String normalizedToolName = PlannerToolCatalog.normalizeName(toolCall.name());
 		return switch (normalizedToolName) {
 			case "inspect_work", "list_work", "cancel_work", "resume_work", "wait_for_work" -> executeWorkTool(toolCall);
+			case "run_policy" -> startPolicy(toolCall);
 			case PlannerToolCatalog.RESUME_TASK -> {
 				String holdId = stringArg(args, "holdId").orElseThrow(() -> new IllegalArgumentException("holdId is required"));
 				SurvivalReflexSnapshot reflex = resumeSafetyHold(holdId, "planner_tool");

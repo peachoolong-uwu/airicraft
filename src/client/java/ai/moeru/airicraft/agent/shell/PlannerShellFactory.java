@@ -209,6 +209,7 @@ public final class PlannerShellFactory {
 		var dialogueRef = new java.util.concurrent.atomic.AtomicReference<DialogueRuntime>();
 		java.util.concurrent.Executor clientExecutor = command -> MinecraftClient.getInstance().execute(command);
 		var controllerProviders = new java.util.ArrayList<>(sharedProviders);
+		controllerProviders.add(new ai.moeru.airicraft.agent.llm.PolicyToolProvider(effectiveActionToolExecutor));
 		controllerProviders.add(new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, clientExecutor, true, () -> !handoff.active()));
 		if (dual) controllerProviders.add(new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider(
 			ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.CONTROLLER, handoff, clientExecutor,
