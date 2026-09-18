@@ -160,6 +160,62 @@ class BaritoneTaskExecutorTest {
 	}
 
 	@Test
+	void navigationStallFailsAndCancelsOnceAfterFiveSecondsDespiteJitter() {
+		FakeBaritoneFacade facade = new FakeBaritoneFacade();
+		java.util.concurrent.atomic.AtomicReference<WaterStallRecovery.Sample> sample =
+			new java.util.concurrent.atomic.AtomicReference<>(new WaterStallRecovery.Sample(false, -50.5, 66, -102.5));
+		BaritoneTaskExecutor executor = new BaritoneTaskExecutor(() -> null, facade, task -> List.of(),
+			() -> Optional.of(sample.get()));
+		WorldTaskRequest task = request("stuck-door", new GoalSnapshot(GoalType.NAVIGATE_TO, null,
+			new GoalPosition(-51, 66, -104, true), null, 0, "planner_tool"));
+		assertTrue(executor.tick(multiplayerAt(0), Optional.of(task)).isEmpty());
+		sample.set(new WaterStallRecovery.Sample(false, -50.51, 66, -102.51));
+		assertTrue(executor.tick(multiplayerAt(99), Optional.of(task)).isEmpty());
+		TaskTerminalEvent event = executor.tick(multiplayerAt(100), Optional.of(task)).orElseThrow();
+		assertEquals(TaskExecutionState.FAILED, event.terminalState());
+		assertTrue(event.message().contains("navigation_stuck"));
+		assertEquals(1, facade.cancelCalls);
+		assertTrue(executor.tick(multiplayerAt(101), Optional.of(task)).isEmpty());
+		assertEquals(1, facade.cancelCalls);
+	}
+
+	@Test
+	void navigationMovementAndSessionPauseRestartStallWindow() {
+		FakeBaritoneFacade facade = new FakeBaritoneFacade();
+		java.util.concurrent.atomic.AtomicReference<WaterStallRecovery.Sample> sample =
+			new java.util.concurrent.atomic.AtomicReference<>(new WaterStallRecovery.Sample(false, 0, 64, 0));
+		BaritoneTaskExecutor executor = new BaritoneTaskExecutor(() -> null, facade, task -> List.of(),
+			() -> Optional.of(sample.get()));
+		WorldTaskRequest task = request("moving", new GoalSnapshot(GoalType.NAVIGATE_TO, null,
+			new GoalPosition(20, 64, 20, true), null, 0, "planner_tool"));
+		executor.tick(multiplayerAt(0), Optional.of(task));
+		sample.set(new WaterStallRecovery.Sample(false, 1, 64, 0));
+		assertTrue(executor.tick(multiplayerAt(90), Optional.of(task)).isEmpty());
+		assertTrue(executor.tick(multiplayerAt(189), Optional.of(task)).isEmpty());
+		executor.tick(singleplayerLocal(), Optional.of(task));
+		assertTrue(executor.tick(multiplayerAt(500), Optional.of(task)).isEmpty());
+		assertTrue(executor.tick(multiplayerAt(599), Optional.of(task)).isEmpty());
+		assertEquals(TaskExecutionState.FAILED,
+			executor.tick(multiplayerAt(600), Optional.of(task)).orElseThrow().terminalState());
+	}
+
+	@Test
+	void replacementNavigationGetsFreshBudgetAndArrivalWinsOverStall() {
+		FakeBaritoneFacade facade = new FakeBaritoneFacade();
+		BaritoneTaskExecutor executor = new BaritoneTaskExecutor(() -> null, facade, task -> List.of(),
+			() -> Optional.of(new WaterStallRecovery.Sample(false, 0, 64, 0)));
+		GoalSnapshot goal = new GoalSnapshot(GoalType.NAVIGATE_TO, null,
+			new GoalPosition(20, 64, 20, true), null, 0, "planner_tool");
+		executor.tick(multiplayerAt(0), Optional.of(request("first", goal)));
+		executor.tick(multiplayerAt(99), Optional.of(request("second", goal)));
+		assertTrue(executor.tick(multiplayerAt(100), Optional.of(request("second", goal))).isEmpty());
+		facade.navigationGoalReached = true;
+		facade.pathEvents.add("AT_GOAL");
+		assertEquals(TaskExecutionState.COMPLETED,
+			executor.tick(multiplayerAt(199), Optional.of(request("second", goal))).orElseThrow().terminalState());
+	}
+
+	@Test
 	void deathGateCancelsActiveBaritoneProcess() {
 		FakeBaritoneFacade facade = new FakeBaritoneFacade();
 		BaritoneTaskExecutor executor = new BaritoneTaskExecutor(facade);

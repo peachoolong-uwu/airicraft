@@ -43,6 +43,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 	private final Supplier<MinecraftClient> clientSupplier;
 	private final MineDropObserver mineDropObserver;
 	private final WaterProgressObserver waterProgressObserver;
+	private final NavigationStallWatchdog navigationStall = new NavigationStallWatchdog();
 	private final WaterStallRecovery waterStallRecovery = new WaterStallRecovery();
 
 	private WorldTaskRequest appliedTask;
@@ -113,6 +114,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 		}
 
 		if (!sessionSnapshot.companionActuationAllowed()) {
+			navigationStall.clear();
 			if (pendingWaterReplanGoal == null || sessionSnapshot.requiresRespawn()) {
 				clearWaterRecovery();
 			}
@@ -137,6 +139,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 		boolean taskTargetChanged = !sameTaskTarget(activeTask.get(), appliedTask);
 		boolean mineGoalJustSatisfied = mineGoalJustSatisfied(activeTask.get(), appliedTask);
 		if (taskTargetChanged) {
+			navigationStall.clear();
 			clearWaterRecovery();
 			clearMineDropPickupState();
 			mineSatisfiedAwaitingRelease = false;
@@ -181,6 +184,8 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 		}
 		appliedTask = activeTask.get();
 
+		if (Objects.equals(appliedTask.taskId(), terminalEventTaskId)
+			&& "PATH_STUCK".equals(snapshot.lastPathEvent())) return Optional.empty();
 		clearAcknowledgedInternalCancellation();
 		Optional<String> pathEvent;
 		if (mineSatisfiedAwaitingRelease) {
@@ -224,6 +229,18 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 		Optional<TerminalOutcome> terminalOutcome = terminalOutcomeFor(pathEvent, appliedTask);
+		if (terminalOutcome.isEmpty() && appliedTask.goal().type() == GoalType.NAVIGATE_TO
+			&& !navigateGoalReached(appliedTask)) {
+			var sample = waterProgressObserver.observe().orElse(null);
+			if (sample == null) navigationStall.clear();
+			else if (navigationStall.observe(sessionSnapshot.tickCount(), sample.x(), sample.y(), sample.z())) {
+				requestInternalCancellation(appliedTask.taskId());
+				pendingNavigationEnd = null;
+				pathEvent = Optional.of("PATH_STUCK");
+				terminalOutcome = Optional.of(new TerminalOutcome(TaskExecutionState.FAILED, null, TaskFailureCode.TRANSIENT));
+			}
+		}
+		else navigationStall.clear();
 		Optional<String> effectivePathEvent = pendingNavigationEnd == null ? pathEvent : Optional.of("observing_navigation_end");
 		if (terminalOutcome.isPresent()) {
 			clearWaterRecovery();
@@ -266,7 +283,9 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 			appliedTask.taskId(),
 			appliedTask.goal(),
 			terminalOutcome.get().state(),
-			terminalOutcome.get().failureCode() == TaskFailureCode.ENVIRONMENT_CHANGED
+			"PATH_STUCK".equals(snapshot.lastPathEvent())
+				? "navigation_stuck: moved less than 0.75 blocks for 100 active ticks (5 seconds)"
+				: terminalOutcome.get().failureCode() == TaskFailureCode.ENVIRONMENT_CHANGED
 				? "navigation_arrival_unconfirmed" : messageFor(terminalOutcome.get().state()),
 			terminalOutcome.get().cause(),
 			terminalOutcome.get().failureCode()
@@ -1066,6 +1085,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private void reset() {
+		navigationStall.clear();
 		pendingNavigationEnd = null;
 		clearWaterRecovery();
 		appliedTask = null;
