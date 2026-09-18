@@ -1,5 +1,9 @@
 # Automatic playtest recordings
 
+On startup, automatic playtests maximize the game window without fullscreen and enable the Airicraft debug conversation overlay (`/airicraft debug conversation`). These defaults apply once per run; you can change the window or overlay afterward.
+
+The launcher uses the compatibility-enabled production client, including JourneyMap and REI (Roughly Enough Items), their Airicraft adapters, and dependencies. It shares the optional-mod cache used by `scripts/compat` while keeping the playtest world and config isolated.
+
 Start an isolated local client with continuous flight recording, live RGB capture, the required external recording profile, and the planner's `something_wrong` tool:
 
 ```sh

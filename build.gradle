@@ -67,26 +67,6 @@ def atomicMove = { File source, File target ->
 	}
 }
 
-def hotswapJvmArgs = { Provider<RegularFile> propertiesFile ->
-	def agentOptions = [
-		"autoHotswap=false",
-		"propertiesFilePath=${propertiesFile.get().asFile.absolutePath}"
-	]
-	agentOptions.addAll(hotswapDisabledPlugins.collect { "disablePlugin=${it}" })
-
-	def hotswapAgentPath = configurations.hotswapAgent.files.first().toPath()
-	def mixinAgentPath = configurations.mixinAgent.files.first().toPath()
-
-	return [
-        '-XX:+IgnoreUnrecognizedVMOptions',
-		"-XX:+AllowEnhancedClassRedefinition",
-		"-XX:HotswapAgent=external",
-		"-Xlog:redefine+class*=info",
-		"-javaagent:${hotswapAgentPath}=${agentOptions.join(',')}",
-		"-javaagent:${mixinAgentPath}"
-	]
-}
-
 base {
 	archivesName = project.archives_base_name
 }
@@ -106,6 +86,27 @@ configurations {
 			add dependencyFactory.create('net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7').setTransitive(false)
 		}
 	}
+}
+
+// Resolve root-owned agent configurations under the root project lock, before child tasks use them.
+def hotswapAgentPath = configurations.hotswapAgent.singleFile.toPath()
+def mixinAgentPath = configurations.mixinAgent.singleFile.toPath()
+
+def hotswapJvmArgs = { Provider<RegularFile> propertiesFile ->
+	def agentOptions = [
+		"autoHotswap=false",
+		"propertiesFilePath=${propertiesFile.get().asFile.absolutePath}"
+	]
+	agentOptions.addAll(hotswapDisabledPlugins.collect { "disablePlugin=${it}" })
+
+	return [
+        '-XX:+IgnoreUnrecognizedVMOptions',
+		"-XX:+AllowEnhancedClassRedefinition",
+		"-XX:HotswapAgent=external",
+		"-Xlog:redefine+class*=info",
+		"-javaagent:${hotswapAgentPath}=${agentOptions.join(',')}",
+		"-javaagent:${mixinAgentPath}"
+	]
 }
 
 loom {

@@ -1,6 +1,6 @@
 package ai.moeru.airicraft;
 
-enum PlannerDebugOverlayMode {
+public enum PlannerDebugOverlayMode {
 	OFF,
 	STATES,
 	CONVERSATION

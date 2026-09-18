@@ -230,11 +230,11 @@ def run(args: argparse.Namespace, handoff: dict | None = None) -> int:
                                                    "workerDirectory": str(worker), "recordingProfile": str(profile),
                                                    "maxSeconds": args.max_seconds, "launcherPid": os.getpid()})
     command = shlex.join([
-        "./gradlew", "--no-daemon", "-Pairicraft.includeEvaluator=true",
+        "./gradlew", "--no-daemon", "-Pairicraft.includeEvaluator=true", "-Pairicraft.includeCompat=true",
         "-Pairicraft.automaticPlaytest=true", f"-Pairicraft.automaticPlaytestId={run_id}",
         f"-Pairicraft.automaticPlaytestDir={output}", f"-Pairicraft.evaluator.runDir={game}",
         "-Pairicraft.evaluator.jdwp.enabled=false", f"-Pairicraft.evaluator.recorderJar={profile}",
-        "wrapper:installDist", ":runClientEvaluator",
+        "wrapper:installDist", ":runClientCompatEvaluator",
     ])
     client = None
     bridge = None

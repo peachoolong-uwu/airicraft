@@ -156,10 +156,12 @@ if (journeyMapCompatProject != null) {
 		}
 		outputs.upToDateWhen { false }
 
-		mods.from(rootProject.fileTree(dir: journeyMapCompatModsDir.asFile, exclude: [
+		// Interactive automatic playtests use every integration; retain the batch evaluator's profile.
+		def excludedMods = providers.gradleProperty("airicraft.automaticPlaytest").orElse("false").get().toBoolean() ? [] : [
 			"airicraft-journeymap-compat-*.jar",
 			"journeymap-*.jar"
-		]))
+		]
+		mods.from(rootProject.fileTree(dir: journeyMapCompatModsDir.asFile, exclude: excludedMods))
 		if (evaluatorRuntimePrepared.get().toBoolean()) {
 			mods.from(tasks.named("remapJar").get().archiveFile.get().asFile)
 		}

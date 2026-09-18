@@ -2,12 +2,14 @@ package ai.moeru.airicraft.playtest;
 
 import ai.moeru.airicraft.Airicraft;
 import ai.moeru.airicraft.ClientRuntimeController;
+import ai.moeru.airicraft.PlannerDebugOverlayMode;
 import ai.moeru.airicraft.agent.recording.AutomaticPlaytestRecording;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.WorldSavePath;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import org.lwjgl.glfw.GLFW;
 
 /** Client-thread owner of one opt-in recording and its report/pause boundary. */
 public final class AutomaticPlaytestRuntime {
@@ -18,6 +20,7 @@ public final class AutomaticPlaytestRuntime {
 	private State state = State.IDLE;
 	private AutomaticPlaytestRecording recording;
 	private boolean resultCommitted;
+	private boolean presentationConfigured;
 	private String error = "";
 	private String pendingDescription = "";
 	private long sessionEpoch;
@@ -28,7 +31,9 @@ public final class AutomaticPlaytestRuntime {
 	}
 
 	public void onClientTick(MinecraftClient client) {
-		if (!enabled() || client.world == null || client.getServer() == null) return;
+		if (!enabled()) return;
+		configurePresentation(client);
+		if (client.world == null || client.getServer() == null) return;
 		try {
 			if (state == State.IDLE) {
 				Map<String, Object> context = Map.of(
@@ -45,6 +50,22 @@ public final class AutomaticPlaytestRuntime {
 		catch (IOException exception) {
 			fail(exception);
 		}
+	}
+
+	private void configurePresentation(MinecraftClient client) {
+		if (presentationConfigured) return;
+		var window = client.getWindow();
+		if (window.isFullscreen()) {
+			window.toggleFullscreen();
+			client.options.getFullscreen().setValue(false);
+			return;
+		}
+		// Fullscreen changes take effect at the next rendered frame, not at toggleFullscreen().
+		if (GLFW.glfwGetWindowMonitor(window.getHandle()) != 0) return;
+		GLFW.glfwMaximizeWindow(window.getHandle());
+		controller.setPlannerDebugOverlayMode(PlannerDebugOverlayMode.CONVERSATION);
+		presentationConfigured = true;
+		Airicraft.LOGGER.info("Automatic playtest presentation: maximized window, conversation overlay enabled");
 	}
 
 	public String report(String description) {
