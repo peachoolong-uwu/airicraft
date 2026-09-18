@@ -432,7 +432,7 @@ public final class SurvivalReflexRuntime {
 		}
 		equipBestCombatItem(client, player);
 		if (blockShieldThreat(client, player, threats, tick)) {
-			if (shouldReposition(threats.size())) reposition(client, threats, tick, true);
+			if (shouldReposition(threats.size()) || combatPositioning != null) reposition(client, threats, tick, true);
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
 			return;
 		}
@@ -452,14 +452,10 @@ public final class SurvivalReflexRuntime {
 		}
 		secureEscapeTicks = 0;
 		try {
-			if (shouldReposition(threats.size())) {
+			if (shouldReposition(threats.size()) || combatPositioning != null) {
 				reposition(client, threats, tick, false);
 			}
 			else if (!threats.isEmpty()) {
-				if (combatPositioning != null) {
-					combatPositioning = null;
-					stopCombatNavigation();
-				}
 				defend(client, player, closestVisibleThreat(threats), tick);
 			}
 			else {

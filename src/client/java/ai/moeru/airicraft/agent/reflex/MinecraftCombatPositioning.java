@@ -31,6 +31,9 @@ final class MinecraftCombatPositioning {
 		Moves.DESCEND_NORTH, Moves.DESCEND_SOUTH, Moves.DESCEND_EAST, Moves.DESCEND_WEST);
 	private record Observation(Vec3d position, long tick) { }
 	private final Map<String, Observation> previous = new HashMap<>();
+	private CombatPositioning.Cell anchor;
+	private boolean plannedAttackReady;
+	private boolean plannedShielding;
 	private long plannedTick = Long.MIN_VALUE;
 	private CombatPositioning.Decision decision;
 	private int terrainCells;
@@ -40,7 +43,9 @@ final class MinecraftCombatPositioning {
 		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
 		BlockPos feet = baritone.getPlayerContext().playerFeet();
 		CombatPositioning.Cell origin = cell(feet);
-		if (decision != null && tick - plannedTick < REPLAN_TICKS
+		if (anchor == null) anchor = origin;
+		boolean attackReady = !shielding && client.player.getAttackCooldownProgress(0) >= .92F;
+		if (decision != null && attackReady == plannedAttackReady && shielding == plannedShielding && tick - plannedTick < REPLAN_TICKS
 			&& !origin.equals(decision.nextStep())) return decision;
 		long started = System.nanoTime();
 		var context = new CalculationContext(baritone);
@@ -59,8 +64,10 @@ final class MinecraftCombatPositioning {
 		double slowdown = (context.canSprint ? 1.3 : 1) * (shielding ? 5 : 1);
 		Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> graph = terrain(context, origin, slowdown);
 		terrainCells = graph.size();
-		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep());
+		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep(), anchor, attackReady);
 		plannedTick = tick;
+		plannedAttackReady = attackReady;
+		plannedShielding = shielding;
 		planningNanos = System.nanoTime() - started;
 		return decision;
 	}
@@ -68,6 +75,8 @@ final class MinecraftCombatPositioning {
 	Map<String, Object> evidence() {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("decision", decision);
+		evidence.put("anchor", anchor);
+		evidence.put("attackReady", plannedAttackReady);
 		evidence.put("terrainCells", terrainCells);
 		evidence.put("planningMicros", planningNanos / 1000);
 		evidence.put("plannedTick", plannedTick);

@@ -39,7 +39,7 @@ class CombatPositioningTest {
 		var nearest = mob(2, 0, .1);
 		var one = choose(ORIGIN, graph, List.of(nearest), null);
 		var swarm = choose(ORIGIN, graph, List.of(nearest, mob(-4, -1, .2), mob(-4, 0, .2), mob(-4, 1, .2)), null);
-		assertTrue(one.route().getLast().x() < 0);
+		assertTrue(one.route().getLast().x() <= 0, "Do not charge through the close attacker");
 		assertNotEquals(one.nextStep(), swarm.nextStep());
 		assertNotEquals(new Cell(-1, 64, 0), swarm.nextStep(), "Do not retreat straight into the farther pack");
 	}
@@ -100,6 +100,38 @@ class CombatPositioningTest {
 		assertNotNull(result.nextStep());
 		assertNotEquals(0, result.route().getLast().z());
 		assertTrue(result.risk() < result.standingRisk());
+	}
+
+	@Test void readyFighterClosesToStrikeInsteadOfBackingAwayFromSpacedPack() {
+		var threats = List.of(mob(4, -1, .1), mob(4, 1, .1));
+		var result = choose(ORIGIN, grid(8, Set.of()), threats, null, ORIGIN, true);
+		Cell end = result.route().getLast();
+		double nearest = threats.stream().mapToDouble(t -> Math.hypot(t.x() - end.x() - .5, t.z() - end.z() - .5)).min().orElseThrow();
+		assertTrue(nearest <= 3, result.toString());
+		assertTrue(end.x() >= 0, "Do not back away when ready to strike");
+	}
+
+	@Test void rechargingFighterCirclesRatherThanRetreatingStraightBack() {
+		var result = choose(ORIGIN, grid(8, Set.of()), List.of(mob(3, -1, .1), mob(3, 1, .1)), null, ORIGIN, false);
+		assertNotNull(result.nextStep());
+		assertNotEquals(0, result.nextStep().z(), result.toString());
+	}
+
+	@Test void repeatedReplansStayNearTheOriginalFightPosition() {
+		Cell position = ORIGIN;
+		for (int i = 0; i < 40; i++) {
+			var threats = List.of(mob(position.x() + 2, position.z() - 1, .1), mob(position.x() + 2, position.z() + 1, .1));
+			var result = choose(position, grid(12, Set.of()), threats, null, ORIGIN, i % 4 == 0);
+			for (Cell step : result.route()) assertTrue(Math.hypot(step.x(), step.z()) <= 6, result.toString());
+			if (result.nextStep() != null) position = result.nextStep();
+		}
+	}
+
+	@Test void knockbackOutsideTheFightAreaAllowsOnlyStepsBackTowardIt() {
+		Cell displaced = new Cell(8, 64, 0);
+		var result = choose(displaced, grid(12, Set.of()), List.of(mob(10, 0, .1)), null, ORIGIN, true);
+		assertNotNull(result.nextStep());
+		assertTrue(result.nextStep().x() < 8, result.toString());
 	}
 
 	private static Threat mob(double x, double z, double speed) { return new Threat(x + .5, 64, z + .5, speed, 2.4); }

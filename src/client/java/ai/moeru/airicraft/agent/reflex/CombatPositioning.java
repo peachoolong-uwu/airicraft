@@ -49,7 +49,12 @@ public final class CombatPositioning {
 
 	/** The graph contains only observed, traversable movement edges, never disconnected standing spots. */
 	public static Decision choose(Cell origin, Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep) {
-		Route standing = scored(List.of(origin), 0, 0, threats, graph, threats, previousStep);
+		return choose(origin, graph, threats, previousStep, origin, true);
+	}
+
+	public static Decision choose(Cell origin, Map<Cell, List<Edge>> graph, List<Threat> threats,
+		Cell previousStep, Cell anchor, boolean attackReady) {
+		Route standing = scored(List.of(origin), 0, 0, threats, graph, threats, previousStep, anchor, attackReady);
 		Route best = standing;
 		List<Route> beam = List.of(standing);
 		int expanded = 0;
@@ -58,12 +63,15 @@ public final class CombatPositioning {
 			for (Route route : beam) {
 				for (Edge edge : graph.getOrDefault(route.end(), List.of())) {
 					if (route.cells().contains(edge.destination()) || route.ticks() + edge.ticks() > HORIZON_TICKS) continue;
+					// Keep the original encounter anchor across replans. Knockback outside it may move inward.
+					double nextRadius = distance(edge.destination(), anchor);
+					if (nextRadius > 6 && nextRadius >= distance(route.end(), anchor)) continue;
 					expanded++;
 					var cells = new ArrayList<>(route.cells());
 					cells.add(edge.destination());
 					Pursuit pursuit = pursue(route.end(), edge.destination(), edge.ticks(), route.pursuers());
 					Route next = scored(List.copyOf(cells), route.ticks() + edge.ticks(), route.exposure() + pursuit.exposure(),
-						pursuit.threats(), graph, threats, previousStep);
+						pursuit.threats(), graph, threats, previousStep, anchor, attackReady);
 					Arrival key = new Arrival(next.end(), cells.get(1), (int) (next.ticks() / 3));
 					Route existing = arrivals.get(key);
 					if (existing == null || ORDER.compare(next, existing) < 0) arrivals.put(key, next);
@@ -80,14 +88,23 @@ public final class CombatPositioning {
 		.thenComparing(route -> route.cells().toString());
 
 	private static Route scored(List<Cell> cells, double ticks, double exposure, List<Threat> pursuers,
-		Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep) {
+		Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep, Cell anchor, boolean attackReady) {
 		Cell end = cells.getLast();
 		// Compare every route, including standing still, over the same time horizon.
 		Pursuit rest = pursue(end, end, HORIZON_TICKS - ticks, pursuers);
 		double score = (exposure + rest.exposure()) / HORIZON_TICKS + risk(end.x() + .5, end.z() + .5, 0, rest.threats()) * .3;
 		if (threats.size() > 1 && graph.getOrDefault(end, List.of()).size() <= 1) score += 5;
 		if (previousStep != null && cells.size() > 1 && !cells.get(1).equals(previousStep)) score += .5;
-		if (threats.size() > 1 && cells.size() > 1) score += orbitPenalty(cells.getFirst(), end, threats);
+		if (!threats.isEmpty() && cells.size() > 1) {
+			score += orbitPenalty(cells.getFirst(), end, threats);
+			// Replanning executes only the first hop; a curved endpoint must not hide repeated backsteps.
+			score += orbitPenalty(cells.getFirst(), cells.get(1), threats) * 2;
+		}
+		double nearest = threats.stream().mapToDouble(t -> Math.hypot(t.x() - end.x() - .5, t.z() - end.z() - .5)).min().orElse(0);
+		// Stay at fighting distance; exploit a ready swing rather than maximizing separation.
+		score += Math.pow(Math.max(0, nearest - (attackReady ? 2.8 : 3.5)), 2) * 12;
+		if (attackReady && nearest >= 2 && nearest <= 3) score -= 12;
+		score += Math.pow(Math.max(0, distance(end, anchor) - 3), 2) * 2;
 		return new Route(cells, ticks, exposure, pursuers, score);
 	}
 
@@ -120,15 +137,17 @@ public final class CombatPositioning {
 		}
 		// Escape contact first. Once spaced out, prefer a consistent tangent around the pack
 		// over backing indefinitely away or alternating left/right and splitting pursuers.
-		if (nearest < 3.5) return 0;
+		if (nearest < 2.2) return 0;
 		double rx = origin.x() + .5 - cx / threats.size(), rz = origin.z() + .5 - cz / threats.size();
 		double dx = end.x() - origin.x(), dz = end.z() - origin.z();
 		double length = Math.hypot(rx, rz) * Math.hypot(dx, dz);
 		if (length < .001) return 0;
 		double radial = Math.abs(rx * dx + rz * dz) / length;
 		double reverseOrbit = Math.max(0, -(rx * dz - rz * dx) / length);
-		return radial * 2 + reverseOrbit * 2;
+		return radial * 6 + reverseOrbit * .5;
 	}
+
+	private static double distance(Cell a, Cell b) { return Math.hypot(a.x() - b.x(), a.z() - b.z()); }
 
 	static double risk(double x, double z, double ticks, List<Threat> threats) {
 		double pressure = 0, pincer = 0;
