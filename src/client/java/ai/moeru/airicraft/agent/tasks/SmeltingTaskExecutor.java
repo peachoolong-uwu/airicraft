@@ -133,6 +133,16 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 		long tick
 	) {
 		SmeltItemsStepArgs args = smeltArgs(request);
+		if (!handler.getCursorStack().isEmpty()) return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "cursor_not_empty"));
+		// A previous batch can block this recipe, or be mistaken for this batch's completed output.
+		// The station has already passed startProcess's occupied-station authorization.
+		if (!handler.getSlot(2).getStack().isEmpty()) {
+			client.interactionManager.clickSlot(handler.syncId, 2, 0, SlotActionType.QUICK_MOVE, player);
+			if (!handler.getSlot(2).getStack().isEmpty())
+				return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "inventory_full blocking_furnace_output=" + itemId(handler.getSlot(2).getStack())));
+			snapshot = snapshot(TaskExecutionState.RUNNING, request, "cleared_previous_output");
+			return Optional.empty();
+		}
 		int reservedInput = remainingItemsToMove(itemId(handler.getSlot(0).getStack()),
 			handler.getSlot(0).getStack().getCount(), option.inputItemId(), args.inputQuantity());
 		if (reservedInput < 0 || sourceItemCount(handler, option.inputItemId()) < reservedInput) {
@@ -177,6 +187,19 @@ public final class SmeltingTaskExecutor implements WorldTaskExecutor {
 			return fail(request, TaskFailure.of(TaskFailureCode.UNKNOWN, "furnace_screen_not_open"));
 		}
 		SmeltingSlotSnapshot slots = screenSlotSnapshot(handler);
+		String expectedOutput = null;
+		for (SmeltingProcessSnapshot process : processManager.processSnapshots()) {
+			if (process.processId().equals(processId)) expectedOutput = process.outputItemId();
+		}
+		if (expectedOutput != null && slots.outputCount() > 0 && !expectedOutput.equals(slots.outputItemId())) {
+			if (!handler.getCursorStack().isEmpty()) return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "cursor_not_empty"));
+			// Recover an already-loaded batch without claiming its requested output was collected.
+			client.interactionManager.clickSlot(handler.syncId, 2, 0, SlotActionType.QUICK_MOVE, player);
+			if (!handler.getSlot(2).getStack().isEmpty())
+				return fail(request, TaskFailure.of(TaskFailureCode.BUSY, "inventory_full blocking_furnace_output=" + slots.outputItemId()));
+			snapshot = snapshot(TaskExecutionState.RUNNING, request, "cleared_blocking_output");
+			return Optional.empty();
+		}
 		if (handler.getSlot(2).getStack().isEmpty()
 			|| processId != null && !processManager.processOutputReadyForCollection(processId, slots)) {
 			snapshot = snapshot(TaskExecutionState.RUNNING, request, "waiting_for_output");
