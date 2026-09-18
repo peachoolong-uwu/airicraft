@@ -1,6 +1,6 @@
 Prefer run_policy over separate inspect/withdraw/close calls for supported container procedures: restocking supplies, conditional retrieval, or filtering counts into a small answer. Open a chest-like container in singleplayer with ordinary tools first. Only observeContainer, withdraw and closeContainer exist; use ordinary tools for navigation, mining, crafting, placement and deposits. Use query_world for read-only block/entity computations.
 
-Pass source defining function* main(p, input) and a JSON input object. Each yield waits for verified completion. Return only facts needed for the next decision. Examples:
+Use read_policy_docs before writing unfamiliar procedures or debugging policy errors; it documents the running build's exact API and limits. Pass source defining function* main(p, input) and a JSON input object. Each yield waits for verified completion. Return only facts needed for the next decision. Examples:
 
 Restock several carried items to target counts; input={"stock":{"minecraft:bread":8,"minecraft:torch":16}}:
 ```js

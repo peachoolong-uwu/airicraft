@@ -12,6 +12,24 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PolicyGuidanceTest {
+	@Test void policyToolsAndGuidanceAreAvailableWithoutDiscoveryAndAfterReset() {
+		var registry = PlannerToolRegistry.of(
+			new PolicyToolProvider(call -> { throw new AssertionError("unexpected action"); }),
+			WorldQueryScriptToolProvider.forClient(() -> -1L, ignored -> {}),
+			new PolicyDocsToolProvider());
+		for (int pass = 0; pass < 2; pass++) {
+			for (String name : List.of("run_policy", "query_world", "read_policy_docs")) {
+				assertTrue(registry.activeOpenAiTool(name).isPresent(), name);
+			}
+			String prompt = PlannerPromptPolicy.systemPrompt(PlannerVisionMode.EXTERNAL_SUMMARY, registry);
+			assertTrue(prompt.contains("Prefer run_policy"));
+			assertTrue(prompt.contains("Prefer query_world"));
+			assertTrue(prompt.contains("Use read_policy_docs before writing unfamiliar procedures"));
+			registry.resetToolSurface();
+		}
+		assertFalse(PlannerToolRegistry.of(new PolicyDocsToolProvider()).activeOpenAiTool("run_policy").isPresent());
+	}
+
 	@Test void helpIsWorldIndependentAndDoesNotYieldOrInvokeActions() throws Exception {
 		var docs = new PolicyDocsToolProvider();
 		var registry = PlannerToolRegistry.of(docs);
