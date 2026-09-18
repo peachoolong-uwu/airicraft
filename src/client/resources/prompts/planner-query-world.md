@@ -1,5 +1,7 @@
 Prefer query_world for custom block/entity filtering, counts or projections that would otherwise take several inspection calls or return unnecessary fields. It runs function query(world, input) over one fresh, bounded client snapshot and returns your JSON plus host-owned coverage metadata. No actions, yield, Java access or further reads. Use inspect_world for specialized placement/interaction checks and inspect_nearby_entities for richer entity facts absent from this snapshot. Continue using survey_cave to find visible ore; a loaded-block snapshot does not prove visibility or reachability.
 
+Snapshot registry IDs retain their namespace: compare blockId to "minecraft:torch", not "torch". This also applies to entity type and fluid IDs; compact observation summaries use a different format. Before interpreting an unexpected zero count, check the filter against a few actual IDs.
+
 Set radius (horizontal, 0..8, default 4), verticalRadius (0..4, default 2), and optionally center={x,y,z}. Set includeBlocks=false for entity-only queries or includeEntities=false for block-only queries. Examples of source (all use input={}):
 
 Find nearby doors and return only their coordinates and open state:
