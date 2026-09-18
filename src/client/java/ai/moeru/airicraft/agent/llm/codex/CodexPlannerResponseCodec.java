@@ -159,13 +159,9 @@ final class CodexPlannerResponseCodec {
 			String name = requiredString(proposal, "name");
 			try {
 				String argumentsJson = requiredString(proposal, "argumentsJson");
-				JsonElement parsedArguments = JsonParser.parseString(argumentsJson);
-				if (!parsedArguments.isJsonObject()) {
-					throw new JsonParseException("argumentsJson must encode a JSON object");
-				}
 				JsonObject function = new JsonObject();
 				function.addProperty("name", name);
-				function.addProperty("arguments", parsedArguments.toString());
+				function.addProperty("arguments", argumentsJson);
 				JsonObject openAiShape = new JsonObject();
 				openAiShape.addProperty("id", "codex-" + generation + "-" + (index + 1));
 				openAiShape.addProperty("type", "function");

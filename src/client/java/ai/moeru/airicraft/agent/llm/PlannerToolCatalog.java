@@ -5,6 +5,7 @@ import ai.moeru.airicraft.agent.baritone.BaritonePathfindSettings;
 import ai.moeru.airicraft.agent.tasks.ResourceGatheringCatalog;
 import ai.moeru.airicraft.agent.tasks.ReturnToSurfaceStepArgs;
 import ai.moeru.airicraft.agent.tasks.SmeltingFuelMode;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 public final class PlannerToolCatalog {
+	private static final Gson GSON = new Gson();
 	public static final String DISCOVER_TOOLS = "discover_tools";
 	public static final String TAKE_A_LOOK = "take_a_look";
 	public static final String INSPECT_WORLD = "inspect_world";
@@ -418,9 +420,10 @@ public final class PlannerToolCatalog {
 			throw new JsonParseException("Missing tool function");
 		}
 		String name = getString(function, "name").orElseThrow(() -> new JsonParseException("Missing tool name"));
-		JsonObject arguments = toolRegistry.references().resolveArguments(parseArguments(getString(function, "arguments").orElse("{}")));
+		PlannerJsonRepair.Result repair = repairArguments(name, parseArguments(getString(function, "arguments").orElse("{}")), toolRegistry);
+		JsonObject arguments = toolRegistry.references().resolveArguments(repair.value().getAsJsonObject());
 		validateArguments(name, arguments, toolRegistry);
-		return new PlannerToolCall(id, name, arguments, getString(arguments, "narration").orElse(null), object);
+		return new PlannerToolCall(id, name, arguments, getString(arguments, "narration").orElse(null), object, repair.paths());
 	}
 
 	public static PlannerToolCall parseToolCall(String name, JsonObject arguments, PlannerToolRegistry toolRegistry) {
@@ -428,14 +431,16 @@ public final class PlannerToolCatalog {
 		if (normalizedName.isBlank()) {
 			throw new JsonParseException("Missing tool name");
 		}
-		JsonObject effectiveArguments = toolRegistry.references().resolveArguments(arguments == null ? new JsonObject() : arguments);
+		PlannerJsonRepair.Result repair = repairArguments(normalizedName, arguments == null ? new JsonObject() : arguments, toolRegistry);
+		JsonObject effectiveArguments = toolRegistry.references().resolveArguments(repair.value().getAsJsonObject());
 		validateArguments(normalizedName, effectiveArguments, toolRegistry);
 		return new PlannerToolCall(
 			"call_external_" + normalizedName,
 			normalizedName,
 			effectiveArguments,
 			getString(effectiveArguments, "narration").orElse(null),
-			null
+			null,
+			repair.paths()
 		);
 	}
 
@@ -517,16 +522,25 @@ public final class PlannerToolCatalog {
 		return enumString(description, values);
 	}
 
-	private static JsonObject parseArguments(String raw) {
+	private static PlannerJsonRepair.Result repairArguments(String name, JsonElement arguments, PlannerToolRegistry registry) {
+		var tool = registry.activeOpenAiTool(name).or(() -> registry.allAvailableOpenAiTools().stream()
+			.filter(candidate -> normalizeName(name).equals(normalizeName((String) ((Map<?, ?>) candidate.get("function")).get("name"))))
+			.findFirst());
+		JsonObject schema = tool.map(definition -> GSON.toJsonTree(definition).getAsJsonObject()
+			.getAsJsonObject("function").getAsJsonObject("parameters")).orElseGet(() -> {
+				JsonObject object = new JsonObject(); object.addProperty("type", "object"); return object;
+			});
+		PlannerJsonRepair.Result result = PlannerJsonRepair.repair(arguments, schema);
+		if (!result.value().isJsonObject()) throw new JsonParseException("Tool arguments must be a JSON object");
+		return result;
+	}
+
+	private static JsonElement parseArguments(String raw) {
 		if (raw == null || raw.isBlank()) {
 			return new JsonObject();
 		}
 		try {
-			JsonElement parsed = JsonParser.parseString(raw);
-			if (!parsed.isJsonObject()) {
-				throw new JsonParseException("Tool arguments must be a JSON object");
-			}
-			return parsed.getAsJsonObject();
+			return JsonParser.parseString(raw);
 		}
 		catch (JsonParseException exception) {
 			throw exception;

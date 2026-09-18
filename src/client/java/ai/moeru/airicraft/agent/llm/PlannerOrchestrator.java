@@ -685,7 +685,8 @@ public final class PlannerOrchestrator {
 			toolCall.name(),
 			arguments,
 			contractedNarration,
-			null
+			null,
+			toolCall.repairedArgumentPaths()
 		);
 	}
 

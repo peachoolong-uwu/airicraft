@@ -26,6 +26,27 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
+	@Test void repairsEncodedToolStructuresAndRetainsRawResponseEvidence() throws Exception {
+		var registry = PlannerToolRegistry.of(new ai.moeru.airicraft.agent.memory.PlaceMemoryToolProvider(
+			() -> { throw new AssertionError("No world access during parsing"); }, Runnable::run));
+		JsonObject args = new JsonObject(); args.addProperty("name", "shelter");
+		args.addProperty("position", "{\"x\":-50,\"y\":66,\"z\":-102}");
+		JsonObject message = new JsonObject();
+		JsonArray calls = new JsonArray(); calls.add(PlannerArgumentRepairTest.wire("remember_place", args.toString()));
+		message.add("tool_calls", calls);
+		JsonObject choice = new JsonObject(); choice.add("message", message);
+		JsonArray choices = new JsonArray(); choices.add(choice);
+		JsonObject response = new JsonObject(); response.add("choices", choices);
+		try (TestServer server = TestServer.start(new AtomicReference<>(), response.toString())) {
+			var backend = new OpenAiCompatibleLlmBackend(config(server.port(), false), registry);
+			var result = backend.generate(LlmConversation.of(List.of(LlmChatMessage.user("Remember shelter", LlmMessageKind.USER_TURN))));
+			var call = result.payload().toolCall();
+			assertEquals(-50, call.arguments().getAsJsonObject("position").get("x").getAsInt());
+			assertEquals(List.of("/position"), call.repairedArgumentPaths());
+			assertEquals(calls.get(0), call.rawToolCall());
+		}
+	}
+
 	@Test void sendsShortWorkReferenceAndRestoresItForNativeExecution() throws Exception {
 		String nativeId = "JOB:job-11111111-2222-3333-4444-555555555555";
 		var registry = PlannerToolRegistry.of(new ai.moeru.airicraft.agent.work.WorkToolProvider(call -> java.util.concurrent.CompletableFuture.completedFuture("ok")));
