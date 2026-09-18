@@ -32,6 +32,8 @@ class SmeltingTaskExecutorTest {
 
 	@Test
 	void fuelQuantityMustCoverFullCookTime() {
+		assertEquals(false, SmeltingTaskExecutor.fuelQuantityCoversCookTime(2, 200, 300, 1));
+		assertEquals(true, SmeltingTaskExecutor.fuelQuantityCoversCookTime(1, 200, 300, 1));
 		assertEquals(false, SmeltingTaskExecutor.fuelQuantityCoversCookTime(1, 200, 100, 1));
 		assertEquals(true, SmeltingTaskExecutor.fuelQuantityCoversCookTime(1, 200, 100, 2));
 		assertEquals(true, SmeltingTaskExecutor.fuelQuantityCoversCookTime(3, 200, 1600, 1));
