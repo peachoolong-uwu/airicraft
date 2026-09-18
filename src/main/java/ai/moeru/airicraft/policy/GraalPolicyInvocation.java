@@ -18,10 +18,29 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
-/** Generator execution only. Guest code exchanges JSON effects; it never receives a Java object. */
+/** Bounded guest execution for effect generators and snapshot queries; no Java objects cross the boundary. */
 public final class GraalPolicyInvocation implements AutoCloseable {
 	public static final int MAX_SOURCE_CHARS = 32_768;
 	public static final int MAX_VALUE_CHARS = 16_384;
+	private static final int MAX_QUERY_SNAPSHOT_CHARS = 2_097_152;
+	private static final String QUERY_KERNEL = """
+		(() => {
+		  let query, snapshot;
+		  return {
+		    initialize(factory, input) {
+		      query = factory();
+		      if (typeof query !== 'function') throw Error('Define function query(world, input)');
+		      snapshot = JSON.parse(input);
+		    },
+		    resume() {
+		      const value = query(snapshot.world, snapshot.input);
+		      if (value && (typeof value.then === 'function' || typeof value.next === 'function'))
+		        throw Error('query must return synchronous JSON, not a promise or generator');
+		      return JSON.stringify({done: true, value: value === undefined ? null : value});
+		    }
+		  };
+		})()
+		""";
 	private static final String KERNEL = """
 		(() => {
 		  let iterator;
@@ -52,8 +71,24 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 	private final CompletableFuture<Void> ready;
 
 	public GraalPolicyInvocation(String source, JsonElement input) {
+		this(source, input, false);
+	}
+
+	/** Same bounded guest engine, but with only a detached snapshot and no effect API. */
+	public static CompletableFuture<JsonElement> query(String source, JsonElement world, JsonElement input) {
+		encode(input);
+		var snapshot = new com.google.gson.JsonObject();
+		snapshot.add("world", world);
+		snapshot.add("input", input);
+		var invocation = new GraalPolicyInvocation(source, snapshot, true);
+		return invocation.resume(JsonNull.INSTANCE).thenApply(step -> step.getAsJsonObject().get("value"))
+			.whenComplete((result, error) -> invocation.close());
+	}
+
+	private GraalPolicyInvocation(String source, JsonElement input, boolean query) {
 		if (source == null || source.isBlank() || source.length() > MAX_SOURCE_CHARS) throw new IllegalArgumentException("policy_source_limit");
-		String encoded = encode(input);
+		String encoded = query ? input.toString() : encode(input);
+		if (encoded.length() > (query ? MAX_QUERY_SNAPSHOT_CHARS : MAX_VALUE_CHARS)) throw new IllegalArgumentException("query_snapshot_limit");
 		ready = submit(() -> {
 			context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false")
 				.allowHostAccess(HostAccess.NONE).allowHostClassLookup(name -> false).allowHostClassLoading(false)
@@ -62,8 +97,8 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 				.in(java.io.InputStream.nullInputStream()).out(java.io.OutputStream.nullOutputStream()).err(java.io.OutputStream.nullOutputStream())
 				.resourceLimits(ResourceLimits.newBuilder().statementLimit(200_000, ignored -> true).build()).build();
 			if (closed.get()) { context.close(true); throw new IllegalStateException("policy_cancelled"); }
-			guest = context.eval("js", KERNEL);
-			Value factory = context.eval("js", "(function() { 'use strict';\n" + source + "\n; return main; })");
+			guest = context.eval("js", query ? QUERY_KERNEL : KERNEL);
+			Value factory = context.eval("js", "(function() { 'use strict';\n" + source + "\n; return " + (query ? "query" : "main") + "; })");
 			guest.invokeMember("initialize", factory, encoded);
 			return null;
 		}, 10);

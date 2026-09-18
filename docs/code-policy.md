@@ -4,6 +4,26 @@
 
 This first implementation supports **an already-open chest-like container in singleplayer**. It does not navigate, open containers, install persistent skills, schedule multiple policies, or resume JavaScript stacks after restart. It adapts the code-as-policy idea from AIRI's Minecraft integration and the guest-execution approach preserved on `os-exp`; it does not revive the broader OS replacement.
 
+`query_world` shares the GraalJS engine but exposes only a detached local block/entity snapshot to a synchronous `function query(world, input)`. It creates no foreground work and can run while an action is active. Both planner roles receive it; only the controller receives `run_policy`. The controller prompt recommends policies for supported container sequences and includes restock, reserve-aware withdrawal and selected-count examples. Both roles receive examples recommending `query_world` for custom block/entity projections, while specialized interaction/placement checks retain their native tools.
+
+`read_policy_docs` returns the API and debugging guide packaged in the running build (`src/main/resources/airicraft/policies/api.md`). It is read-only, needs no world, and does not end the turn. It covers signatures, observation fields, limits, errors and partial-effect recovery without granting repository or filesystem access.
+
+## Read-only world queries
+
+```json
+{
+  "source": "function query(w, input) { return w.blocks.filter(b => b.blockId === input.id).map(b => b.position); }",
+  "input": {"id": "minecraft:oak_door"},
+  "radius": 4,
+  "verticalRadius": 2,
+  "includeEntities": false
+}
+```
+
+Capture runs on the client thread, guest evaluation off-thread, and successful observation registration back on the client thread. Bounds default to the player's position, with an optional integer `center`. Horizontal radius is 0..8, vertical radius 0..4, and every corner must lie within 64 blocks of the player. At most 2601 block positions and 64 nearest entities enter the snapshot. No chunks are loaded. Read metadata identifies unloaded/outside-world cells and entity truncation. The result envelope preserves this host-owned metadata even if the guest modifies its detached copy. The world must still match at delivery, and successful block observations enter normal read-freshness tracking.
+
+Only the selected JSON and metadata return to the planner; the full block/entity snapshot is not inserted into the prompt. The 2 MiB snapshot input allowance is specific to queries; policy inputs and guest output remain limited to 16384 characters. Queries have no policy effect API or access to live Minecraft objects. Combined client light, spawn-group hostility and loaded terrain are observations, not reachability, threat or visibility guarantees.
+
 ## Authoring
 
 Define `function* main(policy, input)` and supply JSON input:
@@ -61,6 +81,10 @@ Limits: 32,768 source characters; 16,384 characters per JSON value; 32 effects; 
 GraalJS 25.0.4 is included in the mod as nested dependencies. A separate GraalVM installation is not required; ordinary Java 21 uses the interpreter fallback.
 
 ## Verification
+
+The query extension executes all six prompt examples in focused tests, including restock shortfall and already-stocked branches. Tests also cover host/effect access rejection, runaway computation, output/input bounds, invalid query bounds, async/generator rejection, coverage preservation against guest edits, failed-query evidence exclusion and world-change rejection. The full build reports 1490 tests, zero failures/errors and two skipped.
+
+A 2026-09-19 dev-client query smoke in the same isolated world copy read all 2601 positions in the maximum box and projected only two door records. The lower door at `-51,66,-103` matched a separate `inspect_world` observation (`open=false`, `half=lower`). Entity-only and dark-cell examples completed; host-class access and out-of-range bounds were rejected. A query completed while `OPERATION:cad023b3-d540-4c3b-a396-f560ece86422` remained RUNNING, then that test policy was explicitly cancelled and a separate close policy succeeded. `read_policy_docs` also succeeded before joining a world. Local evidence is in `run/query-smoke-20260919/`. This checks hand-authored calls through the live planner-tool path; it does not establish model preference, token savings, multiplayer behavior or positive live entity/truncation cases.
 
 Focused tests execute the real GraalJS generator with delayed host completions, cancellation, failed transfers, host-access rejection and bounded loops. The restock test checks that three dependent effects complete in one policy invocation without inference between them. Container arithmetic tests require matching source and destination totals. These tests do not by themselves qualify live Minecraft packet handling or model-authored gameplay.
 

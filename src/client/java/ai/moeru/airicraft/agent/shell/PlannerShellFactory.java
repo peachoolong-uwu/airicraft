@@ -186,6 +186,8 @@ public final class PlannerShellFactory {
 			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
 			new ai.moeru.airicraft.agent.spatial.TravelPolicyToolProvider(),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
+			ai.moeru.airicraft.agent.llm.WorldQueryScriptToolProvider.forClient(effectiveServerTickSupplier, effectiveWorldReadObserver),
+			new ai.moeru.airicraft.agent.llm.PolicyDocsToolProvider(),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),
 			new ai.moeru.airicraft.agent.memory.InteractionLogbookToolProvider(),

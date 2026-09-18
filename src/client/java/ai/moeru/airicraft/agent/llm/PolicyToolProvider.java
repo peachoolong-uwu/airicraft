@@ -9,12 +9,14 @@ import static ai.moeru.airicraft.agent.llm.PlannerToolCatalog.*;
 
 /** One finite invocation, exposed only to the controller planner. */
 public final class PolicyToolProvider implements PlannerToolProvider {
+	private static final String GUIDANCE = PolicyDocsToolProvider.readResource("/prompts/planner-policy.md");
 	private final PlannerActionToolExecutor executor;
 	public PolicyToolProvider(PlannerActionToolExecutor executor) { this.executor = executor; }
 	@Override public String id() { return "policy"; }
+	@Override public String promptInstructions() { return GUIDANCE; }
 	@Override public boolean handles(String name) { return name.equals("run_policy"); }
 	@Override public boolean isReadTool(String name) { return false; }
-	@Override public boolean endsTurn(String name) { return true; }
+	@Override public boolean endsTurn(String name) { return name.equals("run_policy"); }
 	@Override public List<Map<String, Object>> openAiTools() {
 		return List.of(toolForProvider("run_policy", "Run a finite JavaScript generator against an already-open chest in singleplayer. "
 			+ "Define function* main(policy, input). Yield policy.observeContainer() for fresh server-observed {syncId,container,inventory} item-count maps; "
