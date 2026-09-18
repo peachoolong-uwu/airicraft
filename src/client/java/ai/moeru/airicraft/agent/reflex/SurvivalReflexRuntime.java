@@ -421,7 +421,9 @@ public final class SurvivalReflexRuntime {
 			resolve(client, player, threats, tick, "combat_approach_stalled", true);
 			return;
 		}
-		if (threats.stream().noneMatch(threat -> policy().acceptsMob(isRangedThreat(threat.entity()), threat.distance(), threat.lineOfSight()))) {
+		if (threats.stream().noneMatch(threat ->
+			policy().acceptsMob(isRangedThreat(threat.entity()), threat.distance(), threat.lineOfSight())
+				|| combatPositioning != null && threat.distance() <= Math.min(10, policy().maxThreatDistance()))) {
 			resolve(client, player, threats, tick, "no_eligible_threats", false);
 			return;
 		}
@@ -631,9 +633,9 @@ public final class SurvivalReflexRuntime {
 	static boolean shouldReposition(int threatCount) { return threatCount >= 2; }
 
 	private void reposition(MinecraftClient client, List<ResolvedThreat> threats, long tick, boolean shielding) {
-		movementController.stop(client);
 		if (baritone == null || !baritone.isLoaded()) {
 			stopCombatNavigation();
+			movementController.stop(client);
 			return;
 		}
 		if (combatPositioning == null) {
@@ -644,28 +646,36 @@ public final class SurvivalReflexRuntime {
 		var step = decision.nextStep();
 		if (step == null) {
 			stopCombatNavigation();
+			movementController.stop(client);
 			return;
 		}
 		if (!combatPositioning.canStepTo(step)) {
 			stopCombatNavigation();
+			movementController.stop(client);
 			combatPositioning.invalidate();
 			return;
 		}
 		GoalPosition target = new GoalPosition(step.x(), step.y(), step.z(), true);
-		if (updatePositioningNavigation(target, tick)) pendingEvents.add(new SurvivalReflexEvent("reflex.combat_reposition", Map.of(
-			"target", target, "threatCount", threats.size(), "risk", decision.risk(), "standingRisk", decision.standingRisk(),
-			"route", decision.route(), "shielding", shielding, "tick", tick)));
-	}
-
-	boolean updatePositioningNavigation(GoalPosition target, long tick) {
-		if (!target.equals(combatTarget) || !baritone.processActive() && tick - combatRouteTick >= 6) {
-			// Near-goals can finish two blocks before the scored escape cell, still inside the pincer.
-			baritone.startNavigate(target);
-			combatTarget = target;
-			combatRouteTick = tick;
-			return true;
+		Vec3d facing = Vec3d.ZERO;
+		int visible = 0;
+		for (ResolvedThreat threat : threats) if (threat.lineOfSight()) {
+			facing = facing.add(threat.entity().getBoundingBox().getCenter());
+			visible++;
 		}
-		return false;
+		facing = visible == 0 ? closestVisibleThreat(threats).entity().getPos() : facing.multiply(1D / visible);
+		if (facing.subtract(client.player.getPos()).horizontalLength() < .5)
+			facing = closestVisibleThreat(threats).entity().getBoundingBox().getCenter();
+		// A raised shield keeps its selected shooter/blast heading; movement is relative to that heading.
+		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
+		cameraController.lookAtNow(client, facing);
+		var steering = combatPositioning.steering(client, step, facing);
+		movementController.moveDirectional(client, steering.forward(), steering.back(), steering.left(), steering.right(), false,
+			step.y() > client.player.getBlockY() && client.player.isOnGround(), tick);
+		if (!target.equals(combatTarget)) pendingEvents.add(new SurvivalReflexEvent("reflex.combat_reposition", Map.of(
+			"target", target, "threatCount", threats.size(), "risk", decision.risk(), "standingRisk", decision.standingRisk(),
+			"route", decision.route(), "shielding", shielding, "facing", facing, "steering", steering, "tick", tick)));
+		combatTarget = target;
+		combatRouteTick = tick;
 	}
 
 	void updateCombatNavigation(GoalPosition target, long tick) {

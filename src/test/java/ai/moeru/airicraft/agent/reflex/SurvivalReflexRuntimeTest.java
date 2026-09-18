@@ -27,25 +27,6 @@ class SurvivalReflexRuntimeTest {
 		assertTrue(SurvivalReflexRuntime.shouldReposition(2));
 	}
 
-	@Test void positioningUsesExactWaypointsAndCanChangeDirectionImmediately() {
-		var routes = new java.util.ArrayList<ai.moeru.airicraft.agent.goals.GoalPosition>();
-		var facade = (ai.moeru.airicraft.agent.baritone.BaritoneFacade) java.lang.reflect.Proxy.newProxyInstance(
-			getClass().getClassLoader(), new Class<?>[]{ai.moeru.airicraft.agent.baritone.BaritoneFacade.class},
-			(proxy, method, args) -> switch (method.getName()) {
-				case "startNavigate" -> { routes.add((ai.moeru.airicraft.agent.goals.GoalPosition) args[0]); yield null; }
-				case "processActive" -> true;
-				default -> throw new AssertionError("Unexpected call: " + method.getName());
-			});
-		var runtime = new SurvivalReflexRuntime(null, new ai.moeru.airicraft.agent.control.MovementController(),
-			new ai.moeru.airicraft.agent.control.CameraController(), facade);
-		var north = new ai.moeru.airicraft.agent.goals.GoalPosition(0, 64, -1, true);
-		var west = new ai.moeru.airicraft.agent.goals.GoalPosition(-1, 64, 0, true);
-		assertTrue(runtime.updatePositioningNavigation(north, 100));
-		assertFalse(runtime.updatePositioningNavigation(north, 101));
-		assertTrue(runtime.updatePositioningNavigation(west, 102));
-		assertEquals(List.of(north, west), routes);
-	}
-
 	@Test void resumingTacticalWorkRetainsDeferredThreatIdentityUntilLifecycleReset() throws Exception {
 		var runtime = new SurvivalReflexRuntime(null);
 		runtime.observeDamage(new SurvivalReflexRuntime.DamageObservation(1, "arrow", "pillager", "Pillager", "minecraft:pillager", true, false));

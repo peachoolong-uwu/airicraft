@@ -6,6 +6,9 @@ configured `maxThreatDistance` (default 16 blocks). Known threats remain relevan
 to route scoring behind a corner. Neutral angerable mobs require actual aggression.
 The existing melee engagement distance and line-of-sight policy still control when
 combat begins; awareness alone does not authorize chasing a distant mob.
+An active swarm encounter uses a wider ten-block release distance (still capped
+by the configured radius), retaining briefly occluded pursuers. This prevents
+repeated release/reacquisition while circling along the six-block engagement edge.
 
 With two or more nearby threats, movement considers the whole pack. A bounded
 beam search projects short pursuit trajectories using each mob's movement attribute,
@@ -20,7 +23,9 @@ blocks and two vertical blocks, using Baritone's actual cardinal traverse/ascend
 descend costs. It rejects unloaded terrain, edits, hazards, fluids, drops greater
 than one block, and movements outside travel bounds. Search considers at most eight
 steps over 24 game ticks with a beam width of 24. It replans every six ticks or upon
-arrival and freshly checks the next movement before issuing an exact adjacent goal.
+arrival and freshly checks the next movement before steering toward an exact adjacent waypoint. The player faces the visible threat
+group and backpedals or strafes along that route; an active shield keeps its incoming
+attack heading. Travel-time estimates exclude sprinting.
 No pathfinding settings are reset or loosened. An unavailable route means hold and
 defend, not blind backward movement.
 

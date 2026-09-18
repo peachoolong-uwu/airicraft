@@ -12,6 +12,20 @@ import static ai.moeru.airicraft.agent.reflex.CombatPositioning.*;
 class CombatPositioningTest {
 	private static final Cell ORIGIN = new Cell(0, 64, 0);
 
+	@Test void retreatFacesThePackAndUsesBackpedalingRegardlessOfWorldOrientation() {
+		assertEquals(new Steering(false, true, false, false), steering(0, 0, 0, -1, 0, 5));
+		assertEquals(new Steering(false, true, false, false), steering(0, 0, -1, 0, 5, 0));
+		assertEquals(new Steering(false, true, false, false), steering(0, 0, 1, 0, -5, 0));
+		assertEquals(new Steering(false, true, false, false), steering(0, 0, 0, 1, 0, -5));
+	}
+
+	@Test void circlingStrafesRelativeToTheThreatHeadingInsteadOfTurningTheCameraAway() {
+		assertEquals(new Steering(false, false, true, false), steering(0, 0, 1, 0, 0, 5));
+		assertEquals(new Steering(false, false, false, true), steering(0, 0, -1, 0, 0, 5));
+		assertEquals(new Steering(false, true, false, true), steering(0, 0, -1, -1, 0, 5));
+		assertEquals(new Steering(false, false, false, false), steering(0, 0, 0, 0, 0, 5));
+	}
+
 	@Test void escapesAcrossAPincerInsteadOfChargingEitherSide() {
 		var decision = choose(ORIGIN, grid(6, Set.of()), List.of(mob(-3, 0, .15), mob(3, 0, .15)), null);
 		assertNotNull(decision.nextStep());

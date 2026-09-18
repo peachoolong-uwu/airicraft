@@ -55,7 +55,9 @@ final class MinecraftCombatPositioning {
 				2.4 + Math.max(0, (entity.getWidth() - .6) / 2)));
 		}
 		previous.keySet().retainAll(entities.stream().map(LivingEntity::getUuidAsString).toList());
-		Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> graph = terrain(context, origin, shielding ? 5 : 1);
+		// Facing the pack uses walking/backpedaling, never a forward sprint away from it.
+		double slowdown = (context.canSprint ? 1.3 : 1) * (shielding ? 5 : 1);
+		Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> graph = terrain(context, origin, slowdown);
 		terrainCells = graph.size();
 		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep());
 		plannedTick = tick;
@@ -83,6 +85,33 @@ final class MinecraftCombatPositioning {
 	}
 
 	void invalidate() { plannedTick = Long.MIN_VALUE; decision = null; }
+
+	/** Quantized keys must not cut a corner or step sideways off the validated route. */
+	CombatPositioning.Steering steering(MinecraftClient client, CombatPositioning.Cell target, Vec3d facing) {
+		var player = client.player;
+		Vec3d forward = new Vec3d(facing.x - player.getX(), 0, facing.z - player.getZ()).normalize();
+		Vec3d left = new Vec3d(forward.z, 0, -forward.x);
+		Vec3d desired = new Vec3d(target.x() + .5 - player.getX(), 0, target.z() + .5 - player.getZ()).normalize();
+		var preferred = CombatPositioning.steering(player.getX(), player.getZ(), target.x() + .5, target.z() + .5, facing.x, facing.z);
+		CombatPositioning.Steering best = new CombatPositioning.Steering(false, false, false, false);
+		double bestProgress = 0;
+		for (int f = -1; f <= 1; f++) for (int l = -1; l <= 1; l++) {
+			if (f == 0 && l == 0) continue;
+			Vec3d motion = forward.multiply(f).add(left.multiply(l)).normalize();
+			var keys = new CombatPositioning.Steering(f > 0, f < 0, l > 0, l < 0);
+			double progress = motion.dotProduct(desired) + (keys.equals(preferred) ? .001 : 0);
+			if (progress <= bestProgress) continue;
+			Vec3d probe = player.getPos().add(motion.multiply(.35));
+			BlockPos cell = BlockPos.ofFloored(probe);
+			if ((cell.getX() != player.getBlockX() || cell.getZ() != player.getBlockZ())
+				&& (cell.getX() != target.x() || cell.getZ() != target.z())) continue;
+			double rise = Math.max(0, target.y() - player.getY());
+			if (!client.world.isSpaceEmpty(player, player.getBoundingBox().offset(motion.x * .35, rise, motion.z * .35))) continue;
+			best = keys;
+			bestProgress = progress;
+		}
+		return best;
+	}
 
 	private static Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> terrain(
 		CalculationContext context, CombatPositioning.Cell origin, double slowdown) {
@@ -134,6 +163,8 @@ final class MinecraftCombatPositioning {
 		for (int dy = -1; dy <= 1; dy++) {
 			var state = context.get(x, y + dy, z);
 			if (!state.getFluidState().isEmpty() || MovementHelper.avoidWalkingInto(state)) return false;
+			// Direct steering cannot open a door as Baritone's full movement executor can.
+			if (dy >= 0 && !state.getCollisionShape(context.world, new BlockPos(x, y + dy, z)).isEmpty()) return false;
 		}
 		return true;
 	}

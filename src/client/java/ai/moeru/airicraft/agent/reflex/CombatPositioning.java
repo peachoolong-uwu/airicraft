@@ -29,6 +29,18 @@ public final class CombatPositioning {
 		public Decision { route = List.copyOf(route); }
 		public Cell nextStep() { return route.size() > 1 ? route.get(1) : null; }
 	}
+	public record Steering(boolean forward, boolean back, boolean left, boolean right) { }
+
+	/** Map a world-space waypoint to keys while the camera continues facing the threat group. */
+	public static Steering steering(double x, double z, double targetX, double targetZ, double facingX, double facingZ) {
+		double dx = targetX - x, dz = targetZ - z, fx = facingX - x, fz = facingZ - z;
+		double length = Math.hypot(dx, dz) * Math.hypot(fx, fz);
+		if (length < .001) return new Steering(false, false, false, false);
+		double forward = (dx * fx + dz * fz) / length;
+		double left = (dx * fz - dz * fx) / length;
+		double threshold = Math.sin(Math.PI / 8);
+		return new Steering(forward > threshold, forward < -threshold, left > threshold, left < -threshold);
+	}
 	private record Route(List<Cell> cells, double ticks, double exposure, List<Threat> pursuers, double score) {
 		Cell end() { return cells.getLast(); }
 	}
