@@ -16,6 +16,137 @@ playtest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(playtest)
 
 
+class CodexFollowupTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        repo = patch.object(playtest, "REPO", self.root)
+        repo.start()
+        self.addCleanup(repo.stop)
+
+    def test_queue_uses_argument_vector_and_retains_context_before_delivery(self):
+        handoff = {"terminationReason": "bug_report", "finalized": True,
+                   "recordingComplete": True, "bugReported": True, "exitCode": 0,
+                   "clientExit": {"minecraftExited": True}, "objective": "Survive 'quotes' $(literal)"}
+
+        def queue(argv, **kwargs):
+            saved = list((self.root / "run/automatic-playtest-handoffs").glob("*.json"))
+            self.assertEqual(1, len(saved))
+            data = json.loads(saved[0].read_text())
+            self.assertEqual(handoff["objective"], data["objective"])
+            self.assertEqual("validate_fix_resume", data["followupMode"])
+            self.assertEqual(["codex", "queue", "--thread", "parent", "--message"], argv[:5])
+            self.assertIn(str(saved[0]), argv[5])
+            self.assertNotIn(handoff["objective"], argv[5])
+            self.assertEqual(30, kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0, "Queued message test", "")
+
+        with patch.object(playtest.subprocess, "run", side_effect=queue) as dispatch:
+            playtest.notify_codex_parent("parent", handoff)
+        dispatch.assert_called_once()
+        data = json.loads(next((self.root / "run/automatic-playtest-handoffs").glob("*.json")).read_text())
+        self.assertEqual("queued", data["notification"]["status"])
+
+    def test_manual_stops_never_queue(self):
+        with patch.object(playtest.subprocess, "run") as dispatch:
+            for reason in ("manual_interrupt", "client_exit", "world_left"):
+                playtest.notify_codex_parent("parent", {"terminationReason": reason})
+        dispatch.assert_not_called()
+        self.assertFalse((self.root / "run").exists())
+
+    def test_failures_and_incomplete_reports_only_request_analysis(self):
+        for reason in ("crash", "planner_degraded", "startup_failed", "capture_error", "time_limit", "bug_report"):
+            with self.subTest(reason=reason), patch.object(playtest.subprocess, "run",
+                    return_value=subprocess.CompletedProcess([], 0, "queued", "")):
+                playtest.notify_codex_parent("parent", {"terminationReason": reason, "finalized": False})
+        for path in (self.root / "run/automatic-playtest-handoffs").glob("*.json"):
+            self.assertEqual("analyze_and_wait", json.loads(path.read_text())["followupMode"])
+
+    def test_queue_failures_are_retained_without_retry_or_exception(self):
+        for failure in (FileNotFoundError("codex"), subprocess.TimeoutExpired("codex", 30),
+                        subprocess.CompletedProcess([], 1, "", "queue failed")):
+            with self.subTest(failure=failure):
+                with patch.object(playtest.subprocess, "run") as dispatch:
+                    if isinstance(failure, Exception):
+                        dispatch.side_effect = failure
+                    else:
+                        dispatch.return_value = failure
+                    playtest.notify_codex_parent("parent", {"terminationReason": "crash"})
+                    dispatch.assert_called_once()
+        for path in (self.root / "run/automatic-playtest-handoffs").glob("*.json"):
+            self.assertEqual("failed", json.loads(path.read_text())["notification"]["status"])
+
+    def test_complete_report_requires_every_repair_gate(self):
+        complete = {"terminationReason": "bug_report", "finalized": True,
+                    "recordingComplete": True, "bugReported": True, "exitCode": 0,
+                    "clientExit": {"minecraftExited": True}}
+        for key in complete:
+            partial = {name: value for name, value in complete.items() if name != key}
+            with patch.object(playtest.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")):
+                playtest.notify_codex_parent("parent", partial)
+        for path in (self.root / "run/automatic-playtest-handoffs").glob("*.json"):
+            self.assertEqual("analyze_and_wait", json.loads(path.read_text())["followupMode"])
+
+    def test_real_queue_process_receives_the_existing_parent(self):
+        executable = self.root / "codex"
+        received = self.root / "received.json"
+        executable.write_text(f"#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\n"
+                              f"Path({str(received)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+        executable.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            playtest.notify_codex_parent("existing-parent", {"terminationReason": "planner_degraded"})
+        argv = json.loads(received.read_text())
+        self.assertEqual(["queue", "--thread", "existing-parent", "--message"], argv[:4])
+        self.assertIn("analyze_and_wait", argv[4])
+
+    def test_interrupt_during_preflight_does_not_dispatch(self):
+        with (patch.dict(os.environ, {"CODEX_THREAD_ID": "parent"}),
+              patch.object(sys, "argv", ["automatic-playtest", "--world", str(self.root)]),
+              patch.object(playtest, "run", side_effect=KeyboardInterrupt),
+              patch.object(playtest.signal, "signal"),
+              patch.object(playtest.subprocess, "run") as dispatch):
+            self.assertEqual(130, playtest.main())
+            dispatch.assert_not_called()
+
+    def test_main_notifies_after_run_and_preserves_exit_code(self):
+        def run(args, handoff):
+            handoff.update(terminationReason="planner_degraded", finalized=True)
+            return 1
+
+        with (patch.dict(os.environ, {"CODEX_THREAD_ID": "parent"}),
+              patch.object(sys, "argv", ["automatic-playtest", "--world", str(self.root)]),
+              patch.object(playtest, "run", side_effect=run),
+              patch.object(playtest.signal, "signal"),
+              patch.object(playtest, "notify_codex_parent") as notify):
+            self.assertEqual(1, playtest.main())
+            self.assertEqual("parent", notify.call_args.args[0])
+            self.assertEqual(1, notify.call_args.args[1]["exitCode"])
+            self.assertTrue(notify.call_args.args[1]["finalized"])
+
+    def test_opt_out_no_parent_and_recovery_do_not_notify(self):
+        for environment, extra in (({}, []), ({"CODEX_THREAD_ID": "parent"}, ["--no-codex-notify"]),
+                                   ({"CODEX_THREAD_ID": "parent"}, ["--recover", str(self.root)])):
+            argv = ["automatic-playtest"] + (extra if "--recover" in extra else ["--world", str(self.root)] + extra)
+            with (patch.dict(os.environ, environment, clear=True), patch.object(sys, "argv", argv),
+                  patch.object(playtest, "run", return_value=0),
+                  patch.object(playtest, "recover_recording", return_value=0),
+                  patch.object(playtest.signal, "signal"),
+                  patch.object(playtest, "notify_codex_parent") as notify):
+                self.assertEqual(0, playtest.main())
+                notify.assert_not_called()
+
+    def test_preflight_failure_still_notifies_parent(self):
+        with (patch.dict(os.environ, {"CODEX_THREAD_ID": "parent"}),
+              patch.object(sys, "argv", ["automatic-playtest", "--world", str(self.root)]),
+              patch.object(playtest, "run", side_effect=ValueError("missing profile")),
+              patch.object(playtest.signal, "signal"),
+              patch.object(playtest, "notify_codex_parent") as notify):
+            self.assertEqual(2, playtest.main())
+            self.assertEqual("startup_failed", notify.call_args.args[1]["terminationReason"])
+            self.assertEqual("missing profile", notify.call_args.args[1]["error"])
+
+
 class PlaytestPlannerDegradationTest(unittest.TestCase):
     def test_open_ended_run_stops_gracefully_after_planner_degrades(self):
         with tempfile.TemporaryDirectory() as temp:

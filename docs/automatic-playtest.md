@@ -35,6 +35,12 @@ Recovery refuses live launcher/client processes and locked worlds. It preserves 
 
 Override the output root with `--output /absolute/path`. Each invocation uses a unique run ID, copied game directory and bridge state file, and disables JDWP, allowing independent invocations to share the output root. Workers remain under `run/automatic-playtest-workers/<run-id>/`; configs stay there rather than in the published bundle. The mode is opt-in and requires a local integrated server. `--max-seconds` bounds wall time after join (default 1800), so hung planners do not leave clients running forever. Use `--max-seconds 0` for an open-ended run with no time limit. It keeps running until a bug report, planner degraded mode, capture failure, client exit, or explicit interruption; choose an ongoing objective if you also want no goal completion condition.
 
+## Codex parent-task follow-up
+
+When launched with `CODEX_THREAD_ID` (normally inherited from a Codex task), the helper queues an exit message to that task using `codex queue --thread ... --message ...` after shutdown and finalization. The repo-owned [airicraft-playtest-loop skill](../.agents/skills/airicraft-playtest-loop/SKILL.md) governs the follow-up: complete `something_wrong` reports are validated, apparent fixes checked, and the incident world resumed. Multiple plausible solutions or opinionated tradeoffs require the user's choice before editing or resuming. Crashes, planner degradation, incomplete captures, and other exits are analyzed and left stopped for user instructions.
+
+The helper retains launch context and queue status under `run/automatic-playtest-handoffs/`. Manual launcher interrupts, normal game-window closes, and leaving the world do not queue follow-ups. Queue failures are reported on stderr without changing the recording exit code; no automatic delivery retry occurs. `--no-codex-notify` opts out, and runs outside Codex or `--recover` invocations never queue a follow-up. SIGKILL and power loss bypass the hook. The CLI must be available and authenticated in the helper's environment.
+
 ## Evidence for offline analysis
 
 The evaluator and automatic playtests share `RuntimeFlightRecorder`; this is the same runtime evidence writer, not a separate recorder implementation.
