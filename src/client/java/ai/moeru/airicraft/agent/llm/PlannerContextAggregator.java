@@ -28,6 +28,8 @@ public final class PlannerContextAggregator {
 	private final SemanticContextProjector semanticContextProjector = new SemanticContextProjector();
 
 	private String fixedSystemPrompt;
+	private boolean decisionContextEnabled;
+	public void useDecisionContext() { decisionContextEnabled = true; }
 	private LlmConversation retainedConversation;
 
 	private PlannerContextState state = PlannerContextState.initial();
@@ -493,7 +495,7 @@ public final class PlannerContextAggregator {
 	) {
 		long anchorTimeMs = request.timestampMs();
 		ArrayList<LlmChatMessage> messages = new ArrayList<>();
-		String providerContext = toolRegistry.contextSnapshot();
+		String providerContext = decisionContextEnabled ? "" : toolRegistry.contextSnapshot();
 		if (!providerContext.isBlank()) messages.add(LlmChatMessage.user(providerContext, LlmMessageKind.NOTICE));
 		if (renderedTimeContextAtMs >= 0L) {
 			messages.add(ContextMessageRenderer.renderEntry(new PlannerContextEntry(

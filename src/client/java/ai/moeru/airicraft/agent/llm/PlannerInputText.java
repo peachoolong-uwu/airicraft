@@ -40,6 +40,10 @@ public final class PlannerInputText {
 		out.append(context.phrase("worldSessionId", "World ")).append(context.phrase("tick", "; client tick "))
 			.append(context.phrase("serverTick", "; server tick ")).append(".\n");
 		out.append(context.phrase("decisionOwner", "Decisions: ")).append(context.phrase("actuatorOwner", "; actuation: ")).append(".\n");
+		JsonElement changes = context.take("stateChanges");
+		if (changes != null) out.append("State changes (set replaces the exact path; remove deletes it; omitted fields unchanged): ").append(text(changes)).append('\n');
+		JsonElement baseline = context.take("stateBaseline");
+		if (baseline != null) out.append("Full state baseline (replaces previous state).\n");
 		JsonElement current = context.take("current");
 		JsonElement currentWork = current != null && current.isJsonObject() ? current.getAsJsonObject().get("work") : null;
 		if (current != null && current.isJsonObject()) {

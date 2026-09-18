@@ -262,6 +262,7 @@ public final class PlannerOrchestrator {
 	/** The supplier reads game state synchronously on this orchestrator's owning client thread. */
 	public void configureDecisionContext(java.util.function.Supplier<PlannerDecisionContext> source) {
 		decisionContextSource = Objects.requireNonNull(source);
+		contextAggregator.useDecisionContext();
 		toolRegistry.freezeToolPrefix();
 	}
 
