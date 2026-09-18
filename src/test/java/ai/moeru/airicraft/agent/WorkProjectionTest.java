@@ -31,6 +31,23 @@ class WorkProjectionTest {
 		assertEquals("COMPLETED", afterCleanup.phase());
 	}
 
+	@Test void terminalCollectionReportSurvivesExecutorCleanupAndPlannerSummary() {
+		var job = new ai.moeru.airicraft.agent.job.ActiveJob("hunt", ai.moeru.airicraft.agent.job.ActiveJobType.ATTACK_ENTITY,
+			ai.moeru.airicraft.agent.job.ActiveJobStatus.COMPLETED, null, null, null, null, 0, 0, 0, "planner_tool", null, null, 100);
+		String message = "target_died_nearby_drops_cleared collectedItems={minecraft:beef=2} collectionEvidence=inventory_gain";
+		var primitive = new TaskExecutionSnapshot(TaskExecutionState.COMPLETED, "hunt", null, "EntityInteraction", message, null, null);
+		var terminal = WorkProjection.project(job, primitive, List.of(), List.of(), false, null, null, null, 100).getFirst();
+		assertEquals(message, terminal.summary().get("message"));
+		assertFalse(terminal.summary().containsKey("collected"));
+		var history = new WorkHistory();
+		history.observe(terminal);
+		var cleaned = WorkProjection.project(job, TaskExecutionSnapshot.idle(), List.of(), List.of(), false, null, null, null, 101).getFirst();
+		assertFalse(history.observe(cleaned));
+		assertEquals(message, history.find(terminal.handle()).orElseThrow().summary().get("message"));
+		var unrelated = new TaskExecutionSnapshot(TaskExecutionState.COMPLETED, "other", null, "EntityInteraction", "other result", null, null);
+		assertEquals("", WorkProjection.project(job, unrelated, List.of(), List.of(), false, null, null, null, 102).getFirst().details().get("message"));
+	}
+
 	private ActionGraphExecutionView graph(String id) {
 		return new ActionGraphExecutionView(ActionGraphResidency.SUSPENDED,0,0,0,
 			new ActionGraphExecutionSnapshot(true,id,ActionGraphExecutionState.WATCHING,null,null,0,null,0,0,0,"", "", "", "",Map.of(),List.of(),List.of(),Map.of(),Map.of(),Map.of()));

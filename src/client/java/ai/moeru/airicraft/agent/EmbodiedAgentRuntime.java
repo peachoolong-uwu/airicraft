@@ -2724,9 +2724,17 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			}
 			case PlannerToolCatalog.CLOSE_CONTAINER -> ContainerInventoryController.close(MinecraftClient.getInstance());
 			case PlannerToolCatalog.INSPECT_CONTAINER -> ContainerInventoryController.inspect(MinecraftClient.getInstance());
-			case PlannerToolCatalog.TRANSFER_CONTAINER -> ContainerInventoryController.transfer(MinecraftClient.getInstance(),
-				intArg(args, "syncId").orElseThrow(), stringArg(args, "direction").orElseThrow(),
-				stringArg(args, "itemId").orElseThrow(), intArg(args, "quantity").orElseThrow());
+			case PlannerToolCatalog.TRANSFER_CONTAINER -> {
+				var entries = args.has("items") ? args.getAsJsonArray("items") : new com.google.gson.JsonArray();
+				if (!args.has("items")) entries.add(args);
+				List<ContainerInventoryController.TransferItem> items = new ArrayList<>();
+				for (var entry : entries) {
+					var item = entry.getAsJsonObject();
+					items.add(new ContainerInventoryController.TransferItem(stringArg(item, "itemId").orElseThrow(), intArg(item, "quantity").orElseThrow()));
+				}
+				yield ContainerInventoryController.transfer(MinecraftClient.getInstance(),
+					intArg(args, "syncId").orElseThrow(), stringArg(args, "direction").orElseThrow(), items);
+			}
 			case PlannerToolCatalog.EQUIP_ITEM -> {
 				String itemId = stringArg(args, "itemId").orElseThrow(() -> new IllegalArgumentException("itemId is required"));
 				yield playerItemUseController.equip(MinecraftClient.getInstance(), itemId);
@@ -4653,7 +4661,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			payload.put("activeStepKind", current.activeStepKind().name());
 		}
 		payload.put("state", current.state().name());
-		payload.put("collected", current.progress().collected());
+		if (current.activeStepKind() != LedgerStepKind.ATTACK_ENTITY) payload.put("collected", current.progress().collected());
 		payload.put("remaining", current.progress().remaining());
 		if (current.state() == TaskState.WAITING_FOR_PICKUP) {
 			String blockedReason = activeJobRuntime.current().blockedReason();

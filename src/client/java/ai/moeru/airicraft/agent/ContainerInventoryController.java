@@ -31,12 +31,12 @@ final class ContainerInventoryController {
 					+ ", itemId=" + slot.itemId() + ", count=" + slot.count() + "}").toList();
 	}
 
-	static String transfer(MinecraftClient client, int syncId, String direction, String itemId, int quantity) {
+	static String transfer(MinecraftClient client, int syncId, String direction, List<TransferItem> items) {
 		var handler = requireContainer(client);
 		if (handler.syncId != syncId) throw new IllegalStateException("container_changed inspect_container_again");
 		if (!handler.getCursorStack().isEmpty()) throw new IllegalStateException("cursor_not_empty");
 		if (client.interactionManager == null) throw new IllegalStateException("interaction_manager_unavailable");
-		List<Move> moves = plan(slots(client, handler), direction, itemId, quantity);
+		List<Move> moves = planBatch(slots(client, handler), direction, items);
 		for (Move move : moves) {
 			int sourceCount = handler.getSlot(move.source()).getStack().getCount();
 			client.interactionManager.clickSlot(syncId, move.source(), 0, SlotActionType.PICKUP, client.player);
@@ -51,7 +51,7 @@ final class ContainerInventoryController {
 		}
 		if (!handler.getCursorStack().isEmpty()) throw new IllegalStateException("transfer_cursor_not_empty");
 		return "Tool result for transfer_container: submitted syncId=" + syncId + " direction=" + direction
-			+ " itemId=" + itemId + " quantity=" + quantity
+			+ " items=" + items
 			+ ". Inspect container again to verify settled source/destination counts before reporting completion.";
 	}
 
@@ -73,6 +73,32 @@ final class ContainerInventoryController {
 		}
 		return result;
 	}
+
+	/** Reserve shared space for every item before sending any screen clicks. */
+	static List<Move> planBatch(List<Slot> slots, String direction, List<TransferItem> items) {
+		if (items.isEmpty() || items.size() > 36) throw new IllegalArgumentException("items must contain 1..36 entries");
+		List<Slot> predicted = new ArrayList<>(slots);
+		List<Move> moves = new ArrayList<>();
+		for (TransferItem item : items) {
+			List<Move> next = plan(predicted, direction, item.itemId(), item.quantity());
+			for (Move move : next) {
+				int sourceIndex = java.util.stream.IntStream.range(0, predicted.size())
+					.filter(i -> predicted.get(i).id() == move.source()).findFirst().orElseThrow();
+				int targetIndex = java.util.stream.IntStream.range(0, predicted.size())
+					.filter(i -> predicted.get(i).id() == move.target()).findFirst().orElseThrow();
+				Slot source = predicted.get(sourceIndex);
+				Slot target = predicted.get(targetIndex);
+				predicted.set(sourceIndex, new Slot(source.id(), source.container(), source.itemId(), source.components(),
+					source.count() - move.count(), source.maxCount()));
+				predicted.set(targetIndex, new Slot(target.id(), target.container(), source.itemId(), source.components(),
+					target.count() + move.count(), Math.min(source.maxCount(), target.maxCount())));
+			}
+			moves.addAll(next);
+		}
+		return List.copyOf(moves);
+	}
+
+	record TransferItem(String itemId, int quantity) {}
 
 	/** Preflight the whole request, preserving component variants and respecting partial stacks. */
 	static List<Move> plan(List<Slot> slots, String direction, String itemId, int quantity) {

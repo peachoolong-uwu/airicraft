@@ -34,4 +34,26 @@ class ContainerInventoryControllerTest {
 			slot(0, true, "", 0), slot(27, false, "one", 2), slot(28, false, "two", 2)),
 			"deposit", "minecraft:cobblestone", 4));
 	}
+	@Test void batchesSeveralItemTypesAndReservesSharedSpace() {
+		var dirt = new ContainerInventoryController.Slot(28, false, "minecraft:dirt", "", 20, 64);
+		var slots = List.of(slot(0, true, "", 0), slot(1, true, "", 0), slot(27, false, "", 64), dirt);
+		var items = List.of(new ContainerInventoryController.TransferItem("minecraft:cobblestone", 64),
+			new ContainerInventoryController.TransferItem("minecraft:dirt", 20));
+		assertEquals(List.of(new ContainerInventoryController.Move(27, 0, 64), new ContainerInventoryController.Move(28, 1, 20)),
+			ContainerInventoryController.planBatch(slots, "deposit", items));
+		assertThrows(IllegalStateException.class, () -> ContainerInventoryController.planBatch(
+			List.of(slots.get(0), slots.get(2), dirt), "deposit", items));
+	}
+
+	@Test void repeatedItemRequestsConsumeOnlyRemainingSourceAndSpace() {
+		var slots = List.of(slot(0, true, "", 12), slot(27, false, "", 60), slot(28, false, "", 0));
+		assertEquals(List.of(new ContainerInventoryController.Move(0, 27, 4), new ContainerInventoryController.Move(0, 28, 6)),
+			ContainerInventoryController.planBatch(slots, "withdraw", List.of(
+				new ContainerInventoryController.TransferItem("minecraft:cobblestone", 4),
+				new ContainerInventoryController.TransferItem("minecraft:cobblestone", 6))));
+		assertThrows(IllegalStateException.class, () -> ContainerInventoryController.planBatch(slots, "withdraw", List.of(
+			new ContainerInventoryController.TransferItem("minecraft:cobblestone", 8),
+			new ContainerInventoryController.TransferItem("minecraft:cobblestone", 8))));
+	}
+
 }

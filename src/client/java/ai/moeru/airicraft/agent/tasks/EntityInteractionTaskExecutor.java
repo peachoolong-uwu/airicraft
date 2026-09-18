@@ -8,6 +8,8 @@ import ai.moeru.airicraft.agent.session.SessionSnapshot;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.PlayerScreenHandler;
@@ -17,6 +19,7 @@ import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.Box;
 import net.minecraft.world.RaycastContext;
 
 import java.util.LinkedHashMap;
@@ -42,6 +45,11 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	private WorldTaskRequest appliedTask;
 	private boolean terminalEventEmitted;
 	private boolean landedAttack;
+	private Entity attackedTarget;
+	private Map<String, Integer> inventoryBeforeAttack = Map.of();
+	private Vec3d dropCollectionCenter;
+	private int dropCollectionTicks;
+	private int dropQuietTicks;
 	private int outOfRangeTicks;
 	private int busyStateTicks;
 	private int attackHotbarSlot = -1;
@@ -118,10 +126,13 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			attackHotbarSlot = player.getInventory().getSelectedSlot();
 		}
 
+		if (terminalEventEmitted) return Optional.empty();
+		if (dropCollectionCenter != null) return collectKillDrops(client, player, request, sessionSnapshot.tickCount());
+
 		Selection selection = resolveSelection(client, player, interaction(request).selector());
 		if (selection.status() != EntitySelectorResolver.SelectionStatus.SELECTED) {
 			if (completedAfterLandedAttack(request, selection.status())) {
-				return complete(request, "target_died");
+				return beginDropCollection(request);
 			}
 			return fail(request, selection.failure());
 		}
@@ -131,7 +142,7 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 		}
 		if (!target.isAlive()) {
 			if (completedAfterLandedAttack(request, EntitySelectorResolver.SelectionStatus.TARGET_NOT_ALIVE)) {
-				return complete(request, "target_died");
+				return beginDropCollection(request);
 			}
 			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_not_alive"));
 		}
@@ -202,6 +213,8 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 
+		if (!landedAttack) inventoryBeforeAttack = new InventoryItemCounter().count(player.getInventory());
+		attackedTarget = target;
 		client.interactionManager.attackEntity(player, target);
 		player.swingHand(Hand.MAIN_HAND);
 		landedAttack = true;
@@ -209,10 +222,77 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			return complete(request, "attack_landed");
 		}
 		if (!target.isAlive()) {
-			return complete(request, "target_died");
+			return beginDropCollection(request);
 		}
 		snapshot = snapshot(TaskExecutionState.RUNNING, request, "attack_landed");
 		return Optional.empty();
+	}
+
+	static boolean confirmedKill(boolean healthDepleted, Entity.RemovalReason removalReason) {
+		return healthDepleted || removalReason == Entity.RemovalReason.KILLED;
+	}
+
+	private Optional<TaskTerminalEvent> beginDropCollection(WorldTaskRequest request) {
+		// A disappeared or unloaded target alone is not proof that it died.
+		if (attackedTarget == null || !confirmedKill(
+			attackedTarget instanceof LivingEntity living && living.getHealth() <= 0,
+			attackedTarget.getRemovalReason()))
+			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_lost_kill_unconfirmed"));
+		cancelApproach();
+		dropCollectionCenter = attackedTarget.getPos();
+		snapshot = snapshot(TaskExecutionState.RUNNING, request, "target_died_collecting_drops");
+		return Optional.empty();
+	}
+
+	private Optional<TaskTerminalEvent> collectKillDrops(MinecraftClient client, ClientPlayerEntity player, WorldTaskRequest request, long tick) {
+		dropCollectionTicks++;
+		var drops = client.world.getEntitiesByClass(ItemEntity.class,
+			new Box(dropCollectionCenter, dropCollectionCenter).expand(4), item -> item.isAlive() && !item.getStack().isEmpty());
+		if (drops.isEmpty()) {
+			cancelApproach();
+			// Allow death/drop packets and delayed spawns to settle before reporting completion.
+			if (++dropQuietTicks >= 20) return complete(request, "target_died_nearby_drops_cleared");
+			snapshot = snapshot(TaskExecutionState.RUNNING, request, "waiting_for_kill_drops");
+			return Optional.empty();
+		}
+		dropQuietTicks = 0;
+		if (dropCollectionTicks >= 200)
+			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_died_drops_uncollected_timeout"));
+		var pickup = drops.stream().filter(item -> canAcceptDrop(player, item.getStack()))
+			.min(java.util.Comparator.comparingDouble(player::squaredDistanceTo));
+		if (pickup.isEmpty())
+			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_died_drops_uncollected_inventory_full"));
+		ItemEntity target = pickup.get();
+		double distance = player.distanceTo(target);
+		if (distance < 0.8D) {
+			cancelApproach();
+		} else if (shouldUseDirectChase(distance, hasBlockLineOfSight(client, player, target), movementController.snapshot().stuck())) {
+			cancelBaritoneChase();
+			lookAtTarget(client, target);
+			movementController.moveForward(client, false, false, tick);
+		} else if (navigationFacade != null && navigationFacade.isLoaded()) {
+			movementController.stop(client);
+			if (isUnreachablePathEvent(navigationFacade.pollPathEvent()))
+				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_died_drops_unreachable"));
+			GoalPosition next = new GoalPosition(target.getBlockX(), (int) Math.floor(target.getY() + 0.125D), target.getBlockZ(), true);
+			if (shouldRefreshChaseGoal(chaseGoal, next, chaseGoalRefreshTicks++)) {
+				navigationFacade.startNavigate(next);
+				chaseGoal = next;
+				chaseGoalRefreshTicks = 0;
+			}
+		} else {
+			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_died_drops_unreachable"));
+		}
+		snapshot = snapshot(TaskExecutionState.RUNNING, request, "collecting_kill_drops");
+		return Optional.empty();
+	}
+
+	private static boolean canAcceptDrop(ClientPlayerEntity player, ItemStack drop) {
+		for (int slot = 0; slot < 36; slot++) {
+			ItemStack stack = player.getInventory().getStack(slot);
+			if (stack.isEmpty() || (ItemStack.areItemsAndComponentsEqual(stack, drop) && stack.getCount() < stack.getMaxCount())) return true;
+		}
+		return false;
 	}
 
 	private Optional<TaskTerminalEvent> useEntity(
@@ -429,6 +509,7 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private Optional<TaskTerminalEvent> complete(WorldTaskRequest request, String message) {
+		message = withCollectionReport(message);
 		cancelApproach();
 		snapshot = snapshot(TaskExecutionState.COMPLETED, request, message);
 		if (terminalEventEmitted) {
@@ -439,13 +520,30 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private Optional<TaskTerminalEvent> fail(WorldTaskRequest request, TaskFailure failure) {
+		String message = withCollectionReport(failure.detail());
 		cancelApproach();
-		snapshot = snapshot(TaskExecutionState.FAILED, request, failure.detail());
+		snapshot = snapshot(TaskExecutionState.FAILED, request, message);
 		if (terminalEventEmitted) {
 			return Optional.empty();
 		}
 		terminalEventEmitted = true;
-		return Optional.of(new TaskTerminalEvent(request.taskId(), null, TaskExecutionState.FAILED, failure.detail(), null, failure.code()));
+		return Optional.of(new TaskTerminalEvent(request.taskId(), null, TaskExecutionState.FAILED, message, null, failure.code()));
+	}
+
+	private String withCollectionReport(String message) {
+		if (dropCollectionCenter == null) return message;
+		var client = clientSupplier.get();
+		if (client == null || client.player == null) return message + " collectedItems=unknown";
+		return collectionReport(message, inventoryBeforeAttack, new InventoryItemCounter().count(client.player.getInventory()));
+	}
+
+	static String collectionReport(String message, Map<String, Integer> before, Map<String, Integer> after) {
+		var collected = new java.util.TreeMap<String, Integer>();
+		after.forEach((itemId, count) -> {
+			int gained = count - before.getOrDefault(itemId, 0);
+			if (gained > 0) collected.put(itemId, gained);
+		});
+		return message + " collectedItems=" + collected + " collectionEvidence=inventory_gain";
 	}
 
 	private static TaskExecutionSnapshot snapshot(TaskExecutionState state, WorldTaskRequest request, String event) {
@@ -515,6 +613,11 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 		appliedTask = null;
 		terminalEventEmitted = false;
 		landedAttack = false;
+		attackedTarget = null;
+		inventoryBeforeAttack = Map.of();
+		dropCollectionCenter = null;
+		dropCollectionTicks = 0;
+		dropQuietTicks = 0;
 		outOfRangeTicks = 0;
 		busyStateTicks = 0;
 		chaseGoal = null;

@@ -8,6 +8,25 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityInteractionTaskExecutorTest {
+	@Test void collectionReportCountsGainsInsteadOfExistingInventoryOrExpectedLoot() {
+		var before = java.util.Map.of("minecraft:beef", 5, "minecraft:leather", 1, "minecraft:dirt", 10);
+		var after = java.util.Map.of("minecraft:beef", 7, "minecraft:leather", 1, "minecraft:dirt", 9);
+		assertEquals("target_died_nearby_drops_cleared collectedItems={minecraft:beef=2} collectionEvidence=inventory_gain",
+			EntityInteractionTaskExecutor.collectionReport("target_died_nearby_drops_cleared", before, after));
+		assertEquals("target_died_drops_uncollected_timeout collectedItems={minecraft:beef=2} collectionEvidence=inventory_gain",
+			EntityInteractionTaskExecutor.collectionReport("target_died_drops_uncollected_timeout", before, after));
+		assertEquals("target_died_nearby_drops_cleared collectedItems={} collectionEvidence=inventory_gain",
+			EntityInteractionTaskExecutor.collectionReport("target_died_nearby_drops_cleared", before, before));
+	}
+
+	@Test void disappearingTargetMustHaveDeathEvidenceBeforeCollectingDrops() {
+		assertTrue(EntityInteractionTaskExecutor.confirmedKill(true, null));
+		assertTrue(EntityInteractionTaskExecutor.confirmedKill(false, net.minecraft.entity.Entity.RemovalReason.KILLED));
+		assertFalse(EntityInteractionTaskExecutor.confirmedKill(false, null));
+		assertFalse(EntityInteractionTaskExecutor.confirmedKill(false, net.minecraft.entity.Entity.RemovalReason.UNLOADED_TO_CHUNK));
+		assertFalse(EntityInteractionTaskExecutor.confirmedKill(false, net.minecraft.entity.Entity.RemovalReason.DISCARDED));
+	}
+
 	@Test
 	void waitsForTransientBusyStateBeforeFailing() {
 		assertTrue(EntityInteractionTaskExecutor.shouldWaitForBusyState(0));

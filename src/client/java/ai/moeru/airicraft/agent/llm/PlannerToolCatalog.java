@@ -131,17 +131,27 @@ public final class PlannerToolCatalog {
 		builtInTool(INSPECT_CONTAINER, true, tool(INSPECT_CONTAINER,
 			"Inspect the currently open chest, barrel, chest minecart or chest boat, including syncId, slots and carried storage. Open blocks with use_block; find entity containers with inspect_nearby_entities and open their copied uuid with use_entity. No remote or unopened inventory access.", properties(), List.of()), NO_ARGUMENT_VALIDATION),
 		builtInTool(TRANSFER_CONTAINER, false, tool(TRANSFER_CONTAINER,
-			"Deposit or withdraw an exact item quantity in the currently open chest, barrel or chest-style entity container (including chest minecarts/boats). Copy syncId from inspect_container. Preflights source quantity and destination space; preserves stack components and leaves cursor empty. Result is submitted client prediction: inspect_container again to verify settled counts.", properties(
+			"Deposit or withdraw items in one open chest-style container. Prefer items[] to transfer several item types in one call. Copy syncId from inspect_container. The entire batch preflights source quantities and shared destination space before any clicks; preserves stack components and leaves cursor empty. Result is submitted client prediction: inspect_container again to verify settled counts.", properties(
 				prop("syncId", integer("Open container syncId from inspect_container; stale windows are rejected.")),
-				prop("direction", enumString("Transfer direction.", List.of("deposit", "withdraw"))),
-				prop("itemId", string("Exact item ID to transfer; equipped armor and offhand are excluded.")),
-				prop("quantity", integer("Exact quantity, 1 to 2304."))
-			), List.of("syncId", "direction", "itemId", "quantity")), args -> {
+				prop("direction", enumString("Direction for the entire batch.", List.of("deposit", "withdraw"))),
+				prop("items", array("1..36 item quantities. Do not combine with top-level itemId/quantity. Equipped armor and offhand are excluded.",
+					Map.of("type", "object", "properties", properties(
+						prop("itemId", string("Exact namespaced item ID.")), prop("quantity", integer("Exact quantity, 1..2304."))),
+						"required", List.of("itemId", "quantity"), "additionalProperties", false))),
+				prop("itemId", string("Single-item form; omit when using items[].")),
+				prop("quantity", integer("Single-item form quantity, 1..2304; omit when using items[]."))
+			), List.of("syncId", "direction")), args -> {
 				requireInt(args, "syncId");
-				requireString(args, "itemId");
 				if (!List.of("deposit", "withdraw").contains(requireString(args, "direction"))) throw new JsonParseException("direction must be deposit or withdraw");
-				int quantity = requireInt(args, "quantity");
-				if (quantity < 1 || quantity > 2304) throw new JsonParseException("quantity must be 1..2304");
+				if (args.has("items")) {
+					if (args.has("itemId") || args.has("quantity")) throw new JsonParseException("Use items or itemId/quantity, not both");
+					if (!args.get("items").isJsonArray() || args.getAsJsonArray("items").isEmpty() || args.getAsJsonArray("items").size() > 36)
+						throw new JsonParseException("items must contain 1..36 entries");
+					for (JsonElement item : args.getAsJsonArray("items")) {
+						if (!item.isJsonObject()) throw new JsonParseException("items entries must be objects");
+						validateTransferItem(item.getAsJsonObject());
+					}
+				} else validateTransferItem(args);
 			}),
 		builtInTool(INSPECT_INVENTORY, true, tool(INSPECT_INVENTORY, "Inspect current inventory counts.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
@@ -288,7 +298,7 @@ public final class PlannerToolCatalog {
 				prop("itemId", string("Exact namespaced item id from inspect_inventory itemCounts.")),
 				prop("quantity", integer("Number of items to drop."))
 			), List.of("targetPlayer", "itemId", "quantity")), PlannerToolCatalog::validateGivePlayerArguments),
-		builtInTool(ATTACK_ENTITY, false, tool(ATTACK_ENTITY, "Attack one nearby entity. Default mode kill keeps attacking until the target dies; hit_once stops after one landed hit. Always copy the uuid token shown by inspect_nearby_entities or focus, and optionally include name or entityTypeId.", properties(
+		builtInTool(ATTACK_ENTITY, false, tool(ATTACK_ENTITY, "Attack one nearby entity. Default mode kill attacks until death, then collects nearby item drops within 4 blocks of the death position for up to 200 active ticks. Completion waits for local drops to clear and reports collectedItems as observed inventory gains in TASK UPDATE, including partial gains on failure; full inventory or unreachable drops report a failure after the kill. hit_once stops after one landed hit without collection. Always copy the uuid token shown by inspect_nearby_entities or focus, and optionally include name or entityTypeId.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
 				prop("uuid", optionalString("Entity uuid token copied from inspect_nearby_entities or focus. Full uuid also works.")),
 				prop("name", optionalString("Visible custom name or display name when available.")),
@@ -1167,6 +1177,13 @@ public final class PlannerToolCatalog {
 		catch (RuntimeException exception) {
 			return Optional.empty();
 		}
+	}
+
+	private static void validateTransferItem(JsonObject item) {
+		requireString(item, "itemId");
+		int quantity = requireInt(item, "quantity");
+		var value = item.get("quantity").getAsJsonPrimitive();
+		if (!value.isNumber() || value.getAsDouble() != quantity || quantity < 1 || quantity > 2304) throw new JsonParseException("quantity must be 1..2304");
 	}
 
 	private static Map<String, Object> tool(String name, String description, Map<String, Object> properties, List<String> required) {

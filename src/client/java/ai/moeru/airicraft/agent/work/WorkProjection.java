@@ -43,12 +43,13 @@ public final class WorkProjection {
 				case CANCELLED -> WorkSnapshot.State.CANCELLED;
 			};
 			if (held && job.jobId().equals(interruptedJobId) && !state.terminal()) state = WorkSnapshot.State.PAUSED;
+			var details = new java.util.LinkedHashMap<String, Object>(Map.of(
+				"blockedReason", Objects.toString(job.blockedReason(), ""), "failure", Objects.toString(job.lastError(), ""),
+				"holdId", Objects.toString(holdId, ""), "request", requestedWork(job), "message", primitiveMessage(job, primitive, state)));
+			// Hunting reports itemized inventory gains; the resource-job counter does not measure pickups.
+			if (job.type() != ActiveJobType.ATTACK_ENTITY) details.put("collected", job.collectedCount());
 			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.JOB, job.jobId()), parent, state, job.type().name(),
-				primitive == null || state.terminal() ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(),
-				Map.of("collected", job.collectedCount(), "blockedReason", Objects.toString(job.blockedReason(), ""),
-					"failure", Objects.toString(job.lastError(), ""), "holdId", Objects.toString(holdId, ""),
-					"request", requestedWork(job),
-					"message", primitive == null || state.terminal() ? "" : Objects.toString(primitive.lastPathEvent(), ""))));
+				primitive == null || state.terminal() ? job.status().name() : primitive.state().name(), !state.terminal(), job.updatedTick(), details));
 		}
 		for (var process : processes) {
 			result.add(new WorkSnapshot(WorkHandle.of(WorkHandle.Kind.SMELTING, process.processId()), "",
@@ -57,6 +58,13 @@ public final class WorkProjection {
 					"needsCollection", true, "readiness", "May be estimated; inspect slots and verify collection.")));
 		}
 		return List.copyOf(result);
+	}
+
+	private static String primitiveMessage(ActiveJob job, TaskExecutionSnapshot primitive, WorkSnapshot.State state) {
+		if (primitive == null) return "";
+		if (state.terminal() && (!Objects.equals(job.jobId(), primitive.taskId())
+			|| !List.of(TaskExecutionState.COMPLETED, TaskExecutionState.FAILED, TaskExecutionState.CANCELLED).contains(primitive.state()))) return "";
+		return Objects.toString(primitive.lastPathEvent(), "");
 	}
 
 	private static Object requestedWork(ActiveJob job) {

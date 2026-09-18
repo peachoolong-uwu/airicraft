@@ -722,7 +722,7 @@ public final class PlannerOrchestrator {
 			+ (failureMessage == null || failureMessage.isBlank() ? "parse error" : failureMessage)
 			+ "\nCall exactly one tool in this response unless every tool call is a read-only text tool."
 			+ "\nDo not batch multiple action tool calls such as navigate_to, mine_blocks, collect_resource, craft_recipe, smelt_items, drop_items, give_player, attack_entity, use_entity, place_block, use_block, cancel_task, clear_goal, or update_event_policy."
-			+ "\nIf multiple actions are needed, call only the next single action tool now and wait for the tool result or TASK UPDATE before another action. A single place_block, use_block, or break_blocks call may use ordered targets[] when all targets were inspected and the schema supports them."
+			+ "\nIf multiple actions are needed, call only the next single action tool now and wait for the tool result or TASK UPDATE before another action. A single transfer_container call may use items[] for several item types in one open container. A single place_block, use_block, or break_blocks call may use ordered targets[] when all targets were inspected and the schema supports them."
 			+ "\nWhen calling a tool, leave assistant content empty and put visible pre-action text in the tool narration argument.";
 		String failedToolSchema = failedToolSchema(failureMessage);
 		if (failedToolSchema == null) {

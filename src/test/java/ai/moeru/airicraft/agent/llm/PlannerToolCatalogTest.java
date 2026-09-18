@@ -71,6 +71,19 @@ class PlannerToolCatalogTest {
 		assertEquals("minecraft:bread", eat.arguments().get("itemId").getAsString());
 	}
 
+	@Test void acceptsSingleAndBatchContainerTransfersAndRejectsAmbiguousBatches() {
+		String single = "{\"syncId\":1,\"direction\":\"deposit\",\"itemId\":\"minecraft:dirt\",\"quantity\":3}";
+		String batch = "{\"syncId\":1,\"direction\":\"withdraw\",\"items\":[{\"itemId\":\"minecraft:dirt\",\"quantity\":3},{\"itemId\":\"minecraft:stone\",\"quantity\":2}]}";
+		PlannerToolCatalog.parseToolCall(toolCall("transfer_container", single));
+		PlannerToolCatalog.parseToolCall(toolCall("transfer_container", batch));
+		for (String bad : java.util.List.of(batch.replace("3", "0"), batch.replace("3", "1.5"),
+			batch.replace("\"items\":", "\"itemId\":\"minecraft:dirt\",\"items\":"),
+			"{\"syncId\":1,\"direction\":\"deposit\",\"items\":[]}",
+			batch.replace("\"quantity\":3", "\"quantiti\":3"))) {
+			assertThrows(RuntimeException.class, () -> PlannerToolCatalog.parseToolCall(toolCall("transfer_container", bad)), bad);
+		}
+	}
+
 	private static JsonObject toolCall(String arguments) {
 		return toolCall(PlannerToolCatalog.DISCOVER_TOOLS, arguments);
 	}

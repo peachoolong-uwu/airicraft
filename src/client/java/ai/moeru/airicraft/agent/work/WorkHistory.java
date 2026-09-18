@@ -14,6 +14,15 @@ public final class WorkHistory {
 			snapshot = new WorkSnapshot(snapshot.handle(), known.parentWorkId(), snapshot.state(), snapshot.label(),
 				snapshot.phase(), snapshot.foreground(), snapshot.updatedTick(), snapshot.details());
 		}
+		// Executor cleanup must not erase the result delivered with the terminal transition.
+		if (known != null && known.state().terminal() && known.state() == snapshot.state()
+			&& !String.valueOf(known.details().getOrDefault("message", "")).isBlank()
+			&& String.valueOf(snapshot.details().getOrDefault("message", "")).isBlank()) {
+			var details = new LinkedHashMap<>(snapshot.details());
+			details.put("message", known.details().get("message"));
+			snapshot = new WorkSnapshot(snapshot.handle(), snapshot.parentWorkId(), snapshot.state(), snapshot.label(),
+				snapshot.phase(), snapshot.foreground(), snapshot.updatedTick(), details);
+		}
 		WorkSnapshot previous = work.remove(snapshot.handle());
 		work.put(snapshot.handle(), snapshot);
 		while (work.values().stream().filter(value -> value.state().terminal()).count() > TERMINAL_LIMIT) {
