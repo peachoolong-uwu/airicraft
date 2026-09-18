@@ -8,6 +8,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -27,6 +28,31 @@ loader.exec_module(evaluation)
 artifact_spec = importlib.util.spec_from_file_location("playtest_artifact", REPO / "scripts/playtest_artifact.py")
 artifact = importlib.util.module_from_spec(artifact_spec)
 artifact_spec.loader.exec_module(artifact)
+
+
+BRIDGE_FAILURE_TIMEOUT_SECONDS = 60
+FATAL_JVM_ERROR = re.compile(
+    r'^(?:Caused by: |Exception in thread "[^"]+" )?java\.lang\.'
+    r'(OutOfMemoryError|StackOverflowError|InternalError|UnknownError)(?::|$)')
+PERMANENT_COMPACTION_ERROR = re.compile(
+    r'^\[\d{2}:\d{2}:\d{2}\] \[[^\r\n]+/WARN\]: Planner compaction failed message='
+    r'Provider returned HTTP (400|401|403|404|405|413|415|422)(?:\D|$)')
+
+
+def drain_fatal_client_error(client) -> str | None:
+    """Read process diagnostics even when Minecraft caught a fatal error and kept its JVM alive."""
+    failure = None
+    while not client.line_queue.empty():
+        line = client.line_queue.get_nowait()
+        fatal = FATAL_JVM_ERROR.match(line)
+        permanent = PERMANENT_COMPACTION_ERROR.match(line)
+        if fatal:
+            failure = failure or f"Minecraft reported java.lang.{fatal.group(1)}"
+        elif line == "# A fatal error has been detected by the Java Runtime Environment:":
+            failure = failure or "The Java runtime reported a fatal error"
+        elif permanent:
+            failure = failure or f"Planner compaction cannot recover from HTTP {permanent.group(1)}"
+    return failure
 
 
 def prepare_game(world: Path, worker: Path, pending: Path) -> Path:
@@ -258,7 +284,12 @@ def run(args: argparse.Namespace, handoff: dict | None = None) -> int:
         deadline = time.monotonic() + args.max_seconds if args.max_seconds else math.inf
         objective_sent = not bool(args.objective)
         termination_reason = "capture_error"
+        bridge_failed_since = None
         while time.monotonic() < deadline:
+            failure = drain_fatal_client_error(client)
+            if failure:
+                termination_reason = "runtime_fatal_error"
+                break
             if client.process.poll() is not None:
                 termination_reason = "client_exit" if client.process.returncode == 0 else "crash"
                 if client.process.returncode != 0:
@@ -271,16 +302,21 @@ def run(args: argparse.Namespace, handoff: dict | None = None) -> int:
                     if agent_status.get("degraded") is True:
                         termination_reason = "planner_degraded"
                         break
-            except evaluation.BridgeHttpError as error:
-                if error.status != 500:
+            except (evaluation.BridgeHttpError, OSError) as error:
+                if isinstance(error, evaluation.BridgeHttpError) and error.status != 500:
                     raise
-                # World loading can hold the render thread past the bridge's short timeout.
-                # A configured wall-clock run budget still bounds an actually hung client.
+                # Loading can briefly hold the render thread; an open-ended run must still
+                # stop if the bridge never recovers. The finally block attempts save-and-stop.
+                now = time.monotonic()
+                if bridge_failed_since is None:
+                    bridge_failed_since = now
+                if now - bridge_failed_since >= BRIDGE_FAILURE_TIMEOUT_SECONDS:
+                    termination_reason = "bridge_unresponsive"
+                    failure = f"Minecraft bridge unavailable for at least {BRIDGE_FAILURE_TIMEOUT_SECONDS} seconds"
+                    break
                 time.sleep(0.5)
                 continue
-            except OSError:
-                time.sleep(0.5)
-                continue
+            bridge_failed_since = None
             if live_report_sent and not status.get("worldLoaded"):
                 termination_reason = "world_left"
                 break
@@ -312,9 +348,6 @@ def run(args: argparse.Namespace, handoff: dict | None = None) -> int:
             if status.get("worldLoaded") and state == "RECORDING" and not objective_sent:
                 evaluation.bridge_json(bridge, "POST", "/v1/agent/debug/chat", {"message": args.objective})
                 objective_sent = True
-            # Drain the evaluation log queue without echoing model output or accumulating it in memory.
-            while not client.line_queue.empty():
-                client.line_queue.get_nowait()
             time.sleep(0.5)
         else:
             termination_reason = "time_limit"

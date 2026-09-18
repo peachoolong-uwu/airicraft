@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import queue
 import subprocess
 import sys
 from pathlib import Path
@@ -211,6 +212,100 @@ class PlaytestPlannerDegradationTest(unittest.TestCase):
             self.assertEqual(1, sleep.call_count)
             self.assertEqual(1, sum(path == "/v1/agent/debug/chat" for _, path, _ in requests))
             self.assertEqual(("POST", "/v1/evaluation/client-stop", None), requests[-1])
+
+
+class PlaytestFatalFailureTest(unittest.TestCase):
+    def exercise_failure(self, statuses, *, log_line=None, times=(0, 31, 62, 93, 124, 155, 186, 217)):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            world = root / "world"
+            world.mkdir()
+            (world / "level.dat").touch()
+            profile = root / "recorder.jar"
+            profile.touch()
+            args = SimpleNamespace(world=world, output=root / "output", recorder_jar=str(profile),
+                                   objective="", max_seconds=0, startup_timeout=10)
+            client = Mock()
+            client.process.pid = 122
+            client.process.poll.return_value = None
+            client.line_queue = queue.Queue()
+            bridge = SimpleNamespace(process_id=123)
+            status_iterator = iter(statuses)
+            probes = []
+            degraded = False
+
+            def bridge_json(connection, method, path, body=None):
+                nonlocal degraded
+                if path == "/v1/worlds":
+                    return {"worlds": [{"worldId": "playtest"}]}
+                if path == "/v1/status":
+                    result = next(status_iterator, "degraded")
+                    probes.append(result)
+                    if isinstance(result, Exception):
+                        raise result
+                    degraded = result == "degraded"
+                    return {"worldLoaded": True, "automaticPlaytest": {"state": "RECORDING"}}
+                if path == "/v1/agent/status":
+                    return {"degraded": degraded}
+                return {}
+
+            def sleep(_):
+                if log_line:
+                    client.line_queue.put(log_line)
+
+            def stop_client(actual_client, timeout, pid, graceful_stop):
+                graceful_stop()
+                return {"minecraftExited": True, "method": "BRIDGE"}
+
+            with (patch.object(playtest, "REPO", root),
+                  patch.object(playtest.shutil, "which", return_value="available"),
+                  patch.object(playtest, "prepare_game", return_value=root / "game"),
+                  patch.object(playtest.evaluation, "start_client", return_value=client),
+                  patch.object(playtest.evaluation, "wait_for_title_bridge", return_value=(bridge, {})),
+                  patch.object(playtest.evaluation, "bridge_json", side_effect=bridge_json) as bridge_call,
+                  patch.object(playtest.evaluation, "stop_client", side_effect=stop_client) as stop,
+                  patch.object(playtest, "finalize_recording", return_value=(root / "final", 0)) as finalize,
+                  patch.object(playtest.signal, "signal"),
+                  patch.object(playtest.time, "monotonic", side_effect=times),
+                  patch.object(playtest.time, "sleep", side_effect=sleep)):
+                playtest.run(args)
+            stop.assert_called_once()
+            self.assertEqual("/v1/evaluation/client-stop", bridge_call.call_args.args[2])
+            return finalize.call_args.args[4:], len(probes), client.line_queue.empty()
+
+    def test_caught_oom_stops_even_when_process_is_alive_and_bridge_fails(self):
+        error = playtest.evaluation.BridgeHttpError("GET", "/v1/status", 500, {})
+        result, probes, drained = self.exercise_failure([error], log_line="java.lang.OutOfMemoryError: Java heap space")
+        self.assertEqual("runtime_fatal_error", result[1])
+        self.assertIn("OutOfMemoryError", result[0])
+        self.assertEqual(1, probes)
+        self.assertTrue(drained)
+
+    def test_permanent_compaction_rejection_stops(self):
+        result, probes, _ = self.exercise_failure(["healthy"], log_line=
+            '[19:45:34] [Render thread/WARN]: Planner compaction failed message=Provider returned HTTP 400: invalid request')
+        self.assertEqual("runtime_fatal_error", result[1])
+        self.assertEqual(1, probes)
+
+    def test_transient_provider_error_and_quoted_error_text_do_not_stop(self):
+        for line in ('[19:45:34] [Render thread/WARN]: Planner compaction failed message=Provider returned HTTP 503: busy',
+                     '[19:45:34] [Render thread/INFO]: Planner said java.lang.OutOfMemoryError'):
+            result, probes, _ = self.exercise_failure(["healthy"], log_line=line)
+            self.assertEqual((None, "planner_degraded"), result)
+            self.assertEqual(2, probes)
+
+    def test_sustained_bridge_failure_stops_open_ended_run(self):
+        for error in (OSError("unreachable"), playtest.evaluation.BridgeHttpError("GET", "/v1/status", 500, {})):
+            result, probes, _ = self.exercise_failure([error, error, error])
+            self.assertEqual("bridge_unresponsive", result[1])
+            self.assertIn("60", result[0])
+            self.assertEqual(2, probes)
+
+    def test_recovered_bridge_clears_failure_timer(self):
+        error = OSError("temporary")
+        result, probes, _ = self.exercise_failure([error, "healthy", error])
+        self.assertEqual((None, "planner_degraded"), result)
+        self.assertEqual(4, probes)
 
 
 class PlaytestLiveDebugTest(unittest.TestCase):
