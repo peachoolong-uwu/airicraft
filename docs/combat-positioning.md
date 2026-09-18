@@ -10,21 +10,28 @@ An active swarm encounter uses a wider ten-block release distance (still capped
 by the configured radius), retaining briefly occluded pursuers. This prevents
 repeated release/reacquisition while circling along the six-block engagement edge.
 
-With two or more nearby threats, movement considers the whole pack. A bounded
-beam search projects short pursuit trajectories using each mob's movement attribute,
-velocity, and observed displacement. It scores exposure along the route, close contact,
-opposing attack directions, and dead ends. At adequate spacing, a consistent tangent
-around the pack is preferred, encouraging pursuers to converge on one side. Emergency
-separation takes precedence over circling. Attacks still select an in-range target;
-movement is no longer determined by that target alone. Shield defense remains active.
+Combat selects the nearest visible opponent and retains it until it disappears,
+loses line of sight, or moves beyond six blocks. Movement, camera facing, and attacks
+share this focus. It targets a 2.3–2.7-block center-distance band through the whole
+attack cooldown; both the next step and route endpoint are penalized for leaving
+three-block attack reach. This also applies to a lone melee opponent. Other mobs
+still contribute exposure, body collision, pincer, and dead-end costs, encouraging
+isolation of the focus without backing away from the entire pack. Ranged enemies
+do not become safer by retreating; navigation closes to melee range.
+
+A bounded beam search projects short pursuit trajectories using each mob's movement
+attribute, velocity, and observed displacement. At adequate spacing, a consistent
+tangent around the selected opponent is preferred. The original encounter anchor
+limits movement to six blocks; knockback outside it permits inward steps. Shield
+defense remains active. This spacing is a preference, not a guarantee against hits.
 
 The client adapter builds at most 128 connected feet cells within six horizontal
 blocks and two vertical blocks, using Baritone's actual cardinal traverse/ascend/
 descend costs. It rejects unloaded terrain, edits, hazards, fluids, drops greater
 than one block, and movements outside travel bounds. Search considers at most eight
 steps over 24 game ticks with a beam width of 24. It replans every six ticks or upon
-arrival and freshly checks the next movement before steering toward an exact adjacent waypoint. The player faces the visible threat
-group and backpedals or strafes along that route; an active shield keeps its incoming
+arrival and freshly checks the next movement before steering toward an exact adjacent waypoint. The player faces the selected
+opponent and backpedals or strafes along that route; an active shield keeps its incoming
 attack heading. Travel-time estimates exclude sprinting.
 No pathfinding settings are reset or loosened. An unavailable route means hold and
 defend, not blind backward movement.
@@ -36,4 +43,4 @@ teleportation are not predicted. Terrain can change after observation. Clusterin
 and survival improvement require live evidence, separate from the deterministic tests.
 
 `reflex.combat_reposition` events record the route, nearby count, selected risk and
-standing risk. Reflex decision evidence includes the search size and planning time.
+standing risk. Reflex decision evidence includes the selected target UUID, search size, and planning time.

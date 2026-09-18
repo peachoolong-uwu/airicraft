@@ -62,6 +62,7 @@ public final class SurvivalReflexRuntime {
 	private ShieldGuard shieldGuard;
 	private CombatStalemate combatStalemate;
 	private MinecraftCombatPositioning combatPositioning;
+	private final CombatFocus combatFocus = new CombatFocus();
 	private ReflexPolicy policyOverride;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
@@ -430,8 +431,7 @@ public final class SurvivalReflexRuntime {
 		if (snapshot.action() != SurvivalReflexAction.DEFEND) {
 			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
 		}
-		boolean usePositioning = shouldReposition(threats.size()) || combatPositioning != null
-			|| threats.stream().anyMatch(threat -> isRangedThreat(threat.entity()));
+		boolean usePositioning = shouldReposition(threats.size()) && baritone != null && baritone.isLoaded();
 		equipBestCombatItem(client, player);
 		if (blockShieldThreat(client, player, threats, tick)) {
 			if (usePositioning) reposition(client, threats, tick, true);
@@ -458,7 +458,7 @@ public final class SurvivalReflexRuntime {
 				reposition(client, threats, tick, false);
 			}
 			else if (!threats.isEmpty()) {
-				defend(client, player, closestVisibleThreat(threats), tick);
+				defend(client, player, focusedThreat(threats), tick);
 			}
 			else {
 				movementController.stop(client);
@@ -628,7 +628,7 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
-	static boolean shouldReposition(int threatCount) { return threatCount >= 2; }
+	static boolean shouldReposition(int threatCount) { return threatCount >= 1; }
 
 	private void reposition(MinecraftClient client, List<ResolvedThreat> threats, long tick, boolean shielding) {
 		if (baritone == null || !baritone.isLoaded()) {
@@ -640,7 +640,8 @@ public final class SurvivalReflexRuntime {
 			stopCombatNavigation();
 			combatPositioning = new MinecraftCombatPositioning();
 		}
-		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), tick, shielding);
+		var focus = focusedThreat(threats);
+		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), focus.entity(), tick, shielding);
 		var step = decision.nextStep();
 		if (step == null) {
 			stopCombatNavigation();
@@ -654,15 +655,7 @@ public final class SurvivalReflexRuntime {
 			return;
 		}
 		GoalPosition target = new GoalPosition(step.x(), step.y(), step.z(), true);
-		Vec3d facing = Vec3d.ZERO;
-		int visible = 0;
-		for (ResolvedThreat threat : threats) if (threat.lineOfSight()) {
-			facing = facing.add(threat.entity().getBoundingBox().getCenter());
-			visible++;
-		}
-		facing = visible == 0 ? closestVisibleThreat(threats).entity().getPos() : facing.multiply(1D / visible);
-		if (facing.subtract(client.player.getPos()).horizontalLength() < .5)
-			facing = closestVisibleThreat(threats).entity().getBoundingBox().getCenter();
+		Vec3d facing = focus.entity().getBoundingBox().getCenter();
 		// A raised shield keeps its selected shooter/blast heading; movement is relative to that heading.
 		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
 		cameraController.lookAtNow(client, facing);
@@ -751,7 +744,7 @@ public final class SurvivalReflexRuntime {
 		if (client.interactionManager == null || threats == null || threats.isEmpty()) {
 			return;
 		}
-		ResolvedThreat threat = closestVisibleThreat(threats);
+		ResolvedThreat threat = focusedThreat(threats);
 		float cooldown = player.getAttackCooldownProgress(0.0F);
 		if (!shouldAttackCloseThreat(threat.distance(), threat.lineOfSight(), cooldown)) {
 			return;
@@ -1035,6 +1028,12 @@ public final class SurvivalReflexRuntime {
 		return damageTypeId != null && (damageTypeId.equals("drown") || damageTypeId.endsWith(":drown"));
 	}
 
+	private ResolvedThreat focusedThreat(List<ResolvedThreat> threats) {
+		String id = combatFocus.select(threats.stream().map(t ->
+			new CombatFocus.Candidate(t.observed().uuid(), t.distance(), t.lineOfSight())).toList());
+		return threats.stream().filter(t -> t.observed().uuid().equals(id)).findFirst().orElseThrow();
+	}
+
 	private static ResolvedThreat closestVisibleThreat(List<ResolvedThreat> threats) {
 		return threats.stream()
 			.min((left, right) -> {
@@ -1047,6 +1046,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void resetSecurityProgress() {
+		combatFocus.clear();
 		combatPositioning = null;
 		secureEscapeTicks = 0;
 		mobRoutesTick = Long.MIN_VALUE;

@@ -26,11 +26,15 @@ class CombatPositioningTest {
 		assertEquals(new Steering(false, false, false, false), steering(0, 0, 0, 0, 0, 5));
 	}
 
-	@Test void escapesAcrossAPincerInsteadOfChargingEitherSide() {
+	@Test void isolatesOneSideOfAPincerWithoutRunningThroughEitherMob() {
 		var decision = choose(ORIGIN, grid(6, Set.of()), List.of(mob(-3, 0, .15), mob(3, 0, .15)), null);
 		assertNotNull(decision.nextStep());
-		assertEquals(0, decision.nextStep().x());
-		assertNotEquals(0, decision.nextStep().z());
+		assertTrue(Math.hypot(decision.nextStep().x() + 3, decision.nextStep().z()) >= 2);
+		assertTrue(Math.hypot(decision.nextStep().x() - 3, decision.nextStep().z()) >= 2);
+		for (Cell step : decision.route()) {
+			assertTrue(Math.hypot(step.x() + 3, step.z()) >= 1.2, decision.toString());
+			assertTrue(Math.hypot(step.x() - 3, step.z()) >= 1.2, decision.toString());
+		}
 		assertTrue(decision.risk() < decision.standingRisk());
 	}
 
@@ -39,7 +43,7 @@ class CombatPositioningTest {
 		var nearest = mob(2, 0, .1);
 		var one = choose(ORIGIN, graph, List.of(nearest), null);
 		var swarm = choose(ORIGIN, graph, List.of(nearest, mob(-4, -1, .2), mob(-4, 0, .2), mob(-4, 1, .2)), null);
-		assertTrue(one.route().getLast().x() <= 0, "Do not charge through the close attacker");
+		assertNotEquals(new Cell(1, 64, 0), one.nextStep(), "Do not charge through the close attacker");
 		assertNotEquals(one.nextStep(), swarm.nextStep());
 		assertNotEquals(new Cell(-1, 64, 0), swarm.nextStep(), "Do not retreat straight into the farther pack");
 	}
@@ -48,8 +52,9 @@ class CombatPositioningTest {
 		var graph = grid(6, Set.of());
 		// Two flankers approach an open north/south escape passage from the west.
 		graph.replaceAll((cell, edges) -> edges.stream().filter(edge -> edge.destination().x() == 0).toList());
-		var fastNorth = choose(ORIGIN, graph, List.of(mob(-4, -4, .3), mob(-4, 4, .02)), null);
-		var fastSouth = choose(ORIGIN, graph, List.of(mob(-4, -4, .02), mob(-4, 4, .3)), null);
+		var focus = mob(2.6, 0, 0);
+		var fastNorth = choose(ORIGIN, graph, List.of(focus, mob(-4, -4, .3), mob(-4, 4, .02)), null, ORIGIN, false, focus);
+		var fastSouth = choose(ORIGIN, graph, List.of(focus, mob(-4, -4, .02), mob(-4, 4, .3)), null, ORIGIN, false, focus);
 		assertTrue(fastNorth.route().getLast().z() > fastSouth.route().getLast().z(), () -> fastNorth + " versus " + fastSouth);
 	}
 
@@ -58,7 +63,7 @@ class CombatPositioningTest {
 		var graph = grid(5, blocked);
 		Cell disconnected = new Cell(-100, 64, 0);
 		graph.put(disconnected, List.of());
-		var result = choose(ORIGIN, graph, List.of(mob(2, -1, .12), mob(2, 1, .12)), null);
+		var result = choose(ORIGIN, graph, List.of(mob(1, -1, .12), mob(1, 1, .12)), null);
 		assertNotNull(result.nextStep());
 		assertFalse(result.route().contains(disconnected));
 		for (int i = 1; i < result.route().size(); i++) {
@@ -154,6 +159,18 @@ class CombatPositioningTest {
 		var result = choose(ORIGIN, grid(8, Set.of()),
 			List.of(mob(1, 0, 0), new Threat(5.5, 64, .5, .1, 2.4, true)), null, ORIGIN, true);
 		assertNotEquals(new Cell(1, 64, 0), result.nextStep(), result.toString());
+	}
+
+	@Test void focusRemainsWithinAttackReachAcrossCooldownReplans() {
+		var focus = mob(4, 0, 0);
+		var threats = List.of(focus, new Threat(6.5, 64, 3.5, 0, 2.4, true));
+		Cell position = ORIGIN;
+		for (int i = 0; i < 24; i++) {
+			var decision = choose(position, grid(8, Set.of()), threats, null, ORIGIN, i % 4 == 0, focus);
+			if (decision.nextStep() != null) position = decision.nextStep();
+			double distance = Math.hypot(focus.x() - position.x() - .5, focus.z() - position.z() - .5);
+			if (i >= 3) assertTrue(distance >= 2 && distance <= 3, decision.toString());
+		}
 	}
 
 	private static Threat mob(double x, double z, double speed) { return new Threat(x + .5, 64, z + .5, speed, 2.4); }

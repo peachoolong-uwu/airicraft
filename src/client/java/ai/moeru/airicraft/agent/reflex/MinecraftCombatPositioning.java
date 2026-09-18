@@ -32,6 +32,7 @@ final class MinecraftCombatPositioning {
 	private record Observation(Vec3d position, long tick) { }
 	private final Map<String, Observation> previous = new HashMap<>();
 	private CombatPositioning.Cell anchor;
+	private String plannedFocus;
 	private boolean plannedAttackReady;
 	private boolean plannedShielding;
 	private long plannedTick = Long.MIN_VALUE;
@@ -39,17 +40,18 @@ final class MinecraftCombatPositioning {
 	private int terrainCells;
 	private long planningNanos;
 
-	CombatPositioning.Decision plan(MinecraftClient client, List<LivingEntity> entities, long tick, boolean shielding) {
+	CombatPositioning.Decision plan(MinecraftClient client, List<LivingEntity> entities, LivingEntity focus, long tick, boolean shielding) {
 		var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
 		BlockPos feet = baritone.getPlayerContext().playerFeet();
 		CombatPositioning.Cell origin = cell(feet);
 		if (anchor == null) anchor = origin;
 		boolean attackReady = !shielding && client.player.getAttackCooldownProgress(0) >= .92F;
-		if (decision != null && attackReady == plannedAttackReady && shielding == plannedShielding && tick - plannedTick < REPLAN_TICKS
+		if (decision != null && focus.getUuidAsString().equals(plannedFocus) && attackReady == plannedAttackReady && shielding == plannedShielding && tick - plannedTick < REPLAN_TICKS
 			&& !origin.equals(decision.nextStep())) return decision;
 		long started = System.nanoTime();
 		var context = new CalculationContext(baritone);
 		List<CombatPositioning.Threat> threats = new ArrayList<>();
+		CombatPositioning.Threat focusThreat = null;
 		for (LivingEntity entity : entities) {
 			var attribute = entity.getAttributeInstance(EntityAttributes.MOVEMENT_SPEED);
 			double speed = Math.max(entity.getVelocity().horizontalLength(), attribute == null ? .1 : attribute.getValue() * 1.3);
@@ -58,14 +60,16 @@ final class MinecraftCombatPositioning {
 				entity.getPos().subtract(old.position()).horizontalLength() / (tick - old.tick()));
 			threats.add(new CombatPositioning.Threat(entity.getX(), entity.getY(), entity.getZ(), speed,
 				2.4 + Math.max(0, (entity.getWidth() - .6) / 2), SurvivalReflexRuntime.isRangedThreat(entity)));
+			if (entity == focus) focusThreat = threats.getLast();
 		}
 		previous.keySet().retainAll(entities.stream().map(LivingEntity::getUuidAsString).toList());
 		// Facing the pack uses walking/backpedaling, never a forward sprint away from it.
 		double slowdown = (context.canSprint ? 1.3 : 1) * (shielding ? 5 : 1);
 		Map<CombatPositioning.Cell, List<CombatPositioning.Edge>> graph = terrain(context, origin, slowdown);
 		terrainCells = graph.size();
-		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep(), anchor, attackReady);
+		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep(), anchor, attackReady, focusThreat);
 		plannedTick = tick;
+		plannedFocus = focus.getUuidAsString();
 		plannedAttackReady = attackReady;
 		plannedShielding = shielding;
 		planningNanos = System.nanoTime() - started;
@@ -76,6 +80,7 @@ final class MinecraftCombatPositioning {
 		Map<String, Object> evidence = new LinkedHashMap<>();
 		evidence.put("decision", decision);
 		evidence.put("anchor", anchor);
+		evidence.put("focusUuid", plannedFocus);
 		evidence.put("attackReady", plannedAttackReady);
 		evidence.put("terrainCells", terrainCells);
 		evidence.put("planningMicros", planningNanos / 1000);

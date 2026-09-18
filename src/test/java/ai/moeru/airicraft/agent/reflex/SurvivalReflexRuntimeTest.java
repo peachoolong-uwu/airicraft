@@ -23,7 +23,8 @@ class SurvivalReflexRuntimeTest {
 		assertFalse(policy.acceptsMob(false, 4, false));
 		assertFalse(policy.observesMob(17));
 		assertFalse(new ReflexPolicy(false, true, 16, true).observesMob(3));
-		assertFalse(SurvivalReflexRuntime.shouldReposition(1));
+		assertFalse(SurvivalReflexRuntime.shouldReposition(0));
+		assertTrue(SurvivalReflexRuntime.shouldReposition(1));
 		assertTrue(SurvivalReflexRuntime.shouldReposition(2));
 	}
 

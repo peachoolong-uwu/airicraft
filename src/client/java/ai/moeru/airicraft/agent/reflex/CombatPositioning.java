@@ -57,7 +57,13 @@ public final class CombatPositioning {
 
 	public static Decision choose(Cell origin, Map<Cell, List<Edge>> graph, List<Threat> threats,
 		Cell previousStep, Cell anchor, boolean attackReady) {
-		Route standing = scored(List.of(origin), 0, 0, threats, graph, threats, previousStep, anchor, attackReady);
+		Threat focus = threats.stream().min(Comparator.comparingDouble(t -> Math.hypot(t.x() - origin.x() - .5, t.z() - origin.z() - .5))).orElse(null);
+		return choose(origin, graph, threats, previousStep, anchor, attackReady, focus);
+	}
+
+	public static Decision choose(Cell origin, Map<Cell, List<Edge>> graph, List<Threat> threats,
+		Cell previousStep, Cell anchor, boolean attackReady, Threat focus) {
+		Route standing = scored(List.of(origin), 0, 0, threats, graph, threats, previousStep, anchor, attackReady, focus);
 		Route best = standing;
 		List<Route> beam = List.of(standing);
 		int expanded = 0;
@@ -74,7 +80,7 @@ public final class CombatPositioning {
 					cells.add(edge.destination());
 					Pursuit pursuit = pursue(route.end(), edge.destination(), edge.ticks(), route.pursuers());
 					Route next = scored(List.copyOf(cells), route.ticks() + edge.ticks(), route.exposure() + pursuit.exposure(),
-						pursuit.threats(), graph, threats, previousStep, anchor, attackReady);
+						pursuit.threats(), graph, threats, previousStep, anchor, attackReady, focus);
 					Arrival key = new Arrival(next.end(), cells.get(1), (int) (next.ticks() / 3));
 					Route existing = arrivals.get(key);
 					if (existing == null || ORDER.compare(next, existing) < 0) arrivals.put(key, next);
@@ -91,26 +97,36 @@ public final class CombatPositioning {
 		.thenComparing(route -> route.cells().toString());
 
 	private static Route scored(List<Cell> cells, double ticks, double exposure, List<Threat> pursuers,
-		Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep, Cell anchor, boolean attackReady) {
+		Map<Cell, List<Edge>> graph, List<Threat> threats, Cell previousStep, Cell anchor, boolean attackReady, Threat focus) {
 		Cell end = cells.getLast();
 		// Compare every route, including standing still, over the same time horizon.
 		Pursuit rest = pursue(end, end, HORIZON_TICKS - ticks, pursuers);
 		double score = (exposure + rest.exposure()) / HORIZON_TICKS + risk(end.x() + .5, end.z() + .5, 0, rest.threats()) * .3;
 		if (threats.size() > 1 && graph.getOrDefault(end, List.of()).size() <= 1) score += 5;
 		if (previousStep != null && cells.size() > 1 && !cells.get(1).equals(previousStep)) score += .5;
-		List<Threat> melee = threats.stream().filter(t -> !t.ranged()).toList();
-		if (!melee.isEmpty() && cells.size() > 1) {
-			score += orbitPenalty(cells.getFirst(), end, melee);
-			// Replanning executes only the first hop; a curved endpoint must not hide repeated backsteps.
-			score += orbitPenalty(cells.getFirst(), cells.get(1), melee) * 2;
+		if (focus != null) {
+			// One selected opponent owns the fighting distance, including during cooldown.
+			// Other threats retain their exposure/pincer costs but cannot change the target.
+			score += engagementPenalty(end, focus);
+			score += engagementPenalty(cells.size() > 1 ? cells.get(1) : end, focus);
+			if (cells.size() > 1 && !focus.ranged()) {
+				score += orbitPenalty(cells.getFirst(), end, List.of(focus));
+				score += orbitPenalty(cells.getFirst(), cells.get(1), List.of(focus)) * 2;
+			}
+			double distance = Math.hypot(focus.x() - end.x() - .5, focus.z() - end.z() - .5);
+			if (attackReady && distance >= 2 && distance <= 2.8) score -= 12;
 		}
-		List<Threat> ranged = threats.stream().filter(Threat::ranged).toList();
-		double nearest = (ranged.isEmpty() ? threats : ranged).stream().mapToDouble(t -> Math.hypot(t.x() - end.x() - .5, t.z() - end.z() - .5)).min().orElse(0);
-		// Stay at fighting distance; exploit a ready swing rather than maximizing separation.
-		score += Math.pow(Math.max(0, nearest - (!ranged.isEmpty() ? 2.5 : attackReady ? 2.8 : 3.5)), 2) * 12;
-		if (attackReady && nearest >= 2 && nearest <= 3) score -= 12;
 		score += Math.pow(Math.max(0, distance(end, anchor) - 3), 2) * 2;
 		return new Route(cells, ticks, exposure, pursuers, score);
+	}
+
+	private static double engagementPenalty(Cell cell, Threat focus) {
+		double distance = Math.sqrt(Math.pow(focus.x() - cell.x() - .5, 2)
+			+ Math.pow(focus.y() - cell.y(), 2) + Math.pow(focus.z() - cell.z() - .5, 2));
+		// Crossing the attack cutoff loses an entire strike, not just a little spacing.
+		return Math.pow(Math.max(0, distance - 2.7), 2) * 16
+			+ (distance > 3 ? 30 : 0)
+			+ Math.pow(Math.max(0, 2.3 - distance), 2) * 40;
 	}
 
 	private static Pursuit pursue(Cell from, Cell to, double duration, List<Threat> threats) {
