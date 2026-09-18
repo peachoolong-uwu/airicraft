@@ -21,6 +21,14 @@ still contribute exposure, body collision, pincer, and dead-end costs, encouragi
 isolation of the focus without backing away from the entire pack. Ranged enemies
 do not become safer by retreating; navigation closes to melee range.
 
+For a melee target already approaching within 3.5 blocks, next-step spacing uses
+its measured horizontal velocity to anticipate up to four ticks of motion, capped
+at half a block. This favors a sidestep, short backstep, or hold over walking into
+a charge. Route endpoints still use current target distance and the same attack
+reach penalty and encounter anchor. Stationary, departing, and ranged opponents
+receive no interception offset. A meaningful velocity change invalidates the
+cached movement decision, including after knockback.
+
 A bounded beam search projects short pursuit trajectories using each mob's movement
 attribute, velocity, and observed displacement. At adequate spacing, a consistent
 tangent around the selected opponent is preferred. The original encounter anchor

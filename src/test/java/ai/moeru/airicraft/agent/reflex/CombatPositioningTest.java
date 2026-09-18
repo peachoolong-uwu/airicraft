@@ -173,6 +173,42 @@ class CombatPositioningTest {
 		}
 	}
 
+	@Test void approachingMeleeTargetIsAnticipatedOnlyHalfABlockAhead() {
+		var charging = new Threat(3.7, 64, .5, .3, 2.4, false, -.3, 0);
+		assertEquals(3.2, interceptFocus(ORIGIN, charging).x(), .0001);
+		var leaving = new Threat(3.7, 64, .5, .3, 2.4, false, .3, 0);
+		assertEquals(leaving, interceptFocus(ORIGIN, leaving));
+		var shooter = new Threat(3.7, 64, .5, .3, 2.4, true, -.3, 0);
+		assertEquals(shooter, interceptFocus(ORIGIN, shooter));
+	}
+
+	@Test void imminentChargePrefersSidestepOrShortRetreatOverClosing() {
+		for (boolean ready : new boolean[]{true, false}) {
+			var charging = new Threat(3.7, 64, .5, .3, 2.4, false, -.3, 0);
+			var decision = choose(ORIGIN, grid(8, Set.of()), List.of(charging), null, ORIGIN, ready, charging);
+			assertTrue(decision.nextStep() == null || decision.nextStep().x() <= 0, decision.toString());
+			if (decision.nextStep() != null) {
+				var predicted = interceptFocus(ORIGIN, charging);
+				assertTrue(Math.hypot(predicted.x() - decision.nextStep().x() - .5,
+					predicted.z() - decision.nextStep().z() - .5) <= 3, decision.toString());
+			}
+		}
+	}
+
+	@Test void stoppingChargeDoesNotLeaveAFighterRetreating() {
+		var charging = new Threat(2.9, 64, .5, .3, 2.4, false, -.3, 0);
+		var first = choose(ORIGIN, grid(8, Set.of()), List.of(charging), null, ORIGIN, false, charging);
+		assertTrue(first.nextStep() == null || first.nextStep().x() <= 0, first.toString());
+		Cell position = first.nextStep() == null ? ORIGIN : first.nextStep();
+		var stopped = new Threat(2.9, 64, .5, 0, 2.4);
+		for (int i = 0; i < 12; i++) {
+			var decision = choose(position, grid(8, Set.of()), List.of(stopped), null, ORIGIN, i % 4 == 0, stopped);
+			if (decision.nextStep() != null) position = decision.nextStep();
+			if (i >= 3) assertTrue(Math.hypot(stopped.x() - position.x() - .5, stopped.z() - position.z() - .5) <= 3,
+				decision.toString());
+		}
+	}
+
 	private static Threat mob(double x, double z, double speed) { return new Threat(x + .5, 64, z + .5, speed, 2.4); }
 	private static Map<Cell, List<Edge>> grid(int radius, Set<Cell> blocked) {
 		var graph = new LinkedHashMap<Cell, List<Edge>>();

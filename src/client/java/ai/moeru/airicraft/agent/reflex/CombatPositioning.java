@@ -19,12 +19,15 @@ public final class CombatPositioning {
 			if (!Double.isFinite(ticks) || ticks <= 0) throw new IllegalArgumentException("positive finite travel time required");
 		}
 	}
-	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged) {
+	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged, double velocityX, double velocityZ) {
+		public Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged) {
+			this(x, y, z, blocksPerTick, reach, ranged, 0, 0);
+		}
 		public Threat(double x, double y, double z, double blocksPerTick, double reach) {
 			this(x, y, z, blocksPerTick, reach, false);
 		}
 		public Threat {
-			if (!Double.isFinite(x + y + z + blocksPerTick + reach) || blocksPerTick < 0 || reach < 0)
+			if (!Double.isFinite(x + y + z + blocksPerTick + reach + velocityX + velocityZ) || blocksPerTick < 0 || reach < 0)
 				throw new IllegalArgumentException("finite position, nonnegative speed and reach required");
 		}
 	}
@@ -108,7 +111,7 @@ public final class CombatPositioning {
 			// One selected opponent owns the fighting distance, including during cooldown.
 			// Other threats retain their exposure/pincer costs but cannot change the target.
 			score += engagementPenalty(end, focus);
-			score += engagementPenalty(cells.size() > 1 ? cells.get(1) : end, focus);
+			score += engagementPenalty(cells.size() > 1 ? cells.get(1) : end, interceptFocus(cells.getFirst(), focus));
 			if (cells.size() > 1 && !focus.ranged()) {
 				score += orbitPenalty(cells.getFirst(), end, List.of(focus));
 				score += orbitPenalty(cells.getFirst(), cells.get(1), List.of(focus)) * 2;
@@ -118,6 +121,18 @@ public final class CombatPositioning {
 		}
 		score += Math.pow(Math.max(0, distance(end, anchor) - 3), 2) * 2;
 		return new Route(cells, ticks, exposure, pursuers, score);
+	}
+
+	/** Only anticipate an approaching melee target over the next steering update, never a long chase. */
+	static Threat interceptFocus(Cell origin, Threat focus) {
+		double dx = origin.x() + .5 - focus.x(), dz = origin.z() + .5 - focus.z();
+		double distance = Math.hypot(dx, dz);
+		double speed = Math.hypot(focus.velocityX(), focus.velocityZ());
+		if (focus.ranged() || distance > 3.5 || speed == 0
+			|| dx * focus.velocityX() + dz * focus.velocityZ() <= 0) return focus;
+		double ticks = Math.min(4, .5 / speed);
+		return new Threat(focus.x() + focus.velocityX() * ticks, focus.y(), focus.z() + focus.velocityZ() * ticks,
+			focus.blocksPerTick(), focus.reach(), focus.ranged(), focus.velocityX(), focus.velocityZ());
 	}
 
 	private static double engagementPenalty(Cell cell, Threat focus) {

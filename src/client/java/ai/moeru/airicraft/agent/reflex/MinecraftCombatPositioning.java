@@ -33,6 +33,7 @@ final class MinecraftCombatPositioning {
 	private final Map<String, Observation> previous = new HashMap<>();
 	private CombatPositioning.Cell anchor;
 	private String plannedFocus;
+	private Vec3d plannedFocusVelocity = Vec3d.ZERO;
 	private boolean plannedAttackReady;
 	private boolean plannedShielding;
 	private long plannedTick = Long.MIN_VALUE;
@@ -47,6 +48,7 @@ final class MinecraftCombatPositioning {
 		if (anchor == null) anchor = origin;
 		boolean attackReady = !shielding && client.player.getAttackCooldownProgress(0) >= .92F;
 		if (decision != null && focus.getUuidAsString().equals(plannedFocus) && attackReady == plannedAttackReady && shielding == plannedShielding && tick - plannedTick < REPLAN_TICKS
+			&& focus.getVelocity().subtract(plannedFocusVelocity).horizontalLengthSquared() < .01
 			&& !origin.equals(decision.nextStep())) return decision;
 		long started = System.nanoTime();
 		var context = new CalculationContext(baritone);
@@ -59,7 +61,7 @@ final class MinecraftCombatPositioning {
 			if (old != null && tick > old.tick()) speed = Math.max(speed,
 				entity.getPos().subtract(old.position()).horizontalLength() / (tick - old.tick()));
 			threats.add(new CombatPositioning.Threat(entity.getX(), entity.getY(), entity.getZ(), speed,
-				2.4 + Math.max(0, (entity.getWidth() - .6) / 2), SurvivalReflexRuntime.isRangedThreat(entity)));
+				2.4 + Math.max(0, (entity.getWidth() - .6) / 2), SurvivalReflexRuntime.isRangedThreat(entity), entity.getVelocity().x, entity.getVelocity().z));
 			if (entity == focus) focusThreat = threats.getLast();
 		}
 		previous.keySet().retainAll(entities.stream().map(LivingEntity::getUuidAsString).toList());
@@ -70,6 +72,7 @@ final class MinecraftCombatPositioning {
 		decision = CombatPositioning.choose(origin, graph, threats, decision == null ? null : decision.nextStep(), anchor, attackReady, focusThreat);
 		plannedTick = tick;
 		plannedFocus = focus.getUuidAsString();
+		plannedFocusVelocity = focus.getVelocity();
 		plannedAttackReady = attackReady;
 		plannedShielding = shielding;
 		planningNanos = System.nanoTime() - started;
