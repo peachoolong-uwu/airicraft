@@ -430,9 +430,11 @@ public final class SurvivalReflexRuntime {
 		if (snapshot.action() != SurvivalReflexAction.DEFEND) {
 			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
 		}
+		boolean usePositioning = shouldReposition(threats.size()) || combatPositioning != null
+			|| threats.stream().anyMatch(threat -> isRangedThreat(threat.entity()));
 		equipBestCombatItem(client, player);
 		if (blockShieldThreat(client, player, threats, tick)) {
-			if (shouldReposition(threats.size()) || combatPositioning != null) reposition(client, threats, tick, true);
+			if (usePositioning) reposition(client, threats, tick, true);
 			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
 			return;
 		}
@@ -452,7 +454,7 @@ public final class SurvivalReflexRuntime {
 		}
 		secureEscapeTicks = 0;
 		try {
-			if (shouldReposition(threats.size()) || combatPositioning != null) {
+			if (usePositioning) {
 				reposition(client, threats, tick, false);
 			}
 			else if (!threats.isEmpty()) {
@@ -1163,7 +1165,7 @@ public final class SurvivalReflexRuntime {
 		}
 	}
 
-	private static boolean isRangedThreat(LivingEntity entity) {
+	static boolean isRangedThreat(LivingEntity entity) {
 		return isRangedThreat(Registries.ENTITY_TYPE.getId(entity.getType()).toString(),
 			Registries.ITEM.getId(entity.getMainHandStack().getItem()).toString(),
 			entity instanceof RangedAttackMob || entity instanceof CrossbowUser);

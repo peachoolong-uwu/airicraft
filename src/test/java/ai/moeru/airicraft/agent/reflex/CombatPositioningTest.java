@@ -134,6 +134,28 @@ class CombatPositioningTest {
 		assertTrue(result.nextStep().x() < 8, result.toString());
 	}
 
+	@Test void approachesRangedThreatEvenWhileAttackIsRecharging() {
+		var shooter = new Threat(5.5, 64, .5, .3, 2.4, true);
+		for (boolean ready : new boolean[]{false, true}) {
+			var result = choose(ORIGIN, grid(8, Set.of()), List.of(shooter), null, ORIGIN, ready);
+			assertNotNull(result.nextStep());
+			assertEquals(1, result.nextStep().x(), result.toString());
+		}
+	}
+
+	@Test void rangedThreatDoesNotRewardRetreatOrInventMeleePursuit() {
+		var shooter = new Threat(5.5, 64, .5, .3, 2.4, true);
+		assertEquals(risk(.5, .5, 0, List.of(shooter)), risk(-4.5, .5, 24, List.of(shooter)));
+		var result = choose(ORIGIN, grid(8, Set.of()), List.of(shooter, new Threat(5.5, 64, 2.5, .3, 2.4, true)), null, ORIGIN, false);
+		assertTrue(result.nextStep().x() > 0, result.toString());
+	}
+
+	@Test void doesNotChargeThroughMeleeBodyToReachShooter() {
+		var result = choose(ORIGIN, grid(8, Set.of()),
+			List.of(mob(1, 0, 0), new Threat(5.5, 64, .5, .1, 2.4, true)), null, ORIGIN, true);
+		assertNotEquals(new Cell(1, 64, 0), result.nextStep(), result.toString());
+	}
+
 	private static Threat mob(double x, double z, double speed) { return new Threat(x + .5, 64, z + .5, speed, 2.4); }
 	private static Map<Cell, List<Edge>> grid(int radius, Set<Cell> blocked) {
 		var graph = new LinkedHashMap<Cell, List<Edge>>();

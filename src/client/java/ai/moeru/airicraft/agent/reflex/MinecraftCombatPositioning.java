@@ -57,7 +57,7 @@ final class MinecraftCombatPositioning {
 			if (old != null && tick > old.tick()) speed = Math.max(speed,
 				entity.getPos().subtract(old.position()).horizontalLength() / (tick - old.tick()));
 			threats.add(new CombatPositioning.Threat(entity.getX(), entity.getY(), entity.getZ(), speed,
-				2.4 + Math.max(0, (entity.getWidth() - .6) / 2)));
+				2.4 + Math.max(0, (entity.getWidth() - .6) / 2), SurvivalReflexRuntime.isRangedThreat(entity)));
 		}
 		previous.keySet().retainAll(entities.stream().map(LivingEntity::getUuidAsString).toList());
 		// Facing the pack uses walking/backpedaling, never a forward sprint away from it.

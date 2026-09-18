@@ -19,7 +19,10 @@ public final class CombatPositioning {
 			if (!Double.isFinite(ticks) || ticks <= 0) throw new IllegalArgumentException("positive finite travel time required");
 		}
 	}
-	public record Threat(double x, double y, double z, double blocksPerTick, double reach) {
+	public record Threat(double x, double y, double z, double blocksPerTick, double reach, boolean ranged) {
+		public Threat(double x, double y, double z, double blocksPerTick, double reach) {
+			this(x, y, z, blocksPerTick, reach, false);
+		}
 		public Threat {
 			if (!Double.isFinite(x + y + z + blocksPerTick + reach) || blocksPerTick < 0 || reach < 0)
 				throw new IllegalArgumentException("finite position, nonnegative speed and reach required");
@@ -95,14 +98,16 @@ public final class CombatPositioning {
 		double score = (exposure + rest.exposure()) / HORIZON_TICKS + risk(end.x() + .5, end.z() + .5, 0, rest.threats()) * .3;
 		if (threats.size() > 1 && graph.getOrDefault(end, List.of()).size() <= 1) score += 5;
 		if (previousStep != null && cells.size() > 1 && !cells.get(1).equals(previousStep)) score += .5;
-		if (!threats.isEmpty() && cells.size() > 1) {
-			score += orbitPenalty(cells.getFirst(), end, threats);
+		List<Threat> melee = threats.stream().filter(t -> !t.ranged()).toList();
+		if (!melee.isEmpty() && cells.size() > 1) {
+			score += orbitPenalty(cells.getFirst(), end, melee);
 			// Replanning executes only the first hop; a curved endpoint must not hide repeated backsteps.
-			score += orbitPenalty(cells.getFirst(), cells.get(1), threats) * 2;
+			score += orbitPenalty(cells.getFirst(), cells.get(1), melee) * 2;
 		}
-		double nearest = threats.stream().mapToDouble(t -> Math.hypot(t.x() - end.x() - .5, t.z() - end.z() - .5)).min().orElse(0);
+		List<Threat> ranged = threats.stream().filter(Threat::ranged).toList();
+		double nearest = (ranged.isEmpty() ? threats : ranged).stream().mapToDouble(t -> Math.hypot(t.x() - end.x() - .5, t.z() - end.z() - .5)).min().orElse(0);
 		// Stay at fighting distance; exploit a ready swing rather than maximizing separation.
-		score += Math.pow(Math.max(0, nearest - (attackReady ? 2.8 : 3.5)), 2) * 12;
+		score += Math.pow(Math.max(0, nearest - (!ranged.isEmpty() ? 2.5 : attackReady ? 2.8 : 3.5)), 2) * 12;
 		if (attackReady && nearest >= 2 && nearest <= 3) score -= 12;
 		score += Math.pow(Math.max(0, distance(end, anchor) - 3), 2) * 2;
 		return new Route(cells, ticks, exposure, pursuers, score);
@@ -119,9 +124,9 @@ public final class CombatPositioning {
 			var advanced = new ArrayList<Threat>(threats.size());
 			for (Threat threat : threats) {
 				double dx = x - threat.x(), dz = z - threat.z(), distance = Math.hypot(dx, dz);
-				double move = Math.min(Math.max(0, distance - threat.reach() * .75), threat.blocksPerTick() * duration / samples);
+				double move = threat.ranged() ? 0 : Math.min(Math.max(0, distance - threat.reach() * .75), threat.blocksPerTick() * duration / samples);
 				double ratio = distance < .001 ? 0 : move / distance;
-				advanced.add(new Threat(threat.x() + dx * ratio, threat.y(), threat.z() + dz * ratio, threat.blocksPerTick(), threat.reach()));
+				advanced.add(new Threat(threat.x() + dx * ratio, threat.y(), threat.z() + dz * ratio, threat.blocksPerTick(), threat.reach(), threat.ranged()));
 			}
 			threats = advanced;
 			total += risk(x, z, 0, threats);
@@ -158,11 +163,13 @@ public final class CombatPositioning {
 			// Horizontal pressure is conservative across elevation; no claim of an exact mob AI route.
 			double clearance = distance - threat.reach() - threat.blocksPerTick() * ticks;
 			double urgency = Math.clamp((8 - clearance) / 8, 0, 1);
-			pressure += 1 / Math.pow(1 + Math.max(0, clearance), 2) + Math.min(8, Math.max(0, -clearance)) * 1.5;
+			// Distance does not remove a shooter's pressure: do not reward backing away from arrows.
+			pressure += threat.ranged() ? 1 : 1 / Math.pow(1 + Math.max(0, clearance), 2) + Math.min(8, Math.max(0, -clearance)) * 1.5;
 			// Do not treat passing through an entity's body as a cheap way out of a pincer.
 			pressure += Math.pow(Math.max(0, 1.2 - distance), 2) * 30;
 			for (int j = 0; j < i; j++) {
 				Threat other = threats.get(j);
+				if (threat.ranged() || other.ranged()) continue;
 				double ox = other.x() - x, oz = other.z() - z, od = Math.hypot(ox, oz);
 				double opposite = distance < .01 || od < .01 ? 1 : Math.max(0, -(dx * ox + dz * oz) / (distance * od));
 				double otherUrgency = Math.clamp((8 - od + other.reach() + other.blocksPerTick() * ticks) / 8, 0, 1);
