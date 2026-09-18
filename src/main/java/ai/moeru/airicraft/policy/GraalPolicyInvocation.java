@@ -44,13 +44,20 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 	private static final String KERNEL = """
 		(() => {
 		  let iterator;
-		  const policy = Object.freeze({
+		  const policy = {
+		    describe: name => ({operation: 'describe_tool', arguments: {name}}),
 		    observeContainer: () => ({operation: 'observe_container', arguments: {}}),
 		    withdraw: (syncId, items) => ({operation: 'withdraw', arguments: {syncId, items}}),
-		    closeContainer: syncId => ({operation: 'close_container', arguments: {syncId}})
-		  });
+		    closeContainer: syncId => typeof syncId === 'number'
+		      ? ({operation: 'close_container', arguments: {syncId}})
+		      : ({operation: 'call_tool', arguments: {name: 'close_container', args: syncId || {}}})
+		  };
 		  return {
-		    initialize(factory, input) {
+		    initialize(factory, input, methods) {
+		      for (const [method, name] of Object.entries(JSON.parse(methods))) {
+		        if (!(method in policy)) policy[method] = (args = {}) => ({operation: 'call_tool', arguments: {name, args}});
+		      }
+		      Object.freeze(policy);
 		      const main = factory();
 		      if (typeof main !== 'function') throw Error('Define function* main(policy, input)');
 		      iterator = main(policy, JSON.parse(input));
@@ -99,7 +106,7 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 			if (closed.get()) { context.close(true); throw new IllegalStateException("policy_cancelled"); }
 			guest = context.eval("js", query ? QUERY_KERNEL : KERNEL);
 			Value factory = context.eval("js", "(function() { 'use strict';\n" + source + "\n; return " + (query ? "query" : "main") + "; })");
-			guest.invokeMember("initialize", factory, encoded);
+			guest.invokeMember("initialize", factory, encoded, new com.google.gson.Gson().toJson(PolicyTools.methods()));
 			return null;
 		}, 10);
 	}

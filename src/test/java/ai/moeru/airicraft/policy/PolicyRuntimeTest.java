@@ -105,7 +105,7 @@ class PolicyRuntimeTest {
 				return outcome.get() != null;
 			});
 			assertEquals("policy_effect_limit", outcome.get().reason());
-			assertEquals(32, host.calls.size());
+			assertEquals(PolicyRuntime.MAX_EFFECTS, host.calls.size());
 		}
 	}
 

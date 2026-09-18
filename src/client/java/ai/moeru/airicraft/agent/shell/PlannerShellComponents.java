@@ -8,6 +8,7 @@ public record PlannerShellComponents(
 	CurrentViewVisionService visionService,
 	DialogueRuntime dialogueRuntime,
 	PlannerShellJournal plannerJournal,
-	PlannerCallJournal plannerCallJournal
+	PlannerCallJournal plannerCallJournal,
+	ai.moeru.airicraft.agent.llm.PlannerOrchestrator controllerPlanner
 ) {
 }

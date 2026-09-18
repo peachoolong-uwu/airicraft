@@ -254,7 +254,7 @@ public final class PlannerShellFactory {
 			thinker.shareGenerationSequence(generations);
 			dialogue.configureDelegation(thinker, handoff);
 		}
-		return new PlannerShellComponents(visionService, dialogue, journal, plannerCallJournal);
+		return new PlannerShellComponents(visionService, dialogue, journal, plannerCallJournal, orchestrator);
 	}
 
 	private static PlannerOrchestrator createOrchestrator(AgentConfig.LlmConfig llm, PlannerToolRegistry tools,

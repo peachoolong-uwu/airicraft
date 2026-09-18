@@ -11,6 +11,8 @@ import java.util.function.Consumer;
 
 /** Client-thread coordinator. A yielded effect resumes only after the host's terminal result. */
 public final class PolicyRuntime implements AutoCloseable {
+	public static final int MAX_TICKS = 12_000;
+	public static final int MAX_EFFECTS = 128;
 	public interface Host extends AutoCloseable {
 		CompletableFuture<JsonElement> execute(JsonObject effect);
 		default void tick() { }
@@ -37,7 +39,7 @@ public final class PolicyRuntime implements AutoCloseable {
 
 	public void tick() {
 		if (!active()) return;
-		if (++ticks > 1200) { finish("FAILED", "policy_tick_limit", JsonNull.INSTANCE); return; }
+		if (++ticks > MAX_TICKS) { finish("FAILED", "policy_tick_limit", JsonNull.INSTANCE); return; }
 		try {
 			host.tick();
 			if (!pending.isDone()) return;
@@ -49,7 +51,7 @@ public final class PolicyRuntime implements AutoCloseable {
 			} else {
 				JsonObject step = value.getAsJsonObject();
 				if (step.get("done").getAsBoolean()) { finish("SUCCEEDED", "returned", step.get("value")); return; }
-				if (effects.size() >= 32) { finish("FAILED", "policy_effect_limit", JsonNull.INSTANCE); return; }
+				if (effects.size() >= MAX_EFFECTS) { finish("FAILED", "policy_effect_limit", JsonNull.INSTANCE); return; }
 				JsonObject effect = step.getAsJsonObject("value");
 				effects.add(effect.deepCopy());
 				pending = host.execute(effect);

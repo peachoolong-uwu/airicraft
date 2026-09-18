@@ -268,6 +268,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final boolean codexDriverActive;
 	private ai.moeru.airicraft.policy.PolicyRuntime policyRuntime;
 	private ai.moeru.airicraft.agent.work.WorkHandle policyWork;
+	private final ai.moeru.airicraft.agent.llm.PlannerOrchestrator policyToolDispatcher;
+	private boolean dispatchingPolicyTool;
+	private final java.util.Set<ai.moeru.airicraft.agent.work.WorkHandle> policyChildren = new java.util.HashSet<>();
 
 	private boolean initialized;
 	private volatile long tickCount;
@@ -347,6 +350,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			);
 		this.visionService = plannerShell.visionService();
 		this.dialogueRuntime = plannerShell.dialogueRuntime();
+		this.policyToolDispatcher = plannerShell.controllerPlanner();
 		ai.moeru.airicraft.memory.InteractionLogbookRecorder.observe((server, entries) -> {
 			if (!pendingInteractions.offer(new ObservedInteractions(server, entries))) droppedInteractionBatches.incrementAndGet();
 		});
@@ -546,10 +550,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return;
 		}
 
-		if (policyActive()) {
+		if (policyActive() && !activeTaskInProgress() && !actionGraphCoordinator.hasNonterminal()) {
 			behaviorTreeRuntime.stop(client);
 			lastKnownPlayerHealth = currentPlayerHealth(client);
-			return; // The policy owns normal actuation; its host is advanced after work refresh.
+			return; // Between child actions, the policy owns the foreground lane.
 		}
 
 		TaskSnapshot previousTaskSnapshot = taskSnapshot;
@@ -2327,7 +2331,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	@Override
 	public CompletableFuture<String> execute(PlannerToolCall toolCall) {
-		if (policyRuntime != null && policyRuntime.active() && toolCall != null
+		if (!dispatchingPolicyTool && policyRuntime != null && policyRuntime.active() && toolCall != null
 			&& !PlannerToolCatalog.isReadTool(toolCall.name())
 			&& !List.of("inspect_work", "list_work", "cancel_work", "wait_for_work", "configure_reflex").contains(toolCall.name())) {
 			return CompletableFuture.completedFuture("TOOL_ERROR: policy_active; inspect or cancel workId=" + policyWork.id());
@@ -2340,7 +2344,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		requireLivingPlayerForAction();
 		if (survivalReflexRuntime.snapshot().holdId() != null) throw new IllegalStateException("work_in_safety_hold");
 		if (activeTaskInProgress() || actionGraphCoordinator.hasNonterminal()) throw new IllegalStateException("active_task_in_progress");
-		var host = new ContainerPolicyHost(MinecraftClient.getInstance());
+		if (MinecraftClient.getInstance() == null || MinecraftClient.getInstance().world == null)
+			throw new IllegalStateException("world_not_loaded");
+		policyChildren.clear();
+		var host = new ToolPolicyHost(this::dispatchPolicyTool, this::describePolicyTool, workHistory::find,
+			this::cancelPolicyChildren, () -> new ContainerPolicyHost(MinecraftClient.getInstance()));
 		var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, java.util.UUID.randomUUID().toString());
 		String source = call.arguments().get("source").getAsString();
 		var input = call.arguments().get("input").deepCopy();
@@ -2375,8 +2383,71 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (!sessionSnapshot.companionActuationAllowed() || sessionSnapshot.requiresRespawn()) cancelPolicy("world_or_player_unavailable");
 		else if (survivalReflexRuntime.snapshot().holdId() != null
 			|| survivalReflexRuntime.snapshot().state() == SurvivalReflexState.ACTIVE) cancelPolicy("safety_interruption");
-		else if (activeTaskInProgress() || actionGraphCoordinator.hasNonterminal()) cancelPolicy("actuator_ownership_changed");
+		else if (workHistory.list().stream().anyMatch(work -> work.foreground() && !work.state().terminal()
+			&& !work.handle().equals(policyWork) && !policyOwns(work.handle()))) cancelPolicy("actuator_ownership_changed");
 		else policyRuntime.tick();
+	}
+
+	private com.google.gson.JsonElement describePolicyTool(String name) {
+		return policyToolDispatcher.allAvailableTools().stream()
+			.filter(schema -> ((Map<?, ?>) schema.get("function")).get("name").equals(name))
+			.findFirst().map(schema -> new com.google.gson.Gson().toJsonTree(schema.get("function")))
+			.orElseThrow(() -> new IllegalArgumentException("tool_unavailable: " + name));
+	}
+
+	private CompletableFuture<ai.moeru.airicraft.agent.llm.ExternalPlannerToolResult> dispatchPolicyTool(String name, JsonObject args) {
+		// All action admissions happen synchronously on the client thread; later futures only report outcomes.
+		refreshWorkHistory();
+		var before = workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::handle).collect(java.util.stream.Collectors.toSet());
+		dispatchingPolicyTool = true;
+		try {
+			return policyToolDispatcher.executeExternalTool(name, args);
+		} finally {
+			dispatchingPolicyTool = false;
+			refreshWorkHistory();
+			for (var child : workHistory.list()) {
+				// Furnace processes outlive the insertion job and remain independently inspectable/collectable.
+				if (!before.contains(child.handle()) && child.handle().kind() != ai.moeru.airicraft.agent.work.WorkHandle.Kind.SMELTING) {
+					policyChildren.add(child.handle());
+					if (child.parentWorkId().isBlank()) recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(
+						child.handle(), policyWork.id(), child.state(), child.label(), child.phase(), child.foreground(), child.updatedTick(), child.details()));
+				}
+			}
+		}
+	}
+
+	private boolean policyOwns(ai.moeru.airicraft.agent.work.WorkHandle handle) {
+		if (policyChildren.contains(handle)) return true;
+		return workHistory.find(handle).filter(work -> !work.parentWorkId().isBlank())
+			.map(work -> work.parentWorkId().equals(policyWork.id())
+				|| policyChildren.contains(new ai.moeru.airicraft.agent.work.WorkHandle(work.parentWorkId()))).orElse(false);
+	}
+
+	private void cancelPolicyChildren() {
+		var client = MinecraftClient.getInstance();
+		for (var handle : policyChildren) {
+			if (handle.kind() == ai.moeru.airicraft.agent.work.WorkHandle.Kind.GRAPH)
+				actionGraphCoordinator.cancel(handle.nativeId(), "policy_finished", tickCount);
+		}
+		var job = activeJobRuntime.current();
+		if (job != null && activeTaskInProgress()
+			&& policyOwns(ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.JOB, job.jobId()))) {
+			activeJobRuntime.cancel("policy_finished", tickCount);
+			taskSnapshot = activeJobRuntime.taskSnapshot();
+			missionExecutionSnapshot = activeJobRuntime.missionExecutionSnapshot();
+			worldTaskExecutor.onWorldLeave();
+			behaviorTreeRuntime.stop(client);
+			completePendingCraftToolResult("TOOL_ERROR: policy_cancelled");
+			cancelPendingBlockModificationToolResult(PendingBlockModificationStopReason.POLICY_CANCELLED);
+		}
+		for (var handle : policyChildren) {
+			workHistory.find(handle).filter(work -> !work.state().terminal() && work.phase().equals("EATING"))
+				.ifPresent(work -> {
+					playerItemUseController.reset(client);
+					recordWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, work.parentWorkId(),
+						ai.moeru.airicraft.agent.work.WorkSnapshot.State.CANCELLED, work.label(), "CANCELLED", false, tickCount, Map.of("reason", "policy_finished")));
+				});
+		}
 	}
 
 	private void drainInteractionEvidence(MinecraftClient client) {
@@ -5478,6 +5549,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	}
 
 	private enum PendingBlockModificationStopReason {
+		POLICY_CANCELLED("policy_cancelled"),
 		WORLD_LEFT("world_left"),
 		RUNTIME_SHUTDOWN("runtime_shutdown"),
 		EVALUATION_FINISHED("evaluation_finished"),

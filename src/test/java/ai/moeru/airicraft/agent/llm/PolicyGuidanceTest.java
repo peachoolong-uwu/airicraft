@@ -84,7 +84,7 @@ class PolicyGuidanceTest {
 	private static Result run(int example, String input, String inventory, String container) throws Exception {
 		var sources = java.util.regex.Pattern.compile("```js\\n(.*?)```", java.util.regex.Pattern.DOTALL)
 			.matcher(PolicyDocsToolProvider.readResource("/prompts/planner-policy.md")).results().map(m -> m.group(1)).toList();
-		assertEquals(3, sources.size());
+		assertEquals(5, sources.size());
 		var snapshot = new JsonObject();
 		snapshot.addProperty("syncId", 7);
 		snapshot.add("inventory", JsonParser.parseString(inventory));

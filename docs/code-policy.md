@@ -2,9 +2,9 @@
 
 `run_policy` lets the controller planner express a finite procedure as a JavaScript generator. Java executes its yielded effects and resumes the same generator with their results. No model call is needed between effects. The existing work history owns the invocation's identity, terminal outcome and cancellation surface.
 
-This first implementation supports **an already-open chest-like container in singleplayer**. It does not navigate, open containers, install persistent skills, schedule multiple policies, or resume JavaScript stacks after restart. It adapts the code-as-policy idea from AIRI's Minecraft integration and the guest-execution approach preserved on `os-exp`; it does not revive the broader OS replacement.
+`run_policy` exposes named JavaScript functions for most native gameplay tools: navigation, mining/gathering, crafting, construction, containers, equipment, eating, entity interactions, smelting, and reads. Each uses the existing argument contract and native executor. `yield p.describe('craftRecipe')` returns the exact schema. No container is required to start; the original verified container helpers remain available in singleplayer. Policies are finite and do not persist JavaScript stacks across restarts.
 
-`query_world` shares the GraalJS engine but exposes only a detached local block/entity snapshot to a synchronous `function query(world, input)`. It creates no foreground work and can run while an action is active. Both planner roles receive it; only the controller receives `run_policy`. The controller prompt recommends policies for supported container sequences and includes restock, reserve-aware withdrawal and selected-count examples. Both roles receive examples recommending `query_world` for custom block/entity projections, while specialized interaction/placement checks retain their native tools.
+`query_world` shares the GraalJS engine but exposes only a detached local block/entity snapshot to a synchronous `function query(world, input)`. It creates no foreground work and can run while an action is active. Both planner roles receive it; only the controller receives `run_policy`. The controller prompt recommends policies for dependent gameplay sequences and includes restock, reserve-aware withdrawal and selected-count examples. Both roles receive examples recommending `query_world` for custom block/entity projections, while specialized interaction/placement checks retain their native tools.
 
 `read_policy_docs` returns the API and debugging guide packaged in the running build (`src/main/resources/airicraft/policies/api.md`). It is read-only, needs no world, and does not end the turn. It covers signatures, observation fields, limits, errors and partial-effect recovery without granting repository or filesystem access.
 
@@ -26,7 +26,9 @@ Only the selected JSON and metadata return to the planner; the full block/entity
 
 ## Authoring
 
-Define `function* main(policy, input)` and supply JSON input:
+Define `function* main(policy, input)` and supply JSON input. Named methods mirror snake_case tool names in camelCase, for example `yield policy.navigateTo({x,y,z,exactY:true})` and `yield policy.craftRecipe({recipeId,times:1})`. Read `ok` before continuing. `result` preserves the native JSON/text; `work` reports the final tracked outcome. No generic string-dispatch API is exposed. The complete method list is in the bundled policy API guide.
+
+The original container helper example remains valid:
 
 ```js
 function* main(policy, input) {
@@ -70,17 +72,28 @@ subprocess.run([
 PY
 ```
 
-`SUCCEEDED` means the program returned normally. Interpret its returned value too: `{restocked:false}` is a valid program result, not proof that the requested stock was obtained. Unsupported effects or native failures fail the invocation rather than retrying clicks automatically. The work details retain source, input, yielded effects, completed results and the terminal reason.
+`SUCCEEDED` means the program returned normally. Interpret its returned value too: `{restocked:false}` is a valid program result, not proof that the requested stock was obtained. Named tool methods return `{ok,tool,result,work?}` and wait for tracked child work to become terminal. Rejections and failures return `ok:false` for script branching. Legacy container-helper failures still fail the invocation. Unsupported effects fail rather than retrying automatically. The work details retain source, input, yielded effects, completed results and the terminal reason.
 
 ## Interruption and limits
 
-One invocation owns normal actuation at a time. New planner mutations are rejected while it runs; safety reflexes retain priority. Reflex takeover, death, world leave, reset, cancellation and replacement of normal work stop the invocation. A cancelled policy is not automatically resumed or replayed. Transfers already committed remain committed; a pending effect may have changed the world without its confirmation being retained. Inspect fresh counts before starting again. Cancellation deliberately does not issue cleanup clicks or close a window owned by a reflex/user.
+One invocation owns normal actuation at a time. Its child jobs/graphs run through the normal scheduler, are parented to the policy, and are cancelled with it. New planner mutations are rejected while it runs; safety reflexes retain priority. Reflex takeover, death, world leave, reset, cancellation and replacement of normal work stop the invocation. A cancelled policy is not automatically resumed or replayed. Transfers already committed remain committed; a pending effect may have changed the world without its confirmation being retained. Inspect fresh counts before starting again. Cancellation deliberately does not issue cleanup clicks or close a window owned by a reflex/user.
 
-Limits: 32,768 source characters; 16,384 characters per JSON value; 32 effects; 1,200 client ticks per invocation; 100 client ticks per container effect; 200,000 guest statements per evaluation; 10-second initialization and 1-second resume deadlines. The guest has no host-class, filesystem, network or process access. These restrictions do not impose a hard guest heap limit within the shared JVM: this remains an experimental behavior-authoring surface.
+Limits: 32,768 source characters; 16,384 characters per JSON value; 128 effects; 12,000 client ticks per invocation; 100 client ticks per container effect; 200,000 guest statements per evaluation; 10-second initialization and 1-second resume deadlines. The guest has no host-class, filesystem, network or process access. These restrictions do not impose a hard guest heap limit within the shared JVM: this remains an experimental behavior-authoring surface.
 
 GraalJS 25.0.4 is included in the mod as nested dependencies. A separate GraalVM installation is not required; ordinary Java 21 uses the interpreter fallback.
 
 ## Verification
+
+The 2026-09-19 named-action extension passed the full build and focused tests of delayed child completion, failure branching, cancellation, schema lookup, rejected recursive/control effects, and actual runtime scheduling/ownership. The live driver smoke used a fresh `codex-policy-actions-20260919` world copy:
+
+- `OPERATION:72f30725-7b73-414b-a790-8d88f537b0d7` sequenced navigation, query, chest opening, verified withdrawal, closure, recipe lookup, furnace crafting, placement attempt, and inventory inspection (11 effects). Navigation and crafting succeeded. Placement returned the native line-of-sight failure as `ok:false`, allowing the script to continue inspecting.
+- `OPERATION:33b09ef7-3b85-4058-b139-1e74b743c988` mined one grass block and confirmed one collected drop. Its fixed placement site also failed native visibility checks.
+- `OPERATION:7320ef33-3c26-4634-b719-b0e22265f87f` selected a site using a fresh query and successfully placed the crafted furnace at `-51,66,-107`.
+- Cancelling `OPERATION:47c045ce-8b78-435e-a0b3-ae48fa985175` cancelled its running navigation child. A competing external navigation call was rejected while the policy owned the lane.
+
+Evidence is retained locally in `run/policy-actions-smoke-20260919/`. These are hand-authored live procedures, not proof of planner adoption, all-method gameplay coverage, live reflex interruption, or multiplayer behavior. Image/LLM and planner-control tools remain outside the policy API. Named calls reuse native completion guarantees; they do not strengthen ordinary tool semantics to server-confirmed transactions.
+
+### Earlier container/query qualification
 
 The query extension executes all six prompt examples in focused tests, including restock shortfall and already-stocked branches. Tests also cover host/effect access rejection, runaway computation, output/input bounds, invalid query bounds, async/generator rejection, coverage preservation against guest edits, failed-query evidence exclusion and world-change rejection. The full build reports 1490 tests, zero failures/errors and two skipped.
 

@@ -220,6 +220,42 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void policyChildUsesNormalSchedulerAndRootCancellationStopsIt() throws Exception {
+		var executor = new FakeWorldTaskExecutor();
+		var runtime = EmbodiedAgentRuntime.createForTests(executor);
+		try {
+			runtime.overrideSessionSnapshotForTests(new SessionSnapshot(SessionMode.SINGLEPLAYER_LAN_HOST,
+				true, true, "minecraft:overworld", true, 25565, 0));
+			var root = new ai.moeru.airicraft.agent.work.WorkHandle("OPERATION:test-policy");
+			Field rootField = EmbodiedAgentRuntime.class.getDeclaredField("policyWork"); rootField.setAccessible(true); rootField.set(runtime, root);
+			Method dispatch = EmbodiedAgentRuntime.class.getDeclaredMethod("dispatchPolicyTool", String.class, JsonObject.class); dispatch.setAccessible(true);
+			var arguments = JsonParser.parseString("{\"x\":10,\"y\":64,\"z\":2,\"exactY\":true}").getAsJsonObject();
+			@SuppressWarnings("unchecked")
+			var admitted = (CompletableFuture<ai.moeru.airicraft.agent.llm.ExternalPlannerToolResult>) dispatch.invoke(runtime, "navigate_to", arguments);
+			assertTrue(admitted.join().text().contains("workId"));
+			Method cancel = EmbodiedAgentRuntime.class.getDeclaredMethod("cancelPolicyChildren"); cancel.setAccessible(true);
+			var policy = new ai.moeru.airicraft.policy.PolicyRuntime("function* main(p) { yield p.observeContainer(); }", new JsonObject(),
+				new ai.moeru.airicraft.policy.PolicyRuntime.Host() {
+					public CompletableFuture<com.google.gson.JsonElement> execute(JsonObject effect) { return new CompletableFuture<>(); }
+					public void close() { try { cancel.invoke(runtime); } catch (Exception e) { throw new RuntimeException(e); } }
+				}, ignored -> {});
+			Field policyField = EmbodiedAgentRuntime.class.getDeclaredField("policyRuntime"); policyField.setAccessible(true); policyField.set(runtime, policy);
+			runtime.onClientTick(null);
+			assertTrue(executor.lastActiveTask.isPresent(), "Policy must not suppress its native child tick");
+			assertTrue(policy.active(), "Child admission must not cancel its owner");
+			String childId = executor.lastActiveTask.orElseThrow().taskId();
+			String inspected = runtime.execute(new PlannerToolCall("inspect", "inspect_work",
+				JsonParser.parseString("{\"workId\":\"JOB:" + childId + "\"}").getAsJsonObject(), null, null)).join();
+			assertTrue(inspected.contains("OPERATION:test-policy"), inspected);
+			String competing = runtime.execute(new PlannerToolCall("competing", "navigate_to", arguments, null, null)).join();
+			assertTrue(competing.contains("policy_active"));
+			policy.cancel("test_cancel");
+			assertEquals(ActiveJobStatus.CANCELLED, runtime.activeJob().status());
+			assertTrue(executor.onWorldLeaveCalls > 0, "Root cancellation must stop the native executor");
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void idlePlannerEvidenceRefreshesWithoutAProjectedSemanticTask() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		try {
