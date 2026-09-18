@@ -333,6 +333,27 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void tacticalHoldWithoutForegroundWorkAdmitsPlannerEscape() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			runtime.overrideSessionSnapshotForTests(loadedRemoteSession());
+			setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.AWAITING_PLANNER, "tactical", null, null));
+			Field owner = EmbodiedAgentRuntime.class.getDeclaredField("survivalReflexRuntime");
+			owner.setAccessible(true);
+			Field window = SurvivalReflexRuntime.class.getDeclaredField("tacticalWindow");
+			window.setAccessible(true);
+			var constructor = window.getType().getDeclaredConstructor(long.class);
+			constructor.setAccessible(true);
+			window.set(owner.get(runtime), constructor.newInstance(1200L));
+			String receipt = runtime.executePlannerAction(new PlannerToolCall("escape", "navigate_to",
+				JsonParser.parseString("{\"x\":12,\"y\":64,\"z\":8,\"exactY\":true}").getAsJsonObject(), null, null)).join();
+			assertTrue(receipt.contains("\"accepted\":true"), receipt);
+			assertEquals(SurvivalReflexState.IDLE, runtime.survivalReflexSnapshot().state());
+			assertTrue(runtime.recentEvents(null).events().stream().anyMatch(e -> "reflex.hold_released".equals(e.type())));
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void matchingSafetyHoldResumesSamePausedJob() throws Exception {
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		runtime.injectDialogueResponseForTests(new DialogueResponse(

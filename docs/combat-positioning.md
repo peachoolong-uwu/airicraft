@@ -17,7 +17,8 @@ four blocks or projected to contact within ten ticks from at most six blocks.
 Visibility takes precedence; proximity, closing speed and attack preparation break
 ties within a rank. There is no persistent target lock.
 
-The focus normally controls camera facing and a 2.3–2.7-block fighting distance.
+The focus sets a preferred fighting distance; camera facing can follow movement
+between attacks. The ordinary melee distance is 2.3–2.7 blocks.
 Other mobs contribute route exposure, body collision, pincer and dead-end costs.
 Both the immediate route step and sub-block waypoint also score clearance from
 all melee threats: reach +0.3 blocks, plus up to 0.8 blocks for three ticks of
@@ -56,9 +57,10 @@ steps over 24 game ticks with a beam width of 24. It replans every six ticks or 
 arrival and freshly checks the next movement before steering toward a collision-checked sub-block waypoint. Baritone movement states execute
 ascents and descents while local steering retains combat aim. Committed terrain
 moves finish before replanning and time out after 60 ticks; no block placement or
-towering is implemented. The player faces the selected
-opponent and backpedals or strafes along that route; an active shield keeps its incoming
-attack heading. Travel-time estimates exclude sprinting.
+towering is implemented. Movement can face a safe sprint orbit near a witch, with
+target-facing restored at attack time. Sprinting requires grounded, supported,
+collision-free movement and clearance from all melee threats. An active shield
+keeps its incoming attack heading. Travel-time estimates exclude sprinting.
 No pathfinding settings are reset or loosened. An unavailable route means hold and
 defend, not blind backward movement.
 
@@ -77,3 +79,27 @@ Live mixed-horde windows informed tuning, but were not matched trials. Complete
 creeper sprint-hit cycles and normal survival without experimental healing remain
 unvalidated. Focused regressions cover ranking, shielding, terrain state startup,
 route constraints and flanker clearance.
+
+## Recovery and planner handoff
+
+Combat water recovery delegates movement to the existing underwater escape
+controller until the player reaches safe, grounded dry terrain. Low air prioritizes
+a breathable destination. An exhausted search stays afloat and reports the failure;
+this controller does not dig or place blocks to escape a dry pit.
+
+A combat progress monitor detects stalemate after 200 game ticks (ten seconds at
+20 TPS). Progress requires a new one-block closing-distance improvement, a new
+one-health-point target-health low, or a confirmed target death. Incoming damage,
+attempted swings and target churn do not reset the timer.
+
+Stalemate emits `combat_stalemate` through the planner trigger and holds for a
+concrete escape or cover plan. The planner gets up to 1,200 ticks to respond and a
+600-tick action window after releasing the hold. Ordinary mob pressure does not
+preempt that window; critical health, an imminent creeper or drowning can. Existing
+held work still requires an explicit work decision. When no foreground work exists,
+a planner action can release the tactical hold without supplying a nonexistent work ID.
+
+Live experiments demonstrated water recovery and accepted planner escape actions,
+including a rise from Y=63 to Y=65. Complete pit escape and reliable potion dodging
+remain unproven. `reflex.combat_progress` records progress and stalled transitions;
+the detector measures combat progress, not the quality of cover or escape geometry.

@@ -61,8 +61,15 @@ public final class SurvivalReflexRuntime {
 	private boolean shieldUseOwned;
 	private ShieldGuard shieldGuard;
 	private CombatStalemate combatStalemate;
+	private CombatProgress combatProgress;
+	private TacticalWindow tacticalWindow;
+	record TacticalWindow(long untilTick) {
+		boolean active(long tick, float health) { return tick < untilTick && health > 4; }
+	}
+	private List<ResolvedThreat> progressThreats;
 	private MinecraftCombatPositioning combatPositioning;
 	private String reportedCombatFocus;
+	private CombatRecovery combatRecovery;
 	private ReflexPolicy policyOverride;
 
 	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config) {
@@ -118,8 +125,12 @@ public final class SurvivalReflexRuntime {
 		evidence.put("policy", policy());
 		evidence.put("combatTarget", combatTarget);
 		evidence.put("combatStalemate", combatStalemate);
+		evidence.put("combatProgress", combatProgress);
+		evidence.put("tacticalWindow", tacticalWindow);
 		evidence.put("combatPositioning", combatPositioning == null ? null : combatPositioning.evidence());
 		evidence.put("shieldUseOwned", shieldUseOwned);
+		evidence.put("combatRecovery", combatRecovery == null ? CombatRecovery.READY : combatRecovery);
+		if (combatRecovery == CombatRecovery.REACH_DRY_GROUND) evidence.put("movementRecovery", underwaterEscape.snapshot());
 		evidence.put("shieldGuard", shieldGuard);
 		evidence.put("secureEscapeTicks", secureEscapeTicks);
 		evidence.put("mobRoutesTick", mobRoutesTick);
@@ -159,9 +170,29 @@ public final class SurvivalReflexRuntime {
 			return snapshot;
 		}
 
+		if (tacticalWindow != null && (!tacticalWindow.active(tick, player.getHealth()) || client.world.getEntitiesByClass(
+			net.minecraft.entity.mob.CreeperEntity.class, player.getBoundingBox().expand(4),
+			c -> c.isAlive() && c.getFuseSpeed() > 0 && c.getLerpedFuseTime(1) >= .5F).size() > 0)) tacticalWindow = null;
 		boolean drowningDanger = policy().drowningEnabled() && drowningDanger(player, config.lowAirTicks(), drowningDamageObserved);
 		detectProactiveThreats(client, player, tick);
 		List<ResolvedThreat> threats = resolveThreats(client, player);
+		if (snapshot.state() == SurvivalReflexState.ACTIVE && snapshot.cause() == SurvivalReflexCause.MOB_ATTACK) {
+			var targets = new LinkedHashMap<String, CombatProgress.Target>();
+			for (var threat : threats) targets.put(threat.observed().uuid(),
+				new CombatProgress.Target(threat.distance(), threat.entity().getHealth()));
+			boolean wasStalled = combatProgress != null && combatProgress.stalled();
+			boolean defeated = progressThreats != null && progressThreats.stream().anyMatch(t -> t.entity().isDead());
+			combatProgress = CombatProgress.observe(combatProgress, tick, targets, defeated);
+			progressThreats = threats;
+			if (combatProgress != null && combatProgress.stalled() != wasStalled) {
+				pendingEvents.add(new SurvivalReflexEvent("reflex.combat_progress", Map.of(
+					"stalled", combatProgress.stalled(), "noProgressTicks", tick - combatProgress.lastProgressTick(),
+					"reason", combatProgress.stalled() ? "no_target_health_or_closing_progress" : "progress_resumed",
+					"underPressure", immediateCombatDanger(client, player, threats, tick),
+					"targets", targets, "tick", tick)));
+			}
+		}
+		else { combatProgress = null; progressThreats = null; }
 		if (combatStalemate != null || snapshot.state() == SurvivalReflexState.ACTIVE && snapshot.cause() == SurvivalReflexCause.MOB_ATTACK) {
 			Map<String, Vec3d> positions = new LinkedHashMap<>();
 			for (ResolvedThreat threat : threats) positions.put(threat.observed().uuid(), threat.entity().getPos());
@@ -180,6 +211,9 @@ public final class SurvivalReflexRuntime {
 		}
 
 		if (snapshot.state() != SurvivalReflexState.ACTIVE) {
+			if (tacticalWindow != null && snapshot.state() == SurvivalReflexState.AWAITING_PLANNER) {
+				if (!blockShieldThreat(client, player, threats, tick)) releaseShield(client);
+			} else if (tacticalWindow != null) releaseShield(client);
 			maintainDrowningSafetyHold(client, player, tick);
 			refreshSnapshot(player, threats, snapshot.lastDangerTick(), snapshot.breathableTicks(), snapshot.lastActuatorFailure());
 			return snapshot;
@@ -188,6 +222,9 @@ public final class SurvivalReflexRuntime {
 		if (snapshot.cause() == SurvivalReflexCause.DROWNING && !policy().drowningEnabled()
 			|| snapshot.cause() == SurvivalReflexCause.MOB_ATTACK && !policy().combatEnabled()) {
 			resolve(client, player, threats, tick, "reflex_policy_disabled", false);
+		}
+		else if (recoverCombatMovement(client, player, threats, tick)) {
+			// The recovery navigator owns all movement until dry supported ground.
 		}
 		else if (drowningDanger || snapshot.cause() == SurvivalReflexCause.DROWNING) {
 			releaseShield(client);
@@ -199,6 +236,10 @@ public final class SurvivalReflexRuntime {
 		}
 		drowningDamageObserved = false;
 		return snapshot;
+	}
+
+	public boolean awaitingTacticalPlan() {
+		return tacticalWindow != null && snapshot.state() == SurvivalReflexState.AWAITING_PLANNER;
 	}
 
 	public ResumeResult resume(String holdId, long tick) {
@@ -214,6 +255,7 @@ public final class SurvivalReflexRuntime {
 		if (snapshot.state() != SurvivalReflexState.AWAITING_PLANNER) {
 			return false;
 		}
+		if (tacticalWindow != null) tacticalWindow = new TacticalWindow(tick + 600);
 		pendingEvents.add(new SurvivalReflexEvent("reflex.hold_released", mapOfNullable(
 			"holdId", snapshot.holdId(),
 			"reason", reason == null || reason.isBlank() ? "released" : reason,
@@ -251,6 +293,10 @@ public final class SurvivalReflexRuntime {
 	}
 
 	public void reset(MinecraftClient client) {
+		combatProgress = null;
+		tacticalWindow = null;
+		progressThreats = null;
+		combatRecovery = CombatRecovery.READY;
 		combatStalemate = null;
 		releaseShield(client);
 		movementController.stop(client);
@@ -403,7 +449,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private boolean combatDeferred() {
-		return combatStalemate != null && combatStalemate.deferred();
+		return tacticalWindow != null || combatStalemate != null && combatStalemate.deferred();
 	}
 
 	private boolean immediateCombatDanger(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
@@ -417,7 +463,50 @@ public final class SurvivalReflexRuntime {
 		return false;
 	}
 
+	private boolean recoverCombatMovement(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+		CombatRecovery current = combatRecovery == null ? CombatRecovery.READY : combatRecovery;
+		if (current == CombatRecovery.READY && snapshot.cause() != SurvivalReflexCause.MOB_ATTACK) return false;
+		boolean safeLand = !player.isTouchingWater() && player.isOnGround()
+			&& MinecraftUnderwaterEscapeController.isSafeStandingPosition(client, player.getBlockPos());
+		CombatRecovery next = current.next(player.isTouchingWater(), player.isOnGround(), safeLand);
+		if (next != current) {
+			combatRecovery = next;
+			combatStalemate = null;
+			stopCombatNavigation();
+			combatPositioning = null;
+			underwaterEscape.reset(client);
+			pendingEvents.add(new SurvivalReflexEvent("reflex.movement_recovery", Map.of("phase", next.name(), "tick", tick)));
+		}
+		if (next == CombatRecovery.READY) return false;
+		releaseShield(client);
+		try {
+			// Low air gets a breathable waypoint first; breathing alone does not hand control back.
+			var mode = player.isSubmergedInWater() && player.getAir() < config.lowAirTicks()
+				? UnderwaterEscapeSearch.SearchMode.BREATHABLE : UnderwaterEscapeSearch.SearchMode.SAFE_STANDING;
+			var recovery = underwaterEscape.tick(client, mode, player.getAir(), tick,
+				mode == UnderwaterEscapeSearch.SearchMode.BREATHABLE ? !player.isSubmergedInWater() : safeLand);
+			boolean exhausted = safeLandSearchExhausted(recovery.searchStatus(), recovery.navigation().phase());
+			var action = exhausted ? SurvivalReflexAction.STAY_AFLOAT : SurvivalReflexAction.REACH_SAFE_LAND;
+			if (snapshot.action() != action) changeAction(SurvivalReflexCause.MOB_ATTACK, action, tick);
+			if (exhausted) {
+				movementController.swimUp(client, false, false, tick);
+			}
+			refreshSnapshot(player, threats, lastMobDamageTick, 0, null);
+		}
+		catch (RuntimeException exception) {
+			recordActuatorFailure("recover_combat_movement", exception, tick);
+			movementController.swimUp(client, false, false, tick);
+			refreshSnapshot(player, threats, lastMobDamageTick, 0, failureText(exception));
+		}
+		return true;
+	}
+
 	private void tickMobAttack(MinecraftClient client, ClientPlayerEntity player, List<ResolvedThreat> threats, long tick) {
+		if (combatProgress != null && combatProgress.stalled()) {
+			tacticalWindow = new TacticalWindow(tick + 1200);
+			resolve(client, player, threats, tick, "combat_stalemate", true);
+			return;
+		}
 		if (combatDeferred()) {
 			resolve(client, player, threats, tick, "combat_approach_stalled", true);
 			return;
@@ -675,8 +764,18 @@ public final class SurvivalReflexRuntime {
 		cameraController.lookAtNow(client, facing);
 		var control = combatPositioning.control(client, step, facing, focus.entity().getPos(), tick);
 		var steering = control.steering();
-		movementController.moveDirectional(client, steering.forward(), steering.back(), steering.left(), steering.right(), !shielding && !kiting && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
-				&& !control.sneak() && client.player.getHungerManager().getFoodLevel() > 6,
+		boolean sprint = !shielding && !kiting && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
+			&& !control.sneak() && client.player.getHungerManager().getFoodLevel() > 6;
+		if (!shielding && !control.jump() && !control.sneak() && focus.entity() instanceof net.minecraft.entity.mob.WitchEntity) {
+			var strafe = combatPositioning.witchSprint(client, step, focus.entity().getPos());
+			if (strafe != null) {
+				facing = strafe.facing();
+				steering = strafe.steering();
+				sprint = true;
+				cameraController.lookAtNow(client, facing);
+			}
+		}
+		movementController.moveDirectional(client, steering.forward(), steering.back(), steering.left(), steering.right(), sprint,
 			control.jump(), control.sneak(), tick);
 		if (!target.equals(combatTarget)) pendingEvents.add(new SurvivalReflexEvent("reflex.combat_reposition", Map.of(
 			"target", target, "threatCount", threats.size(), "risk", decision.risk(), "standingRisk", decision.standingRisk(),
@@ -725,7 +824,8 @@ public final class SurvivalReflexRuntime {
 			"reason", reason,
 			"position", goal(player.getBlockPos()),
 			"remainingThreats", threatSnapshots(threats),
-			"noProgressTicks", combatDeferred() ? tick - combatStalemate.sinceTick() : null,
+			"noProgressTicks", combatProgress != null && combatProgress.stalled() ? tick - combatProgress.lastProgressTick()
+				: combatStalemate != null && combatStalemate.deferred() ? tick - combatStalemate.sinceTick() : null,
 			"nextState", nextState.name()
 		)));
 		snapshot = new SurvivalReflexSnapshot(
@@ -734,7 +834,7 @@ public final class SurvivalReflexRuntime {
 			player.getHealth(), player.getMaxHealth(), player.getAir(), player.getMaxAir(), snapshot.startedTick(),
 			tick, snapshot.breathableTicks(), null
 		);
-		if (!"combat_approach_stalled".equals(reason)) {
+		if (!"combat_approach_stalled".equals(reason) && !"combat_stalemate".equals(reason)) {
 			combatStalemate = null;
 			observedThreats.clear();
 		}
@@ -768,6 +868,10 @@ public final class SurvivalReflexRuntime {
 		// Early-fuse strikes can interrupt the approach; late fuse belongs to escape/blocking.
 		if (threat.entity() instanceof net.minecraft.entity.mob.CreeperEntity c && c.getLerpedFuseTime(1) >= .2F) return;
 		cameraController.lookAtNow(client, threat.entity().getBoundingBox().getCenter());
+		// Movement can face elsewhere this tick. Send hit-facing before the attack packet
+		// so server-side knockback uses the target heading too.
+		player.networkHandler.sendPacket(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.LookAndOnGround(
+			player.getYaw(), player.getPitch(), player.isOnGround(), player.horizontalCollision));
 		boolean sprintHit = player.isSprinting();
 		client.interactionManager.attackEntity(player, threat.entity());
 		player.swingHand(Hand.MAIN_HAND);
