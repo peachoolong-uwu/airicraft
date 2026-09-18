@@ -6,6 +6,8 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.behavior.IPathingBehavior;
 import baritone.api.event.events.PathEvent;
+import baritone.api.event.events.TickEvent;
+import baritone.api.event.events.type.EventState;
 import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalNear;
@@ -44,6 +46,13 @@ public final class LiveBaritoneFacade implements BaritoneFacade {
 		this.settingsApplier = Objects.requireNonNull(settingsApplier, "settingsApplier");
 		if (baritone != null) {
 			baritone.getGameEventHandler().registerEventListener(new AbstractGameEventListener() {
+				@Override
+				public void onTick(TickEvent event) {
+					if (event.getType() == TickEvent.Type.IN
+						&& event.getState() == EventState.PRE)
+						NavigationDoorInteraction.restorePassedDoor(baritone.getPlayerContext());
+				}
+
 				@Override
 				public void onPathEvent(PathEvent event) {
 					if (event == PathEvent.CANCELED) {

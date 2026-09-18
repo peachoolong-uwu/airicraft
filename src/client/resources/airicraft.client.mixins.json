@@ -6,6 +6,7 @@
 		"BaritoneCalculationContextMixin",
 		"BaritoneTravelBoundsMixin",
 		"BaritoneTravelExecutionMixin",
+		"BaritoneDoorInteractionMixin",
 		"BaritoneInventoryBehaviorMixin",
 		"BaritoneMobAvoidanceMixin",
 		"ClientPlayNetworkHandlerMixin",
