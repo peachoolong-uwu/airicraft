@@ -224,6 +224,11 @@ def run(args: argparse.Namespace) -> int:
                 break
             try:
                 status = evaluation.bridge_json(bridge, "GET", "/v1/status")
+                if status.get("automaticPlaytest", {}).get("state") == "RECORDING":
+                    agent_status = evaluation.bridge_json(bridge, "GET", "/v1/agent/status")
+                    if agent_status.get("degraded") is True:
+                        termination_reason = "planner_degraded"
+                        break
             except evaluation.BridgeHttpError as error:
                 if error.status != 500:
                     raise

@@ -8,11 +8,68 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("automatic_playtest", Path(__file__).resolve().parents[1] / "automatic_playtest.py")
 playtest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(playtest)
+
+
+class PlaytestPlannerDegradationTest(unittest.TestCase):
+    def test_open_ended_run_stops_gracefully_after_planner_degrades(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            world = root / "world"
+            world.mkdir()
+            (world / "level.dat").touch()
+            profile = root / "recorder.jar"
+            profile.touch()
+            args = SimpleNamespace(world=world, output=root / "output", recorder_jar=str(profile),
+                                   objective="Survive", max_seconds=0, startup_timeout=10)
+            bridge = SimpleNamespace(process_id=123)
+            client = Mock()
+            client.process.pid = 122
+            client.process.poll.return_value = None
+            client.line_queue.empty.return_value = True
+            agent_states = iter([{"degraded": False}, {"degraded": True}])
+            requests = []
+
+            def bridge_json(connection, method, path, body=None):
+                requests.append((method, path, body))
+                if path == "/v1/worlds":
+                    return {"worlds": [{"worldId": "playtest"}]}
+                if path == "/v1/status":
+                    return {"worldLoaded": True, "automaticPlaytest": {"state": "RECORDING"}}
+                if path == "/v1/agent/status":
+                    return next(agent_states)
+                return {}
+
+            client_exit = {"minecraftExited": True, "method": "BRIDGE"}
+
+            def stop_client(actual_client, timeout, pid, graceful_stop):
+                self.assertIs(client, actual_client)
+                self.assertEqual(123, pid)
+                graceful_stop()
+                return client_exit
+
+            with (patch.object(playtest, "REPO", root),
+                  patch.object(playtest.shutil, "which", return_value="available"),
+                  patch.object(playtest, "prepare_game", return_value=root / "game"),
+                  patch.object(playtest.evaluation, "start_client", return_value=client),
+                  patch.object(playtest.evaluation, "wait_for_title_bridge", return_value=(bridge, {})),
+                  patch.object(playtest.evaluation, "bridge_json", side_effect=bridge_json),
+                  patch.object(playtest.evaluation, "stop_client", side_effect=stop_client) as stop,
+                  patch.object(playtest, "finalize_recording", return_value=(root / "final", 0)) as finalize,
+                  patch.object(playtest.signal, "signal"),
+                  patch.object(playtest.time, "sleep") as sleep):
+                self.assertEqual(0, playtest.run(args))
+            stop.assert_called_once()
+            finalize.assert_called_once()
+            self.assertEqual((client_exit, None, "planner_degraded"), finalize.call_args.args[3:])
+            self.assertEqual(1, sleep.call_count)
+            self.assertEqual(1, sum(path == "/v1/agent/debug/chat" for _, path, _ in requests))
+            self.assertEqual(("POST", "/v1/evaluation/client-stop", None), requests[-1])
 
 
 class PlaytestPublicationTest(unittest.TestCase):
@@ -198,7 +255,7 @@ class PlaytestPublicationTest(unittest.TestCase):
         self.assertIsNone(descriptor["bugReport"])
 
     def test_normal_exits_and_time_limits_archive_the_complete_dataset_without_a_bug(self):
-        for reason in ("manual_interrupt", "client_exit", "world_left", "time_limit"):
+        for reason in ("manual_interrupt", "client_exit", "world_left", "time_limit", "planner_degraded"):
             with self.subTest(reason=reason):
                 if self.destination.exists():
                     self.setUp()
