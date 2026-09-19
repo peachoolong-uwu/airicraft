@@ -163,4 +163,19 @@ class SelfToolProviderTest {
 		assertTrue(custom.endsWith("\nhello"));
 	}
 
+	@Test void oresAreExcludedUnlessExplicitlyEnabledEvenWhenFocused() throws Exception {
+		var world=json("""
+			{"metadata":{"bounds":{"min":{"x":0,"y":64,"z":0},"max":{"x":0,"y":64,"z":0}}},
+			 "player":{"position":{"x":2,"y":64,"z":0}},"entities":[],
+			 "blocks":[{"position":{"x":0,"y":64,"z":0},"blockId":"minecraft:diamond_ore","properties":{},
+			 "air":false,"fluid":false,"collisionEmpty":false,"collisionBoxes":[[0,0,0,1,1,1]]}]}
+			""");
+		for(String input:List.of("{}","{\"focus\":\"ore\"}","{\"includeOres\":false}")) {
+			var result=JsonParser.parseString(geometry(world,json(input))).getAsJsonObject().getAsJsonObject("result");
+			assertEquals(0,result.getAsJsonArray("landmarks").size());
+		}
+		var result=JsonParser.parseString(geometry(world,json("{\"includeOres\":true}"))).getAsJsonObject().getAsJsonObject("result");
+		assertEquals("minecraft:diamond_ore",result.getAsJsonArray("landmarks").get(0).getAsJsonObject().get("blockId").getAsString());
+	}
+
 }

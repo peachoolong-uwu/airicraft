@@ -86,3 +86,38 @@ comparison, not a model-specific token measurement. Full build/tests passed;
 regressions cover real newlines, compact landmark syntax, geometry, and protection
 of the host coverage when guest code edits its snapshot. The client was stopped.
 Local preview: `/tmp/survey-compact-preview.md`.
+
+## Gameplay trials and ore option
+
+A subsequent Codex-driver session tested actual actions on the copied camp world:
+
+| Scenario | Survey evidence used | Observed outcome |
+| --- | --- | --- |
+| Approach camp from hillside | Open door at (0,134,4), three blocks above initial feet | Exact-Y navigation SUCCEEDED, job-e39983b3-4084-4d81-b1c8-ae88449d20b1 |
+| Access storage | Chest at (-1,134,3) from a fresh camp survey | use_block SUCCEEDED; inspect_container confirmed syncId=1, 27 container slots; close succeeded |
+| Access workstation | Furnace at (-3,134,3) | use_block SUCCEEDED; client reported FurnaceScreen |
+| Descend hillside | Map cell (3,8) had height -3 from feet Y=134 | Navigation to (3,131,8) SUCCEEDED, job-5483aaae-c2bc-4a59-b6f2-5e12b71aea79 |
+| Reach lower workstation | Furnace block at (4,128,12), supporting surface Y=129 | Navigation to (4,129,12) SUCCEEDED, job-f25cbb0c-2071-4c84-81a7-640a396c2371; fresh survey confirmed feet Y=129 |
+
+Ore-disabled and ore-enabled reads of the same hillside were compared live.
+Default output contained no ore landmarks. `includeOres:true` included three iron
+ore positions. Tests also confirm `focus:"ore"` cannot silently override the default
+exclusion. Full build/tests passed. The client was stopped after all work completed.
+
+Assessment: sufficient for these local destination and furniture tasks, without
+requiring exact block dumps. It is not a route planner. Steep terrain exceeds the
+fixed vertical capture range, leaving many unknown cells; those unknowns were not
+interpreted as blocked terrain. Repeated logs also consume secondary landmark slots.
+Potential next improvements are grouping natural blocks and adapting vertical
+coverage; neither behavior was added without broader terrain measurements. These
+were Codex-driven trials, not an embedded-planner comprehension evaluation.
+
+An unrelated control limitation appeared: close_container rejected FurnaceScreen
+(container_not_open); subsequent navigation closed the screen and succeeded. It
+was not treated as a survey failure or changed in this patch.
+
+Raw local evidence: `/tmp/gameplay-default.txt`, `/tmp/gameplay-ores.txt`,
+`/tmp/gameplay-camp-survey.txt`, `/tmp/gameplay-open-chest.txt`,
+`/tmp/gameplay-chest-contents.txt`, `/tmp/gameplay-open-furnace.txt`,
+`/tmp/gameplay-furnace-status.txt`, `/tmp/gameplay-descend-result.txt`,
+`/tmp/gameplay-lower-result.txt`, `/tmp/gameplay-lower-arrival.txt`.

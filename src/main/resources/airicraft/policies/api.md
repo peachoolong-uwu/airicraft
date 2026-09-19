@@ -125,3 +125,9 @@ array and other results retain the structured JSON envelope. The bundled survey
 uses text landmarks and aligned ASCII grids; it does not repeat per-landmark map
 metadata in the planner result. Its internal `survey(world,input)` helper still
 returns geometry for custom policies that need to transform it.
+
+Survey ores are excluded from landmark ranking by default. Set `includeOres:true`
+to include blocks whose IDs end in `_ore`; `focus:"ore"` alone does not override
+this exclusion. Ore blocks still participate in terrain geometry. `M` means two
+or more body-clear supporting surfaces at different heights in one X/Z column;
+the height grid selects the one nearest the requested elevation.

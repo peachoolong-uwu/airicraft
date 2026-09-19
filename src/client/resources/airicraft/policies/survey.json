@@ -16,6 +16,10 @@
       "elevation": {
         "type": "number",
         "description": "Select supporting surfaces nearest this absolute feet elevation; defaults to player feet."
+      },
+      "includeOres": {
+        "type": "boolean",
+        "description": "Include ore blocks among landmarks. Default false; mining is handled by Baritone."
       }
     },
     "required": [],

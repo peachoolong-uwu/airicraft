@@ -7,7 +7,7 @@ function survey(world, input) {
   const focus = (input.focus || '').split(',').map(s=>s.trim()).filter(Boolean);
   const important = /chest|barrel|furnace|crafting_table|_door$|portal|spawner|lava|_bed$|_ore$/;
   const distance = b => Math.hypot(b.position.x-player.x,b.position.y-player.y,b.position.z-player.z);
-  const candidates = world.blocks.filter(b => !b.air && !b.blockId.endsWith(':water') && b.properties.half !== 'upper')
+  const candidates = world.blocks.filter(b => !b.air && (input.includeOres === true || !b.blockId.endsWith('_ore')) && !b.blockId.endsWith(':water') && b.properties.half !== 'upper')
     .map(b => ({b,score:(focus.some(f=>b.blockId.includes(f))?1000:0)+(important.test(b.blockId)?100:0)+1/counts[b.blockId]}))
     .sort((a,b)=>b.score-a.score || distance(a.b)-distance(b.b) || key(a.b.position.x,a.b.position.y,a.b.position.z).localeCompare(key(b.b.position.x,b.b.position.y,b.b.position.z)));
   const limit = input.landmarkLimit === undefined ? 12 : input.landmarkLimit;
@@ -90,7 +90,7 @@ function query(world, input) {
     ...landmarks,
     'Terrain:', s.terrain,
     'Height relative to self feet:', s.relativeHeight,
-    'Prefix: number=landmark, L=shared landmark column, @=self. Suffix: .=level ^=other height #=blocked ~=water !=lava M=multiple floors ?=unknown -=no clear support in range.',
+    'Prefix: number=landmark, L=shared landmark column, @=self. Suffix: .=level ^=other height #=blocked ~=water !=lava M=stacked surfaces ?=unknown -=no clear support in range.',
     'Height uses the nearest body-clear surface, not landmark Y. Loaded cells may be occluded; no route or standing guarantee.'
   ].join('\n');
 }
