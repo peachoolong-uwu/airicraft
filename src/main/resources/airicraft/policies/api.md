@@ -108,3 +108,13 @@ These retain slab heights and partial shapes; coordinates are relative to the bl
 The host supplies coverage metadata outside the editable result and records the read
 coverage. Existing source, snapshot, result-size and execution-time limits apply.
 Self tools cannot invoke other tools, yield actions, access Java, or mutate the world.
+
+Survey landmark markers are independent of clearance: a cell prefix is a landmark
+number, L for several landmarks in that column, or @ for self. The suffix retains
+the terrain symbol. Each landmark includes a zero-based map row/column and the
+underlying terrain/height. Height still describes the selected supporting surface,
+not the landmark. Missing headroom beyond the capture boundary is unknown (?);
+it is not a proven absence of support. Block properties use canonical Minecraft
+serialized values (for example chest type "single"). Read-only query execution
+has a three-second wall-clock budget; action-policy resumes retain one second.
+The 200,000-statement limit still applies to both.

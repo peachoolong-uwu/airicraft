@@ -33,7 +33,7 @@ function query(world, input) {
           if(box[0]>.5 || box[3]<.5 || box[2]>.5 || box[5]<.5) continue;
           const feet=y+box[4];
           // Need the entire body column captured; distinguish unavailable from blocked.
-          if(feet+1.8>bounds.max.y+1) continue;
+          if(feet+1.8>bounds.max.y+1) {unknown=true;continue;}
           let clear=true;
           for(let yy=Math.floor(feet);yy<feet+1.8;yy++) {
             const above=cells.get(key(x,yy,z));
@@ -52,13 +52,18 @@ function query(world, input) {
         const at=cells.get(key(x,Math.floor(surface.feet),z));
         if(at && at.fluid) t=at.blockId.includes('lava')?'!':'~';
         if(surfaces.length>1) t='M';
-        const mark=landmarks.find(l=>l.position.x===x && l.position.z===z && l.position.y>=surface.feet-1 && l.position.y<surface.feet+2);
-        if(mark && surfaces.length===1) t=mark.label;
+
       } else if(!unknown) {
         const body=cells.get(key(x,Math.floor(reference),z));
         t=body && !body.collisionEmpty?'#':'-'; h='-';
       }
-      if(x===Math.floor(player.x) && z===Math.floor(player.z)) t='@';
+      // Landmarks are a column overlay, independent of standing clearance/elevation.
+      // Preserve the underlying terrain symbol; L means several landmarks share a column.
+      const marks=landmarks.filter(l=>l.position.x===x && l.position.z===z);
+      let marker=marks.length===1?marks[0].label:marks.length?'L':'';
+      if(x===Math.floor(player.x) && z===Math.floor(player.z)) marker='@';
+      for(const l of marks) l.map={row:z-bounds.min.z,column:x-bounds.min.x,marker,terrain:t,relativeHeight:h};
+      t=marker+t;
       tr.push(t);hr.push(h);
     }
     terrain.push(tr);heights.push(hr);
@@ -67,6 +72,6 @@ function query(world, input) {
   const grid=rows=>rows.map(row=>row.map(s=>s.padStart(width)).join(' ')).join('\n');
   return {center:player,referenceElevation:reference,bounds,orientation:'north up; columns +X east; rows +Z south; one cell per block',
     landmarks,omittedLandmarks:Math.max(0,candidates.length-limit),terrain:grid(terrain),relativeHeight:grid(heights),
-    legend:'@ self; numbers landmark labels; . surface near reference elevation; ^ other elevation; # blocked column; ~ water; ! lava; M multiple candidate floors (height uses nearest reference); ? unknown; - no body-clear supporting surface in vertical bounds. Height numbers are surface offsets from player feet Y, not landmark labels.',
-    caveat:'Local column geometry only, not route or full-footprint standing proof. Both maps use the same selected surface. Loaded blocks may be occluded. Landmarks can be outside the selected elevation.'};
+    legend:'Cell prefix: @ self, number landmark label, L multiple landmarks (see landmark map row/column). Suffix:  . surface near reference elevation; ^ other elevation; # blocked column; ~ water; ! lava; M multiple candidate floors (height uses nearest reference); ? unknown; - no body-clear supporting surface in vertical bounds. Height numbers are surface offsets from player feet Y, not landmark labels.',
+    caveat:'Local column geometry only, not route or full-footprint standing proof. Both maps use the same selected surface. Loaded blocks may be occluded. Landmark prefixes mark columns at any elevation; exact landmark Y is in the list, not the height map.'};
 }

@@ -72,7 +72,7 @@ record WorldQuerySnapshot(JsonObject data, List<BlockPos> observedPositions, Cli
 			block.add("position", JSON.toJsonTree(position(pos)));
 			block.addProperty("blockId", Registries.BLOCK.getId(state.getBlock()).toString());
 			JsonObject properties = new JsonObject();
-			state.getEntries().forEach((property, value) -> properties.addProperty(property.getName(), value.toString()));
+			state.getEntries().forEach((property, value) -> properties.addProperty(property.getName(), propertyValue(state, property)));
 			block.add("properties", properties);
 			block.addProperty("air", state.isAir());
 			block.addProperty("replaceable", state.isReplaceable());
@@ -118,6 +118,10 @@ record WorldQuerySnapshot(JsonObject data, List<BlockPos> observedPositions, Cli
 		snapshot.add("blocks", blocks);
 		snapshot.add("entities", entities);
 		return new WorldQuerySnapshot(snapshot, List.copyOf(observed), world);
+	}
+
+	static <T extends Comparable<T>> String propertyValue(net.minecraft.block.BlockState state, net.minecraft.state.property.Property<T> property) {
+		return property.name(state.get(property));
 	}
 
 	private static Map<String, Integer> position(BlockPos pos) { return Map.of("x", pos.getX(), "y", pos.getY(), "z", pos.getZ()); }

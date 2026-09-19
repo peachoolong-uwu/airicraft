@@ -76,6 +76,7 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 	private volatile Context context;
 	private Value guest;
 	private final CompletableFuture<Void> ready;
+	private final int executionTimeoutSeconds;
 
 	public GraalPolicyInvocation(String source, JsonElement input) {
 		this(source, input, false);
@@ -93,6 +94,7 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 	}
 
 	private GraalPolicyInvocation(String source, JsonElement input, boolean query) {
+		executionTimeoutSeconds = query ? 3 : 1;
 		if (source == null || source.isBlank() || source.length() > MAX_SOURCE_CHARS) throw new IllegalArgumentException("policy_source_limit");
 		String encoded = query ? input.toString() : encode(input);
 		if (encoded.length() > (query ? MAX_QUERY_SNAPSHOT_CHARS : MAX_VALUE_CHARS)) throw new IllegalArgumentException("query_snapshot_limit");
@@ -119,7 +121,7 @@ public final class GraalPolicyInvocation implements AutoCloseable {
 			String json = guest.invokeMember("resume", encoded).asString();
 			if (json.length() > MAX_VALUE_CHARS) throw new IllegalArgumentException("policy_value_limit");
 			return JsonParser.parseString(json);
-		}, 1)).whenComplete((value, error) -> resuming.set(false));
+		}, executionTimeoutSeconds)).whenComplete((value, error) -> resuming.set(false));
 	}
 
 	private <T> CompletableFuture<T> submit(Supplier<T> action, int timeoutSeconds) {

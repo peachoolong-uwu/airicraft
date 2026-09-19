@@ -77,7 +77,8 @@ public final class WorldQueryScriptToolProvider implements PlannerToolProvider {
 			}, clientExecutor)).exceptionally(error -> {
 				Throwable cause = error;
 				while (cause.getCause() != null) cause = cause.getCause();
-				return "TOOL_ERROR: query_world " + cause.getMessage();
+				String message = cause.getMessage();
+				return "TOOL_ERROR: query_world " + (message == null || message.isBlank() ? cause.getClass().getSimpleName() : message);
 			});
 	}
 }

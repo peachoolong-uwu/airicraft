@@ -100,4 +100,11 @@ class WorldQueryScriptToolProviderTest {
 		world.addProperty("extra", "x".repeat(2_097_152));
 		assertThrows(IllegalArgumentException.class, () -> GraalPolicyInvocation.query("function query() {}", world, new JsonObject()));
 	}
+	@Test void messageLessFailureKeepsItsType() throws Exception {
+		var provider = new WorldQueryScriptToolProvider(Runnable::run, args -> {
+			throw new java.util.concurrent.CompletionException(new java.util.concurrent.TimeoutException());
+		}, ignored -> {});
+		assertEquals("TOOL_ERROR: query_world TimeoutException", provider.execute(call("function query() {return 1;}" )).get(15, TimeUnit.SECONDS));
+	}
+
 }

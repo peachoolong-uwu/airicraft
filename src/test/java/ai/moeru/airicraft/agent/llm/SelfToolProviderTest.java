@@ -99,4 +99,41 @@ class SelfToolProviderTest {
 		assertTrue(run(p,"survey_surroundings",json("{\"landmarkLimit\":1.5}")).startsWith("TOOL_ERROR"));
 	}
 
+	@Test void landmarkAtCaptureCeilingStillHasMapMarker() throws Exception {
+		var world=json("""
+			{"metadata":{"bounds":{"min":{"x":0,"y":64,"z":0},"max":{"x":0,"y":64,"z":0}}},
+			 "player":{"position":{"x":2,"y":64,"z":0}},"entities":[],
+			 "blocks":[{"position":{"x":0,"y":64,"z":0},"blockId":"minecraft:chest","properties":{"type":"single"},
+			 "air":false,"fluid":false,"collisionEmpty":false,"collisionBoxes":[[0,0,0,1,0.875,1]]}]}
+			""");
+		String response=run(new SelfToolProvider(queries(world)),"survey_surroundings",json("{}"));
+		var result=JsonParser.parseString(response.substring(response.indexOf('{'))).getAsJsonObject().getAsJsonObject("result");
+		assertEquals("1?",result.get("terrain").getAsString().trim());
+		assertEquals("?",result.get("relativeHeight").getAsString().trim());
+	}
+
+	@Test void overlappingLandmarksAndSelfRetainAllMapReferences() throws Exception {
+		var world=json("""
+			{"metadata":{"bounds":{"min":{"x":0,"y":64,"z":0},"max":{"x":0,"y":65,"z":0}}},
+			 "player":{"position":{"x":2,"y":64,"z":0}},"entities":[],
+			 "blocks":[{"position":{"x":0,"y":64,"z":0},"blockId":"minecraft:chest","properties":{},
+			 "air":false,"fluid":false,"collisionEmpty":false,"collisionBoxes":[[0,0,0,1,0.875,1]]},
+			 {"position":{"x":0,"y":65,"z":0},"blockId":"minecraft:furnace","properties":{},
+			 "air":false,"fluid":false,"collisionEmpty":false,"collisionBoxes":[[0,0,0,1,1,1]]}]}
+			""");
+		for (String expected:List.of("L", "@")) {
+			if(expected.equals("@")) world.getAsJsonObject("player").getAsJsonObject("position").addProperty("x",0);
+			String response=run(new SelfToolProvider(queries(world)),"survey_surroundings",json("{}"));
+			var result=JsonParser.parseString(response.substring(response.indexOf('{'))).getAsJsonObject().getAsJsonObject("result");
+			assertEquals(expected+"?",result.get("terrain").getAsString().trim());
+			assertEquals(2,result.getAsJsonArray("landmarks").size());
+			for(var l:result.getAsJsonArray("landmarks")) {
+				var map=l.getAsJsonObject().getAsJsonObject("map");
+				assertEquals(expected,map.get("marker").getAsString());
+				assertEquals(0,map.get("row").getAsInt());
+				assertEquals(0,map.get("column").getAsInt());
+			}
+		}
+	}
+
 }
