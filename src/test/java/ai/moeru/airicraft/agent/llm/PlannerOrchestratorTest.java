@@ -52,6 +52,76 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerOrchestratorTest {
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(ints = {1, 8})
+	void nativeImagesStopAtLimitWithoutChangingPrefixAndResetAndCompactionRestoreBudget(int maxImages) throws Exception {
+		try (var server = CompactionTestServer.start()) {
+			int callsPerRun = maxImages + 3;
+			var conversations = new ArrayList<LlmConversation>();
+			var interpretations = new ArrayList<LlmConversation>();
+			LlmBackend backend = new LlmBackend() {
+				public LlmCallResult<PlannerResponse> generate(LlmConversation conversation) {
+					conversations.add(conversation);
+					int index = (conversations.size() - 1) % callsPerRun;
+					return LlmCallResult.of(index == maxImages ? new PlannerResponse("", new PlannerToolCall("map_" + conversations.size(), "take_map_look", new JsonObject(), null, null), null)
+						: index < maxImages + 2
+						? new PlannerResponse("", new PlannerIntent("none", null, null), new PlannerToolRequest("take_a_look", "Find a safe path"))
+						: new PlannerResponse("done", new PlannerIntent("reply_only", null, null)), LlmUsageSnapshot.unknown());
+				}
+				public boolean isConfigured() { return true; }
+				public void injectMockResponse(PlannerResponse response) { throw new UnsupportedOperationException(); }
+				public void injectTimeout() { throw new UnsupportedOperationException(); }
+			};
+			var config = new AgentConfig.LlmConfig("http://127.0.0.1:" + server.port(), "test-key", "test-model",
+				"https://api.openai.com/v1", "", "", 15_000, 10_000, 8, 65_536, "low", true);
+			var tools = PlannerToolRegistry.of(new ImagePlannerToolProvider());
+			tools.activateAllForTesting();
+			Clock clock = Clock.systemDefaultZone();
+			var vision = new StubVisionTool(false, CompletableFuture.completedFuture(capturedScreenshot()),
+				CompletableFuture.failedFuture(new AssertionError("Must use planner model")));
+			var fallback = new PlannerVisionService(conversation -> {
+				interpretations.add(conversation);
+				if (interpretations.size() % 2 == 0) throw new IllegalStateException("provider failure");
+				return "Safe path on the left.";
+			});
+			var orchestrator = new PlannerOrchestrator(new PlannerExecutor(backend),
+				new PlannerCompactionService(new OpenAiCompatibleChatClient(config, tools)),
+				new PlannerContextAggregator(clock, config.plannerCompactionTriggerTokens(), config.plannerPendingSemanticEventCap(), PlannerVisionMode.NATIVE_TOOL_IMAGE, tools),
+				vision, CurrentInventoryTool.disabled(), PlannerVisionMode.NATIVE_TOOL_IMAGE, "low", 1, 0, 0, 0,
+				clock, NoopObservability.INSTANCE, PlannerLifecycleListener.NO_OP, new AgentDebugRecorder(),
+				PlannerActionToolExecutor.DISABLED, PlannerToolNarrationSink.NO_OP, tools, PlannerToolExecutionObserver.NO_OP, maxImages, fallback);
+			try {
+				for (int run = 0; run < 3; run++) {
+					tools.activateAllForTesting();
+					tools.freezeToolPrefix();
+					orchestrator.submit(baseRequest(null));
+					assertTrue(awaitResult(orchestrator).succeeded());
+					orchestrator.onAcceptedReplyRecorded();
+					for (int i = 0; i < callsPerRun; i++) {
+						var conversation = conversations.get(run * callsPerRun + i);
+						assertEquals(Math.min(i, maxImages), PlannerVisionService.imageCount(conversation));
+						if (i > 0) {
+							var before = conversations.get(run * callsPerRun + i - 1).messages();
+							assertEquals(before, conversation.messages().subList(0, before.size()), "Existing prefix must stay intact");
+						}
+					}
+					assertTrue(conversations.get(run * callsPerRun + maxImages + 1).messages().stream().anyMatch(m -> m.content().contains("Safe path on the left.")));
+					assertTrue(conversations.get(run * callsPerRun + maxImages + 2).messages().stream().anyMatch(m -> m.content().contains("VISION_UNAVAILABLE")));
+					if (run == 0) orchestrator.reset();
+					if (run == 1) {
+						assertTrue(orchestrator.startDebugCompaction());
+						awaitDebugCompaction(orchestrator);
+						assertTrue(orchestrator.debugSnapshot().lastCompactionResult().succeeded());
+					}
+				}
+				assertEquals(6, interpretations.size());
+				assertTrue(interpretations.stream().allMatch(c -> c.messages().size() == 2 && PlannerVisionService.imageCount(c) == 1
+					&& (c.messages().getLast().content().contains("Find a safe path") || c.messages().getLast().content().contains("Minecraft map image"))));
+				assertEquals(0, vision.descriptionRequestCount());
+			} finally { orchestrator.shutdown(); }
+	}
+	}
+
 	@Test
 	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {
 		RecordingBackend backend = new RecordingBackend();

@@ -95,6 +95,10 @@ visionImageDetail: "low"
 # When true, planner visual tool follow-up attaches the captured image directly to the planner.
 # When false, the visual tool uses the external vision model to summarize the screenshot first.
 plannerNativeVisionEnabled: false
+# Maximum native images retained in the planner context (minimum 1).
+# At the limit, interpret new images with the same planner model in a fresh context
+# and return text. Existing images stay unchanged; compaction restores capacity.
+plannerMaxImages: 8
 
 # Deprecated for normal planner turns. Normal planning now uses plaintext replies plus tool calls.
 # Hidden compaction requests still use response_format.type=json_object.

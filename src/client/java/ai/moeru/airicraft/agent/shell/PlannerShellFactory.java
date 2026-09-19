@@ -274,7 +274,8 @@ public final class PlannerShellFactory {
 				llm.plannerVisionMode(), tools, llm.backendManagedHistory()), vision, inventory, llm.plannerVisionMode(),
 			llm.visionImageDetail(), 1, llm.plannerSessionCoalesceStepMillis(),
 			llm.plannerSessionCoalesceMinMillis(), llm.plannerSessionCoalesceMaxMillis(), clock, observability,
-			listener, debug, actions, narration, tools, toolObserver);
+			listener, debug, actions, narration, tools, toolObserver, llm.plannerMaxImages(),
+			new ai.moeru.airicraft.agent.llm.PlannerVisionService(llm, observability));
 	}
 
 	private static String plannerModelName(AgentConfig.LlmConfig config) {

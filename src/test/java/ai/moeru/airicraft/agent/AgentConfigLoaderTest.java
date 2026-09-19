@@ -10,6 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentConfigLoaderTest {
+	@Test void readsNativeImageLimitAndPreservesItForPlannerRoles() {
+		assertEquals(8, AgentConfig.defaults().llm().plannerMaxImages());
+		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerMaxImages", 3), AgentConfig.defaults()).llm();
+		assertEquals(3, config.plannerMaxImages());
+		assertEquals(3, config.forRole("thinker", "high").plannerMaxImages());
+		assertEquals(1, AgentConfigLoader.fromMapStrict(Map.of("plannerMaxImages", 0), AgentConfig.defaults()).llm().plannerMaxImages());
+	}
+
 	@Test void readsIndependentThinkingProfile() {
 		var config = AgentConfigLoader.fromMapStrict(Map.of("model", "controller-model", "thinkingPlanner",
 			Map.of("enabled", true, "model", "thinking-model", "reasoningEffort", "medium")), AgentConfig.defaults()).llm();

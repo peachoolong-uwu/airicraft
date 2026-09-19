@@ -118,7 +118,8 @@ public final class AgentConfigLoader {
 			readPlannerBackend(root, defaults.llm().plannerBackend(), strict),
 			codexAppServer,
 			readString(root, "plannerReasoningEffort", defaults.llm().reasoningEffort(), strict),
-			thinkingPlanner
+			thinkingPlanner,
+			readInt(root, "plannerMaxImages", defaults.llm().plannerMaxImages())
 		);
 		AgentConfig.IdleConfig idle = new AgentConfig.IdleConfig(
 			readInt(root, "idleInitialDelaySeconds", defaults.idle().initialDelaySeconds()),
@@ -196,6 +197,7 @@ public final class AgentConfigLoader {
 		yamlData.put("requestTimeoutMillis", readInt(root, "requestTimeoutMillis", defaults.llm().requestTimeoutMillis()));
 		yamlData.put("visionRequestTimeoutMillis", readInt(root, "visionRequestTimeoutMillis", defaults.llm().visionRequestTimeoutMillis()));
 		yamlData.put("maxRecentConversationTurns", readInt(root, "maxRecentConversationTurns", defaults.llm().maxRecentConversationTurns()));
+		yamlData.put("plannerMaxImages", readInt(root, "plannerMaxImages", defaults.llm().plannerMaxImages()));
 		yamlData.put("plannerCompactionTriggerTokens", readInt(root, "plannerCompactionTriggerTokens", defaults.llm().plannerCompactionTriggerTokens()));
 		yamlData.put("plannerPendingSemanticEventCap", readInt(root, "plannerPendingSemanticEventCap", defaults.llm().plannerPendingSemanticEventCap()));
 		yamlData.put("plannerSessionMaxConcurrentAttempts", readInt(root, "plannerSessionMaxConcurrentAttempts", defaults.llm().plannerSessionMaxConcurrentAttempts()));

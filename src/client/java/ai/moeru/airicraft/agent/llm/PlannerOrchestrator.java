@@ -91,6 +91,11 @@ public final class PlannerOrchestrator {
 	private boolean safetyLaunchBlocked;
 	private boolean enabled = true;
 
+	private final int plannerMaxImages;
+	private final PlannerVisionService plannerVision;
+	// Backend-managed history is remote; conservatively budget until its session resets.
+	private int backendHistoryImages;
+
 	public PlannerOrchestrator(
 		PlannerExecutor plannerExecutor,
 		PlannerCompactionService compactionService,
@@ -103,15 +108,63 @@ public final class PlannerOrchestrator {
 		int plannerSessionCoalesceStepMillis,
 		int plannerSessionCoalesceMinMillis,
 		int plannerSessionCoalesceMaxMillis,
-			Clock clock,
-			AgentObservability observability,
-			PlannerLifecycleListener lifecycleListener,
-			AgentDebugRecorder debugRecorder,
-			PlannerActionToolExecutor actionToolExecutor,
-			PlannerToolNarrationSink narrationSink,
-			PlannerToolRegistry toolRegistry,
-			PlannerToolExecutionObserver toolExecutionObserver
+		Clock clock,
+		AgentObservability observability,
+		PlannerLifecycleListener lifecycleListener,
+		AgentDebugRecorder debugRecorder,
+		PlannerActionToolExecutor actionToolExecutor,
+		PlannerToolNarrationSink narrationSink,
+		PlannerToolRegistry toolRegistry,
+		PlannerToolExecutionObserver toolExecutionObserver
 	) {
+		this(
+			plannerExecutor,
+			compactionService,
+			contextAggregator,
+			visionTool,
+			inventoryTool,
+			visionMode,
+			imageDetail,
+			plannerSessionMaxConcurrentAttempts,
+			plannerSessionCoalesceStepMillis,
+			plannerSessionCoalesceMinMillis,
+			plannerSessionCoalesceMaxMillis,
+			clock,
+			observability,
+			lifecycleListener,
+			debugRecorder,
+			actionToolExecutor,
+			narrationSink,
+			toolRegistry,
+			toolExecutionObserver, 8,
+			new PlannerVisionService(conversation -> { throw new IllegalStateException("Planner vision fallback not configured"); }));
+	}
+
+	public PlannerOrchestrator(
+		PlannerExecutor plannerExecutor,
+		PlannerCompactionService compactionService,
+		PlannerContextAggregator contextAggregator,
+		CurrentViewVisionTool visionTool,
+		CurrentInventoryTool inventoryTool,
+		PlannerVisionMode visionMode,
+		String imageDetail,
+		int plannerSessionMaxConcurrentAttempts,
+		int plannerSessionCoalesceStepMillis,
+		int plannerSessionCoalesceMinMillis,
+		int plannerSessionCoalesceMaxMillis,
+		Clock clock,
+		AgentObservability observability,
+		PlannerLifecycleListener lifecycleListener,
+		AgentDebugRecorder debugRecorder,
+		PlannerActionToolExecutor actionToolExecutor,
+		PlannerToolNarrationSink narrationSink,
+		PlannerToolRegistry toolRegistry,
+		PlannerToolExecutionObserver toolExecutionObserver,
+		int plannerMaxImages,
+		PlannerVisionService plannerVision
+	) {
+		this.plannerMaxImages = Math.max(1, plannerMaxImages);
+		this.plannerVision = Objects.requireNonNull(plannerVision, "plannerVision");
 		this.plannerExecutor = Objects.requireNonNull(plannerExecutor, "plannerExecutor");
 		this.compactionService = Objects.requireNonNull(compactionService, "compactionService");
 		this.contextAggregator = Objects.requireNonNull(contextAggregator, "contextAggregator");
@@ -766,7 +819,7 @@ public final class PlannerOrchestrator {
 		pendingToolExecution = new PendingToolExecution(
 			plannerResult.generation(),
 			toolCallsSummary(toolCalls),
-			requestPlannerTools(toolCalls),
+			requestPlannerTools(toolCalls, sessionCoordinator.conversationFor(plannerResult.generation())),
 			plannerResult.response().rawAssistantContent(),
 			toolCalls
 		);
@@ -855,10 +908,12 @@ public final class PlannerOrchestrator {
 		cancelPendingTool();
 		sessionCoordinator.shutdown();
 		compactionService.shutdown();
+		plannerVision.close();
 		clearRuntimeState("shutdown");
 	}
 
 	private void clearRuntimeState(String reason) {
+		backendHistoryImages = 0;
 		contextAggregator.clear();
 		toolRegistry.resetToolSurface();
 		turnJournal.clear(reason);
@@ -1174,6 +1229,7 @@ public final class PlannerOrchestrator {
 		}
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
 		contextAggregator.retainConversation(completedToolConversation);
+		if (plannerExecutor.managesConversationHistory() && toolOutcome.hasImageAttachment()) backendHistoryImages++;
 		// Completed effects remain evidence even when safety invalidates the next decision.
 		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
 			&& !toolOutcome.toolResultText().startsWith("TOOL_ERROR:");
@@ -1218,12 +1274,29 @@ public final class PlannerOrchestrator {
 		return null;
 	}
 
-	private CompletableFuture<ToolExecutionOutcome> requestPlannerTools(List<PlannerToolCall> toolCalls) {
+	private CompletableFuture<ToolExecutionOutcome> requestPlannerTools(List<PlannerToolCall> toolCalls, LlmConversation conversation) {
 		if (toolCalls == null || toolCalls.isEmpty()) {
 			return CompletableFuture.completedFuture(new TextToolExecutionOutcome("Tool result: none"));
 		}
 		if (toolCalls.size() == 1) {
-			return requestPlannerTool(toolCalls.getFirst());
+			PlannerToolCall call = toolCalls.getFirst();
+			boolean atImageLimit = Math.max(backendHistoryImages, PlannerVisionService.imageCount(conversation)) >= plannerMaxImages;
+			return requestPlannerTool(call).thenCompose(outcome -> {
+				if (!atImageLimit || visionMode != PlannerVisionMode.NATIVE_TOOL_IMAGE
+					|| !(outcome instanceof ImageToolExecutionOutcome image)) {
+					return CompletableFuture.completedFuture(outcome);
+				}
+				String prompt = providerImagePrompt(call, image.toolResultText()) + "\nRequested focus: " + toolPrompt(call);
+				return plannerVision.describe(image.imageAttachment(), prompt).<ToolExecutionOutcome>handle((text, failure) -> {
+					// The metadata remains available, but do not claim an image was attached to this conversation.
+					String metadata = image.toolResultText().replace("current first-person view attached.", "current first-person view captured.");
+					if (failure != null) {
+						Airicraft.LOGGER.warn("Planner image fallback failed tool={}", call.name(), failure);
+						return new TextToolExecutionOutcome(metadata + "\nVISION_UNAVAILABLE: planner_vision_failed (image not attached)");
+					}
+					return new TextToolExecutionOutcome(metadata + "\nVision summary (fresh planner context; image not attached): " + text);
+				});
+			});
 		}
 		List<CompletableFuture<ToolExecutionResult>> futures = toolCalls.stream()
 			.map(toolCall -> requestPlannerTool(toolCall).handle((outcome, throwable) -> {
