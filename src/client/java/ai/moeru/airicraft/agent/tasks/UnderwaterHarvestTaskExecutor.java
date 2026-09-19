@@ -234,7 +234,8 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 		movement.stop(client);
-		camera.lookAtNow(client, targetCenter);
+		camera.lookAt(client, targetCenter);
+		if (!camera.isLookingAt(client, targetCenter)) return Optional.empty();
 		if (breakingTarget == null) {
 			if (!client.interactionManager.attackBlock(target.pos(), Direction.UP)) {
 				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "break_start_failed targetPos=" + compactPos(target.pos())));
@@ -373,7 +374,7 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 		Vec3d targetCenter,
 		long tick
 	) {
-		camera.lookAtNow(client, targetCenter);
+		camera.lookAt(client, targetCenter);
 		UnderwaterHarvestPolicy.VerticalMotion verticalMotion = moveUnderwaterToward(
 			client,
 			player,
@@ -568,7 +569,7 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 				itemPos.z
 			);
 			Vec3d target = new Vec3d(blockCenter.x(), blockCenter.y(), blockCenter.z());
-			camera.lookAtNow(client, target);
+			camera.lookAt(client, target);
 			UnderwaterHarvestPolicy.VerticalMotion verticalMotion = moveUnderwaterToward(
 				client,
 				player,

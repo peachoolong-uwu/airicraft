@@ -7,63 +7,35 @@ import net.minecraft.util.math.Vec3d;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CancellationException;
 
 public final class CameraController {
 	private int defaultLerpTicks;
 	private CameraMotion activeMotion;
+	private RotationSpring spring;
+	private boolean directRequest;
+	private ClientPlayerEntity controlledPlayer;
+	private CompletableFuture<Void> alignment;
 
-	public CameraController() {
-		this(0);
-	}
+	public CameraController() { this(0); }
 
 	public CameraController(int defaultLerpTicks) {
 		updateDefaultLerpTicks(defaultLerpTicks);
 	}
 
-	public void updateDefaultLerpTicks(int defaultLerpTicks) {
-		this.defaultLerpTicks = Math.max(0, defaultLerpTicks);
+	public void updateDefaultLerpTicks(int ticks) { defaultLerpTicks = Math.max(0, ticks); }
+	public int defaultLerpTicks() { return defaultLerpTicks; }
+
+	/** Submit an aim target; callers requiring a hit must wait for isLookingAt. */
+	public Optional<Rotation> lookAt(MinecraftClient client, Vec3d target) {
+		return startLookAt(client, target, defaultLerpTicks, "action");
 	}
 
-	public int defaultLerpTicks() {
-		return defaultLerpTicks;
-	}
-
-	public Optional<Rotation> lookAtNow(MinecraftClient client, Vec3d target) {
-		ClientPlayerEntity player = client == null ? null : client.player;
-		if (player == null) {
-			return Optional.empty();
-		}
-		Optional<Rotation> rotation = lookRotation(player.getEyePos(), target);
-		rotation.ifPresent(value -> applyRotation(player, value));
-		activeMotion = null;
-		return rotation;
-	}
-
-	public Optional<Rotation> lookAtStep(MinecraftClient client, Vec3d target, float maxYawStep, float maxPitchStep) {
-		ClientPlayerEntity player = client == null ? null : client.player;
-		if (player == null) {
-			return Optional.empty();
-		}
-		Optional<Rotation> targetRotation = lookRotation(player.getEyePos(), target);
-		if (targetRotation.isEmpty()) {
-			return Optional.empty();
-		}
-		Rotation rotation = new Rotation(
-			rotateToward(player.getYaw(), targetRotation.get().yaw(), maxYawStep),
-			rotateToward(player.getPitch(), targetRotation.get().pitch(), maxPitchStep)
-		);
-		applyRotation(player, rotation);
-		activeMotion = null;
-		return Optional.of(rotation);
-	}
-
-	public Optional<Rotation> faceDirectionNow(ClientPlayerEntity player, String direction) {
-		if (player == null) {
-			return Optional.empty();
-		}
+	public Optional<Rotation> faceDirection(ClientPlayerEntity player, String direction) {
+		if (player == null) return Optional.empty();
 		Optional<Rotation> rotation = directionRotation(direction);
-		rotation.ifPresent(value -> applyRotation(player, value));
-		activeMotion = null;
+		rotation.ifPresent(value -> request(player, value, defaultLerpTicks, "vision", true));
 		return rotation;
 	}
 
@@ -73,43 +45,101 @@ public final class CameraController {
 
 	public Optional<Rotation> startLookAt(MinecraftClient client, Vec3d target, int durationTicks, String reason) {
 		ClientPlayerEntity player = client == null ? null : client.player;
-		if (player == null) {
-			return Optional.empty();
+		if (player == null) return Optional.empty();
+		Optional<Rotation> rotation = lookRotation(player.getEyePos(), target);
+		rotation.ifPresent(value -> request(player, value, durationTicks, reason, true));
+		return rotation;
+	}
+
+	/** Baritone supplies targets only; this controller owns rotation writes. */
+	public void lookFromBaritone(ClientPlayerEntity player, float yaw, float pitch) {
+		if (acceptsBaritoneTarget()) request(player, new Rotation(yaw, pitch), defaultLerpTicks, "baritone", false);
+	}
+
+	boolean acceptsBaritoneTarget() {
+		return !directRequest && alignment == null
+			&& (activeMotion == null || "baritone".equals(activeMotion.reason()));
+	}
+
+	private void request(ClientPlayerEntity player, Rotation target, int ticks, String reason, boolean direct) {
+		if (controlledPlayer != player) {
+			clear();
+			controlledPlayer = player;
 		}
-		Optional<Rotation> targetRotation = lookRotation(player.getEyePos(), target);
-		if (targetRotation.isEmpty()) {
-			return Optional.empty();
-		}
-		int effectiveDuration = Math.max(0, durationTicks);
-		if (effectiveDuration == 0) {
-			applyRotation(player, targetRotation.get());
-			activeMotion = null;
-			return targetRotation;
-		}
-		activeMotion = new CameraMotion(
-			new Rotation(player.getYaw(), player.getPitch()),
-			targetRotation.get(),
-			effectiveDuration,
-			0,
-			normalizeReason(reason)
-		);
-		return targetRotation;
+		if (alignment != null) return;
+		directRequest |= direct;
+		startMotion(new Rotation(player.getYaw(), player.getPitch()), target, ticks, reason);
+	}
+
+	public boolean isLookingAt(MinecraftClient client, Vec3d target) {
+		return isLookingAt(client, target, 0.01F);
+	}
+
+	public boolean isLookingAt(MinecraftClient client, Vec3d target, float tolerance) {
+		if (client == null || client.player == null) return false;
+		return lookRotation(client.player.getEyePos(), target)
+			.map(rotation -> aligned(new Rotation(client.player.getYaw(), client.player.getPitch()), rotation, tolerance))
+			.orElse(false);
+	}
+
+	public boolean isAimingAt(MinecraftClient client, net.minecraft.util.math.Box bounds) {
+		if (client == null || client.player == null) return false;
+		Vec3d eye = client.player.getEyePos();
+		return bounds.contains(eye) || bounds.raycast(eye,
+			eye.add(client.player.getRotationVec(1.0F).multiply(6.0D))).isPresent();
+	}
+
+	public boolean capturePending() { return alignment != null; }
+
+	/** Hold path input while turning on the ground; preserve airborne/swimming control. */
+	public boolean allowsBaritoneInput(ClientPlayerEntity player, baritone.api.utils.input.Input input) {
+		if (activeMotion == null || input == baritone.api.utils.input.Input.SNEAK) return true;
+		if (!"baritone".equals(activeMotion.reason())) return false;
+		return switch (input) {
+			case CLICK_LEFT, CLICK_RIGHT -> aligned(new Rotation(player.getYaw(), player.getPitch()), activeMotion.target(), 0.5F);
+			case MOVE_FORWARD, MOVE_BACK, MOVE_LEFT, MOVE_RIGHT, JUMP, SPRINT ->
+				!player.isOnGround() || player.isTouchingWater()
+					|| Math.abs(MathHelper.wrapDegrees(activeMotion.target().yaw() - player.getYaw())) < 10.0F;
+			case SNEAK -> true;
+		};
+	}
+
+	public CompletableFuture<Void> whenAligned() {
+		if (activeMotion == null) return CompletableFuture.completedFuture(null);
+		if (alignment == null) alignment = new CompletableFuture<>();
+		return alignment;
 	}
 
 	public void tick(MinecraftClient client) {
-		if (activeMotion == null) {
-			return;
-		}
 		ClientPlayerEntity player = client == null ? null : client.player;
-		if (player == null) {
+		if (player == null || !player.isAlive() || (controlledPlayer != null && controlledPlayer != player)) {
 			clear();
 			return;
 		}
-		tickMotion().ifPresent(rotation -> applyRotation(player, rotation));
+		tickMotion().ifPresent(rotation -> {
+			// Leave previous angles intact for Minecraft's render interpolation.
+			player.setYaw(rotation.yaw());
+			player.setPitch(rotation.pitch());
+			player.setHeadYaw(rotation.yaw());
+		});
+		directRequest = false;
+		if (activeMotion == null && alignment != null) {
+			var completed = alignment;
+			alignment = null;
+			completed.complete(null);
+		}
 	}
 
 	public void clear() {
 		activeMotion = null;
+		spring = null;
+		controlledPlayer = null;
+		directRequest = false;
+		if (alignment != null) {
+			var cancelled = alignment;
+			alignment = null;
+			cancelled.completeExceptionally(new CancellationException("Camera control released"));
+		}
 	}
 
 	public Optional<String> activeReason() {
@@ -117,34 +147,26 @@ public final class CameraController {
 	}
 
 	void startMotion(Rotation start, Rotation target, int durationTicks, String reason) {
-		activeMotion = new CameraMotion(
-			Objects.requireNonNull(start, "start"),
-			Objects.requireNonNull(target, "target"),
-			Math.max(1, durationTicks),
-			0,
-			normalizeReason(reason)
-		);
+		if (spring == null) spring = new RotationSpring(Objects.requireNonNull(start));
+		activeMotion = new CameraMotion(Objects.requireNonNull(target),
+			durationTicks > 0 ? 120.0D / durationTicks : 18.0D, normalizeReason(reason));
 	}
 
 	Optional<Rotation> tickMotion() {
-		if (activeMotion == null) {
-			return Optional.empty();
-		}
-		int nextElapsed = activeMotion.elapsedTicks() + 1;
-		float progress = Math.min(1.0F, nextElapsed / (float) activeMotion.durationTicks());
-		Rotation rotation = interpolate(activeMotion.start(), activeMotion.target(), progress);
-		if (nextElapsed >= activeMotion.durationTicks()) {
+		if (activeMotion == null) return Optional.empty();
+		Rotation rotation = spring.advance(activeMotion.target(), 0.05D, activeMotion.frequency());
+		if (aligned(rotation, activeMotion.target(), 0.01F) && spring.atRest()) {
+			rotation = new Rotation(rotation.yaw() + MathHelper.wrapDegrees(activeMotion.target().yaw() - rotation.yaw()),
+				activeMotion.target().pitch());
 			activeMotion = null;
-			return Optional.of(rotation);
+			spring = null;
 		}
-		activeMotion = new CameraMotion(
-			activeMotion.start(),
-			activeMotion.target(),
-			activeMotion.durationTicks(),
-			nextElapsed,
-			activeMotion.reason()
-		);
 		return Optional.of(rotation);
+	}
+
+	private static boolean aligned(Rotation current, Rotation target, float tolerance) {
+		return Math.abs(MathHelper.wrapDegrees(target.yaw() - current.yaw())) < tolerance
+			&& Math.abs(target.pitch() - current.pitch()) < tolerance;
 	}
 
 	public static Optional<Rotation> lookRotation(Vec3d eyePos, Vec3d target) {
@@ -175,48 +197,6 @@ public final class CameraController {
 		};
 	}
 
-	static Rotation interpolate(Rotation start, Rotation target, float progress) {
-		Objects.requireNonNull(start, "start");
-		Objects.requireNonNull(target, "target");
-		float clampedProgress = MathHelper.clamp(progress, 0.0F, 1.0F);
-		if (clampedProgress >= 1.0F) {
-			return target;
-		}
-		float yawDelta = MathHelper.wrapDegrees(target.yaw() - start.yaw());
-		float pitchDelta = target.pitch() - start.pitch();
-		return new Rotation(
-			start.yaw() + yawDelta * clampedProgress,
-			MathHelper.clamp(start.pitch() + pitchDelta * clampedProgress, -90.0F, 90.0F)
-		);
-	}
-
-	static float rotateToward(float current, float target, float maxStep) {
-		float delta = MathHelper.wrapDegrees(target - current);
-		float step = MathHelper.clamp(delta, -maxStep, maxStep);
-		return current + step;
-	}
-
-	static void applyRotation(MutableRotation target, Rotation rotation) {
-		Objects.requireNonNull(target, "target");
-		Objects.requireNonNull(rotation, "rotation");
-		float pitch = MathHelper.clamp(rotation.pitch(), -90.0F, 90.0F);
-		target.setAngles(rotation.yaw(), pitch);
-		target.setYaw(rotation.yaw());
-		target.setPitch(pitch);
-		target.setHeadYaw(rotation.yaw());
-		target.setBodyYaw(rotation.yaw());
-		target.setLastYaw(rotation.yaw());
-		target.setLastPitch(pitch);
-		target.setRenderYaw(rotation.yaw());
-		target.setLastRenderYaw(rotation.yaw());
-		target.setRenderPitch(pitch);
-		target.setLastRenderPitch(pitch);
-	}
-
-	private static void applyRotation(ClientPlayerEntity player, Rotation rotation) {
-		applyRotation(new PlayerRotationTarget(player), rotation);
-	}
-
 	private static String normalizeReason(String reason) {
 		return reason == null || reason.isBlank() ? "unspecified" : reason.trim();
 	}
@@ -224,89 +204,6 @@ public final class CameraController {
 	public record Rotation(float yaw, float pitch) {
 	}
 
-	private record CameraMotion(
-		Rotation start,
-		Rotation target,
-		int durationTicks,
-		int elapsedTicks,
-		String reason
-	) {
-	}
+	private record CameraMotion(Rotation target, double frequency, String reason) { }
 
-	interface MutableRotation {
-		void setAngles(float yaw, float pitch);
-		void setYaw(float yaw);
-		void setPitch(float pitch);
-		void setHeadYaw(float yaw);
-		void setBodyYaw(float yaw);
-		void setLastYaw(float yaw);
-		void setLastPitch(float pitch);
-		void setRenderYaw(float yaw);
-		void setLastRenderYaw(float yaw);
-		void setRenderPitch(float pitch);
-		void setLastRenderPitch(float pitch);
-	}
-
-	private static final class PlayerRotationTarget implements MutableRotation {
-		private final ClientPlayerEntity player;
-
-		private PlayerRotationTarget(ClientPlayerEntity player) {
-			this.player = Objects.requireNonNull(player, "player");
-		}
-
-		@Override
-		public void setAngles(float yaw, float pitch) {
-			player.setAngles(yaw, pitch);
-		}
-
-		@Override
-		public void setYaw(float yaw) {
-			player.setYaw(yaw);
-		}
-
-		@Override
-		public void setPitch(float pitch) {
-			player.setPitch(pitch);
-		}
-
-		@Override
-		public void setHeadYaw(float yaw) {
-			player.setHeadYaw(yaw);
-		}
-
-		@Override
-		public void setBodyYaw(float yaw) {
-			player.setBodyYaw(yaw);
-		}
-
-		@Override
-		public void setLastYaw(float yaw) {
-			player.lastYaw = yaw;
-		}
-
-		@Override
-		public void setLastPitch(float pitch) {
-			player.lastPitch = pitch;
-		}
-
-		@Override
-		public void setRenderYaw(float yaw) {
-			player.renderYaw = yaw;
-		}
-
-		@Override
-		public void setLastRenderYaw(float yaw) {
-			player.lastRenderYaw = yaw;
-		}
-
-		@Override
-		public void setRenderPitch(float pitch) {
-			player.renderPitch = pitch;
-		}
-
-		@Override
-		public void setLastRenderPitch(float pitch) {
-			player.lastRenderPitch = pitch;
-		}
-	}
 }

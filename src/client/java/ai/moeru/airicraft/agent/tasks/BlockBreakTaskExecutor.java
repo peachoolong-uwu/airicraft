@@ -109,7 +109,8 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 		if (!withinInteractionRange(player, Vec3d.ofCenter(pos))) {
 			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_out_of_range targetPos=" + compactPos(pos)));
 		}
-		cameraController.lookAtNow(client, Vec3d.ofCenter(pos));
+		cameraController.lookAt(client, Vec3d.ofCenter(pos));
+		if (!cameraController.isLookingAt(client, Vec3d.ofCenter(pos))) return Optional.empty();
 		long tick = sessionSnapshot == null ? 0L : sessionSnapshot.tickCount();
 		if (!breakingActive) {
 			BaritoneTaskExecutor.MiningToolPreflight.Result toolSelection =

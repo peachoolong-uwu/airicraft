@@ -21,46 +21,59 @@ class CameraControllerTest {
 	}
 
 	@Test
-	void applyRotationUpdatesAllPlayerRotationFields() {
-		MutableRotationTarget target = new MutableRotationTarget();
-
-		CameraController.applyRotation(target, new CameraController.Rotation(45.0F, 120.0F));
-
-		assertEquals(45.0F, target.anglesYaw, 0.001F);
-		assertEquals(90.0F, target.anglesPitch, 0.001F);
-		assertEquals(45.0F, target.yaw, 0.001F);
-		assertEquals(90.0F, target.pitch, 0.001F);
-		assertEquals(45.0F, target.headYaw, 0.001F);
-		assertEquals(45.0F, target.bodyYaw, 0.001F);
-		assertEquals(45.0F, target.lastYaw, 0.001F);
-		assertEquals(90.0F, target.lastPitch, 0.001F);
-		assertEquals(45.0F, target.renderYaw, 0.001F);
-		assertEquals(45.0F, target.lastRenderYaw, 0.001F);
-		assertEquals(90.0F, target.renderPitch, 0.001F);
-		assertEquals(90.0F, target.lastRenderPitch, 0.001F);
+	void springAdvancesAcrossYawSeamAndReleasesAtTarget() {
+		CameraController controller = new CameraController();
+		controller.startMotion(new CameraController.Rotation(170, 0),
+			new CameraController.Rotation(-170, 40), 0, "test");
+		var first = controller.tickMotion().orElseThrow();
+		assertTrue(first.yaw() > 170 && first.yaw() < 190);
+		assertTrue(first.pitch() > 0 && first.pitch() < 40);
+		assertTrue(controller.activeReason().isPresent());
+		CameraController.Rotation last = first;
+		for (int i = 0; i < 40 && controller.activeReason().isPresent(); i++) {
+			last = controller.tickMotion().orElseThrow();
+		}
+		assertEquals(190, last.yaw(), 0.1);
+		assertEquals(40, last.pitch(), 0.1);
+		assertTrue(controller.activeReason().isEmpty());
 	}
 
 	@Test
-	void lerpAdvancesAndFinishesAtTargetRotation() {
+	void repeatedTargetsDoNotRestartTheSpring() {
 		CameraController controller = new CameraController();
-		controller.startMotion(
-			new CameraController.Rotation(170.0F, 0.0F),
-			new CameraController.Rotation(-170.0F, 40.0F),
-			4,
-			"test"
-		);
+		var current = new CameraController.Rotation(0, 0);
+		var target = new CameraController.Rotation(90, 0);
+		for (int i = 0; i < 20; i++) {
+			controller.startMotion(current, target, 0, "tracking");
+			current = controller.tickMotion().orElseThrow();
+		}
+		assertEquals(90, current.yaw(), 0.1);
+	}
 
-		CameraController.Rotation first = controller.tickMotion().orElseThrow();
-		assertEquals(175.0F, first.yaw(), 0.001F);
-		assertEquals(10.0F, first.pitch(), 0.001F);
-		assertTrue(controller.activeReason().isPresent());
+	@Test
+	void directLookOwnsCameraUntilSettledButBaritoneCanRetargetItsOwnMotion() {
+		CameraController controller = new CameraController();
+		var start = new CameraController.Rotation(0, 0);
+		var target = new CameraController.Rotation(90, 0);
+		controller.startMotion(start, target, 0, "baritone");
+		assertTrue(controller.acceptsBaritoneTarget());
+		controller.startMotion(start, target, 0, "player_look_at");
+		assertTrue(!controller.acceptsBaritoneTarget());
+		for (int i = 0; i < 40; i++) controller.tickMotion();
+		assertTrue(controller.acceptsBaritoneTarget());
+	}
 
-		controller.tickMotion();
-		controller.tickMotion();
-		CameraController.Rotation finalRotation = controller.tickMotion().orElseThrow();
-		assertEquals(-170.0F, finalRotation.yaw(), 0.001F);
-		assertEquals(40.0F, finalRotation.pitch(), 0.001F);
-		assertTrue(controller.activeReason().isEmpty());
+	@Test
+	void clearingCancelsCaptureWaitAndReleasesOwnership() {
+		CameraController controller = new CameraController();
+		controller.startMotion(new CameraController.Rotation(0, 0),
+			new CameraController.Rotation(90, 0), 0, "vision");
+		var pending = controller.whenAligned();
+		assertTrue(controller.capturePending());
+		controller.clear();
+		assertTrue(pending.isCompletedExceptionally());
+		assertTrue(!controller.capturePending());
+		assertTrue(controller.acceptsBaritoneTarget());
 	}
 
 	@Test
@@ -79,74 +92,4 @@ class CameraControllerTest {
 		assertEquals(Optional.empty(), controller.tickMotion());
 	}
 
-	private static final class MutableRotationTarget implements CameraController.MutableRotation {
-		private float anglesYaw;
-		private float anglesPitch;
-		private float yaw;
-		private float pitch;
-		private float headYaw;
-		private float bodyYaw;
-		private float lastYaw;
-		private float lastPitch;
-		private float renderYaw;
-		private float lastRenderYaw;
-		private float renderPitch;
-		private float lastRenderPitch;
-
-		@Override
-		public void setAngles(float yaw, float pitch) {
-			this.anglesYaw = yaw;
-			this.anglesPitch = pitch;
-		}
-
-		@Override
-		public void setYaw(float yaw) {
-			this.yaw = yaw;
-		}
-
-		@Override
-		public void setPitch(float pitch) {
-			this.pitch = pitch;
-		}
-
-		@Override
-		public void setHeadYaw(float yaw) {
-			this.headYaw = yaw;
-		}
-
-		@Override
-		public void setBodyYaw(float yaw) {
-			this.bodyYaw = yaw;
-		}
-
-		@Override
-		public void setLastYaw(float yaw) {
-			this.lastYaw = yaw;
-		}
-
-		@Override
-		public void setLastPitch(float pitch) {
-			this.lastPitch = pitch;
-		}
-
-		@Override
-		public void setRenderYaw(float yaw) {
-			this.renderYaw = yaw;
-		}
-
-		@Override
-		public void setLastRenderYaw(float yaw) {
-			this.lastRenderYaw = yaw;
-		}
-
-		@Override
-		public void setRenderPitch(float pitch) {
-			this.renderPitch = pitch;
-		}
-
-		@Override
-		public void setLastRenderPitch(float pitch) {
-			this.lastRenderPitch = pitch;
-		}
-	}
 }

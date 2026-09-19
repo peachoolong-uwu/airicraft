@@ -160,6 +160,11 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 			outOfRangeTicks = 0;
 			// Baritone owns steering on indirect approaches; aim only when we own the interaction.
 			lookAtTarget(client, target);
+			if (!cameraController.isAimingAt(client, target.getBoundingBox())) {
+				movementController.stop(client);
+				snapshot = snapshot(TaskExecutionState.RUNNING, request, "aiming_at_target");
+				return Optional.empty();
+			}
 		}
 
 		return switch (request.type()) {
@@ -448,7 +453,7 @@ public final class EntityInteractionTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private void lookAtTarget(MinecraftClient client, Entity target) {
-		cameraController.lookAtNow(client, targetAimPoint(target));
+		cameraController.lookAt(client, targetAimPoint(target));
 	}
 
 	private static boolean hasBlockLineOfSight(MinecraftClient client, ClientPlayerEntity player, Entity target) {

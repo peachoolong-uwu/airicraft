@@ -559,7 +559,7 @@ public final class SurvivalReflexRuntime {
 				stopCombatNavigation();
 			}
 		}
-		cameraController.lookAtNow(client, new Vec3d(shieldGuard.facing().x, player.getEyeY(), shieldGuard.facing().z));
+		cameraController.lookAt(client, new Vec3d(shieldGuard.facing().x, player.getEyeY(), shieldGuard.facing().z));
 		client.options.useKey.setPressed(true);
 		if (!shieldUseOwned) pendingEvents.add(new SurvivalReflexEvent("reflex.shield_raised", mapOfNullable(
 			"sourceUuid", shieldGuard.source(), "incomingProjectile", Double.isFinite(earliest),
@@ -624,8 +624,8 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void defend(MinecraftClient client, ClientPlayerEntity player, ResolvedThreat threat, long tick) {
-		cameraController.lookAtNow(client, threat.entity().getBoundingBox().getCenter());
 		if (threat.distance() <= 3.0D && threat.lineOfSight()) {
+			cameraController.lookAt(client, threat.entity().getBoundingBox().getCenter());
 			stopCombatNavigation();
 			movementController.stop(client);
 			return;
@@ -635,6 +635,7 @@ public final class SurvivalReflexRuntime {
 			updateCombatNavigation(goal(threat.entity().getBlockPos()), tick);
 		}
 		else if (threat.lineOfSight()) {
+			cameraController.lookAt(client, threat.entity().getBoundingBox().getCenter());
 			movementController.moveDirectional(client, true, false, false, false, true, false, tick);
 		}
 		else {
@@ -672,8 +673,10 @@ public final class SurvivalReflexRuntime {
 		Vec3d facing = focus.entity().getBoundingBox().getCenter();
 		// A raised shield keeps its selected shooter/blast heading; movement is relative to that heading.
 		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
-		cameraController.lookAtNow(client, facing);
-		var control = combatPositioning.control(client, step, facing, focus.entity().getPos(), tick);
+		cameraController.lookAt(client, facing);
+		// Key directions must use the current spring angle, not the requested threat bearing.
+		Vec3d actualFacing = client.player.getPos().add(Vec3d.fromPolar(0.0F, client.player.getYaw()));
+		var control = combatPositioning.control(client, step, actualFacing, focus.entity().getPos(), tick);
 		var steering = control.steering();
 		movementController.moveDirectional(client, steering.forward(), steering.back(), steering.left(), steering.right(), !shielding && !kiting && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
 				&& !control.sneak() && client.player.getHungerManager().getFoodLevel() > 6,
@@ -767,7 +770,8 @@ public final class SurvivalReflexRuntime {
 		}
 		// Early-fuse strikes can interrupt the approach; late fuse belongs to escape/blocking.
 		if (threat.entity() instanceof net.minecraft.entity.mob.CreeperEntity c && c.getLerpedFuseTime(1) >= .2F) return;
-		cameraController.lookAtNow(client, threat.entity().getBoundingBox().getCenter());
+		cameraController.lookAt(client, threat.entity().getBoundingBox().getCenter());
+		if (!cameraController.isAimingAt(client, threat.entity().getBoundingBox())) return;
 		boolean sprintHit = player.isSprinting();
 		client.interactionManager.attackEntity(player, threat.entity());
 		player.swingHand(Hand.MAIN_HAND);

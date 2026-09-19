@@ -291,7 +291,8 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 			);
 		}
 		movementController.stop(client);
-		cameraController.lookAtNow(client, hitTarget.hitVec());
+		cameraController.lookAt(client, hitTarget.hitVec());
+		if (!cameraController.isLookingAt(client, hitTarget.hitVec())) return Optional.empty();
 		boolean raycastMatchesHitTarget = requiresSupportRaycast(before, target, hitTarget)
 			? raycastMatchesSupport(client, player, hitTarget.supportPos(), hitTarget.hitVec(), hitTarget.face())
 			: raycastMatchesHitTarget(client, player, hitTarget);
@@ -345,7 +346,7 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		}
 		ActionResult itemResult = null;
 		if (!blockResult.isAccepted() && request.type() == WorldTaskType.USE_BLOCK && !(blockResult instanceof ActionResult.Fail)) {
-			cameraController.lookAtNow(client, hitTarget.hitVec());
+			cameraController.lookAt(client, hitTarget.hitVec());
 			raycastMatchesHitTarget = raycastMatchesHitTarget(client, player, hitTarget);
 			if (raycastMatchesHitTarget) {
 				itemResult = client.interactionManager.interactItem(player, hand);
@@ -521,7 +522,8 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		}
 		movementController.stop(client);
 		Vec3d hitVec = Vec3d.ofCenter(target);
-		cameraController.lookAtNow(client, hitVec);
+		cameraController.lookAt(client, hitVec);
+		if (!cameraController.isLookingAt(client, hitVec)) return Optional.empty();
 		String beforeItemId = itemId(hand == Hand.OFF_HAND ? player.getOffHandStack() : player.getMainHandStack());
 		boolean itemFluidRaycastMatches = raycastMatchesPlayerView(
 			client,
@@ -757,7 +759,7 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		navigationTarget = null;
 		navigationGoal = null;
 		navigationStartTick = 0L;
-		cameraController.lookAtNow(client, aimPoint);
+		cameraController.lookAt(client, aimPoint);
 		movementController.moveForward(client, true, false, tick);
 		snapshot = snapshot(TaskExecutionState.RUNNING, request, "interaction_direct_approach targetIndex=" + targetIndex
 			+ " targetPos=" + compactPos(target)
