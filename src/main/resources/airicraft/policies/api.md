@@ -71,3 +71,40 @@ Use inspect_work with the exact work ID. Details retain source, input, result, r
 - CANCELLED: safety, death, world leave, reset or explicit cancel_work stopped the invocation. Transfers already committed remain; no rollback or automatic resume. Respect safety ownership before starting new work.
 
 Other limits: 32768 source characters, 16384 characters per JSON value, 200000 guest statements per evaluation, 10-second initialization and 1-second resume deadlines. No host, network, process or filesystem access. This helper reads documentation bundled with the running build, not a local checkout or arbitrary file. If documented behavior still fails after inspecting evidence, report the source, input, work ID and terminal reason to the developer instead of repeatedly guessing.
+
+## Self-created read-only tools
+
+`survey_surroundings` is a bundled editable `query(world,input)` policy. It returns
+ranked landmarks, a north-up terrain grid and an aligned relative-height grid.
+Both grids select the same local supporting surface, nearest the requested absolute
+`elevation` (default player feet). Height values remain relative to player feet.
+Multiple candidate floors are marked M; this is not a route or standing guarantee.
+All captured cells participate before output limits. Landmarks use semantic priority,
+optional comma-separated `focus` fragments, then block rarity and distance.
+
+Call `inspect_tool({name:"survey_surroundings"})` to obtain its complete definition.
+Copy that definition to `define_tool`, with a `custom_` name, edited description,
+parameters, source and capture settings. All five fields are required. Updates replace
+the definition immediately, without versioning. The next model request advertises
+its function schema. Call it by name with its declared arguments. `inspect_tool({})`
+lists definitions; `remove_tool({name:...})` removes one, including the survey if desired.
+Definitions live in the planner shell's memory and are lost when that shell is rebuilt;
+there is no disk persistence. At most 16 definitions may exist.
+
+`parameters` is a JSON schema with `type:"object"`, `properties`, optional `required`,
+and `additionalProperties:false`. Properties support string, boolean, number and
+integer types, descriptions, enum, and numeric minimum/maximum. Nested objects,
+arrays and other schema keywords are not supported and are rejected.
+`capture` accepts the same radius, verticalRadius, center, includeBlocks and
+includeEntities settings as query_world (not source/input). Capture settings are
+fixed per definition; query arguments are passed as `input`. To change capture
+bounds, edit the definition or use query_world directly. The default survey captures
+radius 8 and verticalRadius 4. Try source through query_world before registration.
+Registration validates the definition; JavaScript errors are reported when invoked.
+
+JavaScript receives the existing detached query_world snapshot. Each block also has
+`collisionBoxes`, an array of local-coordinate `[minX,minY,minZ,maxX,maxY,maxZ]` boxes.
+These retain slab heights and partial shapes; coordinates are relative to the block.
+The host supplies coverage metadata outside the editable result and records the read
+coverage. Existing source, snapshot, result-size and execution-time limits apply.
+Self tools cannot invoke other tools, yield actions, access Java, or mutate the world.

@@ -182,11 +182,13 @@ public final class PlannerShellFactory {
 				: client.getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT);
 		});
 		plannerGoal.refreshWorld();
+		var scriptedQueries = ai.moeru.airicraft.agent.llm.WorldQueryScriptToolProvider.forClient(effectiveServerTickSupplier, effectiveWorldReadObserver);
 		var sharedProviders = new java.util.ArrayList<>(List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
 			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
 			new ai.moeru.airicraft.agent.spatial.TravelPolicyToolProvider(),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
-			ai.moeru.airicraft.agent.llm.WorldQueryScriptToolProvider.forClient(effectiveServerTickSupplier, effectiveWorldReadObserver),
+			scriptedQueries,
+			new ai.moeru.airicraft.agent.llm.SelfToolProvider(scriptedQueries),
 			new ai.moeru.airicraft.agent.llm.PolicyDocsToolProvider(),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),

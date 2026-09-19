@@ -1,0 +1,29 @@
+{
+  "name": "survey_surroundings",
+  "description": "Survey nearby landmarks plus aligned top-down terrain and relative-height ASCII maps. Full captured region summarized; north up. Use inspect_world for precise interaction or placement checks. Inspect this tool to customize its JavaScript.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "focus": {
+        "type": "string",
+        "description": "Comma-separated block ID fragments to prioritize, e.g. chest,furnace."
+      },
+      "landmarkLimit": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 24
+      },
+      "elevation": {
+        "type": "number",
+        "description": "Select supporting surfaces nearest this absolute feet elevation; defaults to player feet."
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "capture": {
+    "radius": 8,
+    "verticalRadius": 4,
+    "includeEntities": false
+  }
+}

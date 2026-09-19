@@ -78,6 +78,8 @@ record WorldQuerySnapshot(JsonObject data, List<BlockPos> observedPositions, Cli
 			block.addProperty("replaceable", state.isReplaceable());
 			block.addProperty("fluid", !state.getFluidState().isEmpty());
 			block.addProperty("collisionEmpty", state.getCollisionShape(world, pos).isEmpty());
+			block.add("collisionBoxes", JSON.toJsonTree(state.getCollisionShape(world, pos).getBoundingBoxes().stream()
+				.map(b -> List.of(b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ)).toList()));
 			block.addProperty("light", world.getLightLevel(pos));
 			blocks.add(block);
 			observed.add(pos);
