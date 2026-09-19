@@ -70,6 +70,9 @@ public final class WorldQueryScriptToolProvider implements PlannerToolProvider {
 		}, clientExecutor).thenCompose(snapshot -> GraalPolicyInvocation.query(call.arguments().get("source").getAsString(),
 			snapshot.data(), call.arguments().get("input")).thenApplyAsync(result -> {
 				observe.accept(snapshot);
+				if (result.isJsonPrimitive() && result.getAsJsonPrimitive().isString()) {
+					return "Tool result for query_world:\n" + coverageText(snapshot.data().getAsJsonObject("metadata")) + "\n" + result.getAsString();
+				}
 				var response = new JsonObject();
 				response.add("metadata", snapshot.data().get("metadata"));
 				response.add("result", result);
@@ -81,4 +84,21 @@ public final class WorldQueryScriptToolProvider implements PlannerToolProvider {
 				return "TOOL_ERROR: query_world " + (message == null || message.isBlank() ? cause.getClass().getSimpleName() : message);
 			});
 	}
+	/** Host-owned facts remain outside editable guest presentation. */
+	private static String coverageText(JsonObject metadata) {
+		var bounds = metadata.getAsJsonObject("bounds");
+		var blocks = metadata.getAsJsonObject("blocks");
+		var entities = metadata.getAsJsonObject("entities");
+		return "Coverage: " + metadata.get("dimension").getAsString() + " tick=" + metadata.get("serverTick")
+			+ " box=" + positionText(bounds.getAsJsonObject("min")) + ".." + positionText(bounds.getAsJsonObject("max"))
+			+ "; blocks=" + blocks.get("returned") + "/" + blocks.get("requested")
+			+ " unloaded=" + blocks.get("unloaded") + " outsideWorld=" + blocks.get("outsideWorld")
+			+ " truncated=" + blocks.get("truncated")
+			+ "; entities=" + (entities.get("included").getAsBoolean()
+				? entities.get("returned") + "/" + entities.get("matched") + " truncated=" + entities.get("truncated") : "not captured");
+	}
+	private static String positionText(JsonObject p) {
+		return p.get("x") + "," + p.get("y") + "," + p.get("z");
+	}
+
 }

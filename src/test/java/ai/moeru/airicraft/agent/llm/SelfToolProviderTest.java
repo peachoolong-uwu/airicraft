@@ -10,6 +10,12 @@ class SelfToolProviderTest {
 	private static JsonObject json(String s) { return JsonParser.parseString(s).getAsJsonObject(); }
 	private static PlannerToolCall call(String name, JsonObject args) { return new PlannerToolCall("test",name,args,null,null); }
 	private static String run(SelfToolProvider p,String name,JsonObject args) throws Exception { return p.execute(call(name,args)).get(15,TimeUnit.SECONDS); }
+	private static String geometry(JsonObject world, JsonObject input) throws Exception {
+		String source=PolicyDocsToolProvider.readResource("/airicraft/policies/survey.js")
+			+ "\nfunction query(world,input) {return survey(world,input);}";
+		var result=ai.moeru.airicraft.policy.GraalPolicyInvocation.query(source,world,input).get(15,TimeUnit.SECONDS);
+		var response=new JsonObject();response.add("result",result);return response.toString();
+	}
 	private static JsonObject definition() {
 		return json("""
 			{"name":"custom_count","description":"Count matching blocks","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false},
@@ -67,7 +73,7 @@ class SelfToolProviderTest {
 			blocks.add(b);
 		}
 		var p=new SelfToolProvider(queries(world));
-		var response=run(p,"survey_surroundings",json("{\"focus\":\"door\",\"landmarkLimit\":1}"));
+		var response=geometry(world,json("{\"focus\":\"door\",\"landmarkLimit\":1}"));
 		var result=JsonParser.parseString(response.substring(response.indexOf('{'))).getAsJsonObject().getAsJsonObject("result");
 		var landmark=result.getAsJsonArray("landmarks").get(0).getAsJsonObject();
 		assertEquals(4,landmark.getAsJsonObject("position").get("x").getAsInt());
@@ -91,7 +97,7 @@ class SelfToolProviderTest {
 			world.getAsJsonArray("blocks").add(b);
 		}
 		var p=new SelfToolProvider(queries(world));
-		var response=run(p,"survey_surroundings",json("{\"landmarkLimit\":0}"));
+		var response=geometry(world,json("{\"landmarkLimit\":0}"));
 		var result=JsonParser.parseString(response.substring(response.indexOf('{'))).getAsJsonObject().getAsJsonObject("result");
 		assertEquals("M   ?",result.get("terrain").getAsString().trim());
 		assertEquals("+1   ?",result.get("relativeHeight").getAsString().trim());
@@ -106,7 +112,7 @@ class SelfToolProviderTest {
 			 "blocks":[{"position":{"x":0,"y":64,"z":0},"blockId":"minecraft:chest","properties":{"type":"single"},
 			 "air":false,"fluid":false,"collisionEmpty":false,"collisionBoxes":[[0,0,0,1,0.875,1]]}]}
 			""");
-		String response=run(new SelfToolProvider(queries(world)),"survey_surroundings",json("{}"));
+		String response=geometry(world,json("{}"));
 		var result=JsonParser.parseString(response.substring(response.indexOf('{'))).getAsJsonObject().getAsJsonObject("result");
 		assertEquals("1?",result.get("terrain").getAsString().trim());
 		assertEquals("?",result.get("relativeHeight").getAsString().trim());
@@ -123,7 +129,7 @@ class SelfToolProviderTest {
 			""");
 		for (String expected:List.of("L", "@")) {
 			if(expected.equals("@")) world.getAsJsonObject("player").getAsJsonObject("position").addProperty("x",0);
-			String response=run(new SelfToolProvider(queries(world)),"survey_surroundings",json("{}"));
+			String response=geometry(world,json("{}"));
 			var result=JsonParser.parseString(response.substring(response.indexOf('{'))).getAsJsonObject().getAsJsonObject("result");
 			assertEquals(expected+"?",result.get("terrain").getAsString().trim());
 			assertEquals(2,result.getAsJsonArray("landmarks").size());
@@ -134,6 +140,27 @@ class SelfToolProviderTest {
 				assertEquals(0,map.get("column").getAsInt());
 			}
 		}
+	}
+
+	@Test void surveyIsPlainTextWithHostCoverageAndRealMapRows() throws Exception {
+		var world=json("""
+			{"metadata":{"dimension":"minecraft:overworld","serverTick":42,
+			 "bounds":{"min":{"x":0,"y":64,"z":0},"max":{"x":0,"y":64,"z":0}},
+			 "blocks":{"returned":1,"requested":1,"unloaded":0,"outsideWorld":0,"truncated":false},"entities":{"included":false}},
+			 "player":{"position":{"x":2,"y":64,"z":0}},"entities":[],
+			 "blocks":[{"position":{"x":0,"y":64,"z":0},"blockId":"minecraft:chest","properties":{"type":"single"},
+			 "air":false,"fluid":false,"collisionEmpty":false,"collisionBoxes":[[0,0,0,1,0.875,1]]}]}
+			""");
+		String result=run(new SelfToolProvider(queries(world)),"survey_surroundings",json("{}"));
+		assertTrue(result.startsWith("Tool result for survey_surroundings:\nCoverage: minecraft:overworld tick=42 box=0,64,0..0,64,0"),result);
+		assertTrue(result.contains("1 chest(0,64,0) type=single"));
+		assertTrue(result.contains("Terrain:\n 1?\nHeight relative to self feet:\n  ?"),result);
+		assertFalse(result.contains("\\n"));
+		assertFalse(result.contains("\"result\""));
+		var call=call("query_world",json("{\"source\":\"function query(w){w.metadata.blocks.returned=-1;return 'hello';}\",\"input\":{}}"));
+		String custom=queries(world).execute(call).get(15,TimeUnit.SECONDS);
+		assertTrue(custom.contains("blocks=1/1"));
+		assertTrue(custom.endsWith("\nhello"));
 	}
 
 }

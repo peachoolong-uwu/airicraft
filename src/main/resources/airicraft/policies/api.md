@@ -118,3 +118,10 @@ it is not a proven absence of support. Block properties use canonical Minecraft
 serialized values (for example chest type "single"). Read-only query execution
 has a three-second wall-clock budget; action-policy resumes retain one second.
 The 200,000-statement limit still applies to both.
+
+Queries may return a string for direct planner-facing text: it is emitted with real
+newlines after a compact host-owned coverage line, without JSON quoting. Object,
+array and other results retain the structured JSON envelope. The bundled survey
+uses text landmarks and aligned ASCII grids; it does not repeat per-landmark map
+metadata in the planner result. Its internal `survey(world,input)` helper still
+returns geometry for custom policies that need to transform it.

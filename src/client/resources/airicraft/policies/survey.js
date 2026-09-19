@@ -1,4 +1,4 @@
-function query(world, input) {
+function survey(world, input) {
   const player = world.player.position, bounds = world.metadata.bounds;
   const key = (x,y,z) => `${x},${y},${z}`;
   const cells = new Map(world.blocks.map(b => [key(b.position.x,b.position.y,b.position.z),b]));
@@ -74,4 +74,23 @@ function query(world, input) {
     landmarks,omittedLandmarks:Math.max(0,candidates.length-limit),terrain:grid(terrain),relativeHeight:grid(heights),
     legend:'Cell prefix: @ self, number landmark label, L multiple landmarks (see landmark map row/column). Suffix:  . surface near reference elevation; ^ other elevation; # blocked column; ~ water; ! lava; M multiple candidate floors (height uses nearest reference); ? unknown; - no body-clear supporting surface in vertical bounds. Height numbers are surface offsets from player feet Y, not landmark labels.',
     caveat:'Local column geometry only, not route or full-footprint standing proof. Both maps use the same selected surface. Loaded blocks may be occluded. Landmark prefixes mark columns at any elevation; exact landmark Y is in the list, not the height map.'};
+}
+
+// Planner-facing presentation; geometry stays structured inside the policy.
+function query(world, input) {
+  const s=survey(world,input), pos=p=>[p.x,p.y,p.z].map(n=>Number(n.toFixed(2))).join(',');
+  const landmarks=s.landmarks.map(l=> {
+    const states=Object.entries(l.state).map(([k,v])=>`${k}=${v}`).join(' ');
+    return `${l.label} ${l.blockId.replace(/^minecraft:/,'')}${l.occupied.map(p=>`(${pos(p)})`).join('')}${states?' '+states:''}`;
+  });
+  return [
+    `Self (${pos(s.center)}); surface selection Y=${s.referenceElevation}`,
+    'North up; columns +X, rows +Z; 1 cell/block.',
+    `Landmarks (${s.omittedLandmarks} other candidates omitted):`,
+    ...landmarks,
+    'Terrain:', s.terrain,
+    'Height relative to self feet:', s.relativeHeight,
+    'Prefix: number=landmark, L=shared landmark column, @=self. Suffix: .=level ^=other height #=blocked ~=water !=lava M=multiple floors ?=unknown -=no clear support in range.',
+    'Height uses the nearest body-clear surface, not landmark Y. Loaded cells may be occluded; no route or standing guarantee.'
+  ].join('\n');
 }

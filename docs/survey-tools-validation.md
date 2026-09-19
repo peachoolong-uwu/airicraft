@@ -70,3 +70,19 @@ wrapper/build/install/airicraft/bin/airicraft agent tools call \
 Use `inspect_tool` with `name=survey_surroundings` to retrieve the editable source,
 then `define_tool` to create a `custom_` variant. The original world is not modified
 by snapshot reads. No live client may use this checkout while its JARs are rebuilt.
+
+## Compact text presentation
+
+The survey now returns a string rather than exposing its internal geometry object.
+The query provider emits string results directly with real newlines and a concise
+host-owned coverage header; object/array results keep their JSON envelope. Survey
+landmarks use `label block(x,y,z) state=value` lines followed by the aligned maps.
+The wrapper's single-line transport display escapes newlines, but the provider's
+planner-facing result contains actual newline characters.
+
+A fresh Codex-driver run verified the text survey at the same camp position. Its
+wrapper result shrank from 6,424 to 3,451 characters (46.3%). This is a character
+comparison, not a model-specific token measurement. Full build/tests passed;
+regressions cover real newlines, compact landmark syntax, geometry, and protection
+of the host coverage when guest code edits its snapshot. The client was stopped.
+Local preview: `/tmp/survey-compact-preview.md`.
