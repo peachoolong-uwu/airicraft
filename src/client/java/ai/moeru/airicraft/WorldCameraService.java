@@ -121,7 +121,10 @@ public final class WorldCameraService {
 			Math.cos(yawRad) * Math.cos(pitchRad));
 		Vec3d right = new Vec3d(-forward.z, 0.0, forward.x);
 		Vec3d pos = eye.subtract(forward.multiply(4.0)).add(right.multiply(1.1)).add(0.0, 0.3, 0.0);
-		return new CameraPose(pos.x, pos.y, pos.z, yaw, pitch);
+		// Steep look angles are hard to read from behind the shoulder;
+		// clamp to a shallow band around horizontal.
+		float clampedPitch = MathHelper.clamp(pitch, -30.0f, 30.0f);
+		return new CameraPose(pos.x, pos.y, pos.z, yaw, clampedPitch);
 	}
 
 	private volatile CameraPose lastRenderedPose;
@@ -332,6 +335,42 @@ public final class WorldCameraService {
 		return filter.blocks() != null && filter.blocks().contains(pos);
 	}
 
+
+	private volatile Box tintBox;
+
+	/**
+	 * Query-region tint: blocks inside this box get their vertex colors
+	 * blended toward blue during meshing. Null when inactive.
+	 */
+	public Box tintBox() {
+		return tintBox;
+	}
+
+	public synchronized void setTintBox(MinecraftClient client, Box box, BlockPos boundsMin, BlockPos boundsMax) {
+		tintBox = box;
+		if (boundsMin != null && boundsMax != null) {
+			client.worldRenderer.scheduleBlockRenders(
+				boundsMin.getX() - 1, boundsMin.getY() - 1, boundsMin.getZ() - 1,
+				boundsMax.getX() + 1, boundsMax.getY() + 1, boundsMax.getZ() + 1);
+		}
+	}
+
+	public boolean tintContains(BlockPos pos) {
+		Box box = tintBox;
+		return box != null && box.contains(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+	}
+
+	/**
+	 * True when the focus has no sky above it — caves, interiors, dense
+	 * enclosed spaces. Used to pick shallower camera pitches.
+	 */
+	public static boolean isUnderground(MinecraftClient client, Vec3d focus) {
+		if (client.world == null) {
+			return false;
+		}
+		return !client.world.isSkyVisible(BlockPos.ofFloored(focus));
+	}
+
 	/**
 	 * Apply a fade filter and schedule remeshing of the affected region.
 	 * Client thread only.
@@ -361,8 +400,9 @@ public final class WorldCameraService {
 				new BridgeUnavailableException("capture_failed", "World camera was cleared during capture"));
 			pending = null;
 		}
-		if (fadeFilter != null) {
+		if (fadeFilter != null || tintBox != null) {
 			fadeFilter = null;
+			tintBox = null;
 			MinecraftClient client = MinecraftClient.getInstance();
 			if (client != null) {
 				scheduleFadeRemesh(client);
@@ -527,8 +567,11 @@ public final class WorldCameraService {
 			throw new BridgeUnavailableException("no_samples", "No relevant geometry found around the focus");
 		}
 
-		double[] pitches = {45.0, 55.0, 65.0};
-		double[] distanceScales = {0.6, 0.8, 1.0};
+		boolean underground = isUnderground(client, focus);
+		// Enclosed spaces read better from a shallow angle; open terrain
+		// benefits from the steeper tactical view.
+		double[] pitches = underground ? new double[] {15.0, 25.0, 35.0} : new double[] {45.0, 55.0, 65.0};
+		double[] distanceScales = underground ? new double[] {0.4, 0.6, 0.8} : new double[] {0.6, 0.8, 1.0};
 		int yawSteps = 16;
 
 		CameraPose bestPose = null;
@@ -806,26 +849,7 @@ public final class WorldCameraService {
 						(i & 2) == 0 ? min.getY() : max.getY() + 1,
 						(i & 4) == 0 ? min.getZ() : max.getZ() + 1};
 				}
-				int[][] faces = {
-					{0,1,3,2}, {4,5,7,6},
-					{0,2,6,4}, {1,3,7,5},
-					{0,1,5,4}, {2,3,7,6}};
-				g.setColor(new java.awt.Color(80, 160, 255, 26));
-				for (int[] f : faces) {
-					java.awt.Polygon poly = new java.awt.Polygon();
-					boolean ok = true;
-					for (int corner : f) {
-						double[] p = projectToScreen(c[corner], eye, basis, tanHalfFovY, aspect, w, h);
-						if (p == null) {
-							ok = false;
-							break;
-						}
-						poly.addPoint((int) p[0], (int) p[1]);
-					}
-					if (ok) {
-						g.fillPolygon(poly);
-					}
-				}
+
 				int[][] edges = {
 					{0,1},{1,3},{3,2},{2,0},
 					{4,5},{5,7},{7,6},{6,4},

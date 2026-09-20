@@ -466,6 +466,16 @@ public final class ModBridgeServer {
 						framing.pose(), framing.candidates(), framing.samples(), framing.visibleSamples(),
 						framing.score(), occluders.size(), framing.focusClear());
 				}
+				if (request != null && request.queryBox() != null && request.queryBox().size() == 6) {
+					var qb = request.queryBox();
+					BlockPos qMin = new BlockPos(qb.get(0).intValue(), qb.get(1).intValue(), qb.get(2).intValue());
+					BlockPos qMax = new BlockPos(qb.get(3).intValue(), qb.get(4).intValue(), qb.get(5).intValue());
+					service.setTintBox(client,
+						new net.minecraft.util.math.Box(
+							qMin.getX(), qMin.getY(), qMin.getZ(),
+							qMax.getX() + 1.0, qMax.getY() + 1.0, qMax.getZ() + 1.0),
+						qMin, qMax);
+				}
 				return service.capture(client, framing.pose(), framing, settleFrames, keepPose);
 			});
 			WorldCameraService.TacticalResult result = awaitTacticalCapture(captureFuture);

@@ -46,14 +46,14 @@ public abstract class SectionBuilderMixin {
 		List<?> overlayVertices,
 		Operation<Void> original
 	) {
-		if (state.getBlock() instanceof LeavesBlock) {
-			WorldCameraService service = AiricraftClient.runtimeController().worldCameraService();
-			if (service != null && service.fadeLeavesActive()) {
-				original.call(manager, state, pos, world, matrices,
-					new AlphaVertexConsumer(consumer, LEAF_ALPHA), cull, overlayVertices);
-				return;
-			}
+		WorldCameraService service = AiricraftClient.runtimeController().worldCameraService();
+		VertexConsumer wrapped = consumer;
+		if (service != null && state.getBlock() instanceof LeavesBlock && service.fadeLeavesActive()) {
+			wrapped = new AlphaVertexConsumer(wrapped, LEAF_ALPHA);
 		}
-		original.call(manager, state, pos, world, matrices, consumer, cull, overlayVertices);
+		if (service != null && service.tintContains(pos)) {
+			wrapped = new ai.moeru.airicraft.TintedVertexConsumer(wrapped, 0x50A0FF, 0.65f);
+		}
+		original.call(manager, state, pos, world, matrices, wrapped, cull, overlayVertices);
 	}
 }
