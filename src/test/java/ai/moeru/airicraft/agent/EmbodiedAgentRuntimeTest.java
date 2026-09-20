@@ -114,6 +114,22 @@ class EmbodiedAgentRuntimeTest {
 		for (String value : expected.values()) assertTrue(context.contains(value), context);
 	}
 
+	@Test void combatUsesTheCameraControllerTickedByTheClient() throws Exception {
+		var config = AgentConfig.defaults();
+		var camera = new ai.moeru.airicraft.agent.control.CameraController();
+		var runtime = new EmbodiedAgentRuntime(AiricraftConfig.defaults(), config,
+			new FirstPersonScreenshotService(), new FakeWorldTaskExecutor(),
+			ai.moeru.airicraft.agent.observability.AgentObservability.create(config.observability()),
+			new ai.moeru.airicraft.agent.tasks.SmeltingProcessManager(), camera, null);
+		try {
+			var reflexField = EmbodiedAgentRuntime.class.getDeclaredField("survivalReflexRuntime");
+			reflexField.setAccessible(true);
+			var cameraField = SurvivalReflexRuntime.class.getDeclaredField("cameraController");
+			cameraField.setAccessible(true);
+			org.junit.jupiter.api.Assertions.assertSame(camera, cameraField.get(reflexField.get(runtime)));
+		} finally { runtime.shutdown(); }
+	}
+
 	@Test
 	void plannerReceiptAndWorkInspectionShareDirectNavigationIdentityThroughFailure() {
 		var executor = new FakeWorldTaskExecutor();

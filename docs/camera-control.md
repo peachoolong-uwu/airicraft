@@ -75,3 +75,18 @@ misses/other blocks, thin outlines, and a spring trajectory that intersects the
 target before settling. The live replay validates explicit block breaking;
 acquisition, crop harvesting, underwater harvesting, and Baritone left-click
 timing have not each received a separate live speed comparison.
+
+### Combat controller wiring, 2026-09-20
+
+The subsequent Nether run exposed a missed production injection:
+`EmbodiedAgentRuntime` constructed `SurvivalReflexRuntime` with its default private
+camera rather than the client-owned camera. With immediate rotation writes this
+had worked; spring requests on the private instance never advanced because only
+the shared controller ticks. The first skeleton encounter closed to 2.5 blocks
+without attacks and reached the progress timeout; some later zombie attacks
+occurred when a target happened to intersect the existing viewing ray.
+
+Production now supplies the shared camera to the reflex and its underwater
+recovery controller. An identity regression fails with the old constructor call
+and verifies the production runtime forwards the supplied instance. Source run:
+`20260920-214730-045922-175-4ac6e232-2f17-4ab9-8da7-45aaf906ecbd`.

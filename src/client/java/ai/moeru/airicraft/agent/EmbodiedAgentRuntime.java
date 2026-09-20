@@ -320,7 +320,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		this.airicraftConfig = Objects.requireNonNull(airicraftConfig, "airicraftConfig");
 		this.config = Objects.requireNonNull(config, "config");
 		this.codexDriverActive = Boolean.getBoolean("airicraft.codexDriver");
-		this.survivalReflexRuntime = new SurvivalReflexRuntime(this.config.reflex(), baritoneFacade);
+		this.survivalReflexRuntime = new SurvivalReflexRuntime(this.config.reflex(), baritoneFacade, cameraController);
 		this.worldTaskExecutor = Objects.requireNonNull(worldTaskExecutor, "worldTaskExecutor");
 		this.observability = new FlightRecordingObservability(Objects.requireNonNull(observability, "observability"), llmFlightRecorder);
 		this.smeltingProcessManager = Objects.requireNonNull(smeltingProcessManager, "smeltingProcessManager");

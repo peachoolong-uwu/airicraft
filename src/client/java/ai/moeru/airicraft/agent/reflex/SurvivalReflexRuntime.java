@@ -80,6 +80,10 @@ public final class SurvivalReflexRuntime {
 		this(config, new MovementController(), new CameraController(), baritone);
 	}
 
+	public SurvivalReflexRuntime(AgentConfig.ReflexConfig config, BaritoneFacade baritone, CameraController cameraController) {
+		this(config, new MovementController(), cameraController, baritone);
+	}
+
 	SurvivalReflexRuntime(
 		AgentConfig.ReflexConfig config,
 		MovementController movementController,
