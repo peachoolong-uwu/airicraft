@@ -780,18 +780,23 @@ public final class SurvivalReflexRuntime {
 			return;
 		}
 		GoalPosition target = new GoalPosition(step.x(), step.y(), step.z(), true);
-		Vec3d facing = escaping && !shielding
-			? new Vec3d(step.x() + .5, client.player.getEyeY(), step.z() + .5)
-			: focus.entity().getBoundingBox().getCenter();
-		// A raised shield keeps its selected shooter/blast heading; movement is relative to that heading.
-		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
-		cameraController.lookAt(client, facing);
-		// Key directions must use the current spring angle, not the requested threat bearing.
+		// Always steer using the actual spring angle, including while turning into a sprint.
 		Vec3d actualFacing = client.player.getPos().add(Vec3d.fromPolar(0.0F, client.player.getYaw()));
 		var control = combatPositioning.control(client, step, actualFacing, focus.entity().getPos(), tick);
 		var steering = control.steering();
-		boolean sprint = !shielding && (!kiting || escaping) && steering.forward() && !steering.back() && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
+		boolean sprintEscape = escaping && !shielding && !control.jump() && !control.sneak()
+			&& client.player.isOnGround() && !client.player.isTouchingWater()
+			&& client.player.getHungerManager().getFoodLevel() > 6;
+		Vec3d facing = sprintEscape
+			? new Vec3d(step.x() + .5, client.player.getEyeY(), step.z() + .5)
+			: focus.entity().getBoundingBox().getCenter();
+		// Walking, traversal and guarding retain the threat heading. Only sprint escape turns away.
+		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
+		cameraController.lookAt(client, facing);
+		boolean sprint = !shielding && (!kiting && !escaping || sprintEscape)
+			&& steering.forward() && !steering.back() && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
 			&& !control.sneak() && client.player.getHungerManager().getFoodLevel() > 6;
+
 		if (!shielding && !control.jump() && !control.sneak() && focus.entity() instanceof net.minecraft.entity.mob.WitchEntity) {
 			var strafe = combatPositioning.witchSprint(client, step, focus.entity().getPos());
 			if (strafe != null) {
