@@ -58,3 +58,18 @@ geometric site from a route-proven placement. Keep collision and visibility
 checks. A copied-world test is still needed to establish whether either ledge
 stance was reachable without terrain edits. No furnace behavior was changed in
 this investigation.
+
+## Adjacent-stance follow-up
+
+The placement executor now includes the same-height cardinal neighbors returned
+by discovery. Existing standability, interaction range, support-face raycast,
+previous-attempt exclusion, and actual player/target overlap checks remain in
+force. Regression tests use the incident coordinates and verify that invalid
+standing cells, out-of-range cells, and blocked rays are still rejected. The old
+mandatory one-cell-gap test is replaced with adjacent-cell coverage.
+
+Placement discovery now explicitly reports that range is distance-only and that
+routes and support-face visibility are not verified. This avoids presenting the
+geometric result as a guaranteed placement. The exact underground route has not
+yet been replayed live; the continuation starts from the latest saved surface
+checkpoint after the combat disconnect.

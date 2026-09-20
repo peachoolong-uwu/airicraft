@@ -894,6 +894,8 @@ public final class BlockInteractionTaskExecutor implements WorldTaskExecutor {
 		// once that integration can preserve Airicraft's no-break and target-verification semantics.
 		Set<BlockPos> candidates = new LinkedHashSet<>();
 		for (Direction direction : List.of(Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST)) {
+			// Adjacent same-height cells match placement discovery; a centered player does not overlap the target.
+			candidates.add(target.offset(direction));
 			candidates.add(target.offset(direction).down(2));
 			candidates.add(target.offset(direction, 2).down(2));
 			candidates.add(target.offset(direction, 2).down());
