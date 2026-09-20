@@ -240,6 +240,8 @@ public final class PlannerContextAggregator {
 		}
 	}
 
+	LlmConversation retainedToolContext() { return retainedConversation == null ? LlmConversation.of(List.of()) : retainedConversation; }
+
 	public LlmConversation buildPlannerConversation(PlannerRequest request) {
 		Objects.requireNonNull(request, "request");
 		recordPlannerRequestSeed(PlannerRequestSeed.fromRequest(request));

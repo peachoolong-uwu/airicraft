@@ -596,6 +596,8 @@ public final class DialogueRuntime {
 
 		if (pollPolicyContinuation(tick, eventBuffer)) return null;
 
+		activePlanner().tickToolQueue();
+
 		if (queuedTimeoutInjections > 0 && !activePlanner().hasInFlight()) {
 			queuedTimeoutInjections--;
 			applyTransition(DialogueCore.onPlannerFailure(state, LlmFailureType.TIMEOUT, "Injected LLM timeout", pendingTimeoutVisibleReply, tick), tick, eventBuffer);
@@ -783,6 +785,7 @@ public final class DialogueRuntime {
 		while (!pendingTaskWakeups.isEmpty()) {
 			if (acceptedWork != null && acceptedWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive
 				&& !pendingTaskWakeups.peekFirst().attention()) return false;
+			if (activePlanner().hasQueuedToolWork() && !pendingTaskWakeups.peekFirst().attention()) return false;
 			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
 			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
 			if (!wake.attention() && plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()

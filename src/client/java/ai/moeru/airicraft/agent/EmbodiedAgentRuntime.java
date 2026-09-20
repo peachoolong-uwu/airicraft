@@ -2584,6 +2584,19 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	CompletableFuture<String> executePlannerAction(PlannerToolCall call) {
 		if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_UNAVAILABLE: run_policy disabled");
 		refreshWorkHistory();
+		if (call.name().equals("clear_queue")) {
+			var results = new ArrayList<String>();
+			for (var work : workHistory.list()) {
+				if (!work.foreground() || !work.parentWorkId().isBlank() || work.state().terminal()) continue;
+				var args = new com.google.gson.JsonObject();
+				args.addProperty("workId", work.handle().id());
+				args.addProperty("reason", "planner_clear_queue");
+				String result = executeWorkTool(new PlannerToolCall("abort-" + call.id(), "cancel_work", args, null, null));
+				if (result.startsWith("TOOL_ERROR:")) return CompletableFuture.completedFuture(result);
+				results.add(result);
+			}
+			return CompletableFuture.completedFuture("Tool result for clear_queue: " + results);
+		}
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
 		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
 		if (survivalReflexRuntime.awaitingTacticalPlan() && workHistory.current().isEmpty()

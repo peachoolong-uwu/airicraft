@@ -29,7 +29,7 @@ public final class PlannerFindingToolProvider implements PlannerToolProvider {
 			), List.of("sourceToolCallId", "result", "memory")));
 	}
 	@Override public String promptInstructions() {
-		return "Experimental short-term findings: call tools sequentially. After inspect_world, query_world, inspect_nearby_entities, find_world_features or custom_ queries, you MUST call record_finding alone before any other tool or final reply. "
+		return "Short-term findings: summarize completed inspect_world, query_world, inspect_nearby_entities, find_world_features and custom_ queries with record_finding. Multiple completed queries can be summarized together in a review; queued acknowledgments are not observations. "
 			+ "Answer the original task-specific question, not a general description of surroundings. Preserve exact actionable coordinates/materials and uncertainty. Use result:null whenever the requested target was not found, even if the query ran successfully. For example, searching for a wall hole and finding an intact wall requires result:null, with the intact checked section and remaining search area in memory. "
 			+ "Only your finding and the original query remain in context; raw results are removed after acceptance. Findings are observations at query time, not eternal facts.";
 	}
@@ -56,9 +56,23 @@ public final class PlannerFindingToolProvider implements PlannerToolProvider {
 			for (var call : message.toolCalls()) {
 				if (OBSERVATIONS.contains(call.name()) || call.name().startsWith("custom_")) observations.put(call.id(), call);
 			}
-			if ("tool".equals(message.role()) && observations.containsKey(message.toolCallId()) && !message.content().startsWith(RETAINED)) return message;
+			if ("tool".equals(message.role()) && observations.containsKey(message.toolCallId()) && !message.content().startsWith(RETAINED) && !message.content().startsWith("QUEUED:") && !message.content().startsWith("Cancelled by clear_queue")) return message;
 		}
 		return null;
+	}
+
+	static String validateQueuedResponse(LlmConversation conversation, List<PlannerToolCall> calls) {
+		if (calls.size() == 1 && PlannerQueueToolProvider.CONTINUE.equals(calls.getFirst().name())) return null;
+		var reviewed = conversation;
+		for (var call : calls) {
+			if (!NAME.equals(call.name())) continue;
+			String error = validateNext(reviewed, List.of(call));
+			if (error != null) return error;
+			reviewed = afterTool(reviewed, call, "Finding accepted");
+		}
+		if (calls.stream().anyMatch(c -> PlannerQueueToolProvider.CLEAR.equals(c.name()))) return null;
+		var pending = pending(reviewed);
+		return pending == null ? null : "Include record_finding for completed query " + pending.toolCallId() + " before planning new calls.";
 	}
 
 	static String validateNext(LlmConversation conversation, List<PlannerToolCall> calls) {
@@ -78,7 +92,12 @@ public final class PlannerFindingToolProvider implements PlannerToolProvider {
 			var messages = new ArrayList<LlmChatMessage>();
 			for (var message : conversation.messages()) {
 				if (message.content().startsWith(REMINDER) || call.id().equals(message.toolCallId())
-					|| message.toolCalls().stream().anyMatch(t -> call.id().equals(t.id()))) continue;
+					) continue;
+				if (message.toolCalls().stream().anyMatch(t -> call.id().equals(t.id()))) {
+					var remaining = message.toolCalls().stream().filter(t -> !call.id().equals(t.id())).toList();
+					if (!remaining.isEmpty()) messages.add(LlmChatMessage.assistantToolCalls(message.content(), remaining));
+					continue;
+				}
 				messages.add(sourceId.equals(message.toolCallId()) ? LlmChatMessage.tool(sourceId, RETAINED + call.arguments()) : message);
 			}
 			return LlmConversation.of(messages);

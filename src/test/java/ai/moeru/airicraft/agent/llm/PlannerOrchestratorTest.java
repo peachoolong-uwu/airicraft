@@ -203,6 +203,127 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void fifoAdvancesAndCoalescesWhilePlannerIsStillThinking() throws Exception {
+		var backend = new RecordingBackend();
+		var executed = new ArrayList<String>();
+		var futures = new java.util.HashMap<String, CompletableFuture<String>>();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "fifo_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				executed.add(call.id()); return futures.computeIfAbsent(call.id(), id -> new CompletableFuture<>());
+			}
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("aborted")));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			var calls = List.of("A", "B", "C", "D").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList();
+			backend.succeed(0, new PlannerResponse("", null, null, null, calls.getFirst(), calls, List.of(), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (executed.isEmpty() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(List.of("A"), executed);
+			futures.get("A").complete("A done"); orchestrator.poll();
+			assertEquals(List.of("A", "B"), executed);
+			futures.get("B").complete("B done"); orchestrator.poll();
+			futures.get("C").complete("C done"); orchestrator.poll();
+			assertEquals(List.of("A", "B", "C", "D"), executed);
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			String review = conversationText(backend.conversation(1));
+			assertTrue(review.contains("B done")); assertTrue(review.contains("C done"));
+			assertTrue(review.contains("TOOL QUEUE")); assertTrue(review.contains("D"));
+			for (String id : List.of("A", "B", "C", "D")) {
+				assertEquals(1, backend.conversation(1).messages().stream().filter(m -> id.equals(m.toolCallId())).count());
+				assertEquals(1, backend.conversation(1).messages().stream().flatMap(m -> m.toolCalls().stream()).filter(c -> id.equals(c.id())).count());
+			}
+			assertEquals(2, backend.callCount(), "Fast consecutive results share one review");
+			futures.get("D").complete("D done"); orchestrator.poll();
+			assertEquals(2, backend.callCount(), "Do not interrupt the review already running");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void clearQueueAbortsActiveCallAndWaitsForAbortBeforeReplacement() throws Exception {
+		var backend = new RecordingBackend();
+		var executed = new ArrayList<String>();
+		var futures = new java.util.HashMap<String, CompletableFuture<String>>();
+		var abort = new CompletableFuture<String>();
+		var aborted = new java.util.concurrent.atomic.AtomicInteger();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "fifo_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				executed.add(call.id()); return futures.computeIfAbsent(call.id(), id -> new CompletableFuture<>());
+			}
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> { aborted.incrementAndGet(); return abort; }));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of("A", "B", "C").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList(), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (executed.isEmpty() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			futures.get("A").complete("done");
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertEquals(List.of("A", "B"), executed);
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("clear", "clear_queue", new JsonObject(), null, null),
+				new PlannerToolCall("E", "mine_blocks", new JsonObject(), null, null)), null));
+			deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (aborted.get() == 0 && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(1, aborted.get());
+			orchestrator.poll();
+			assertEquals(List.of("A", "B"), executed, "Replacement cannot race physical abort");
+			futures.get("B").complete("late B completion");
+			abort.complete("aborted"); orchestrator.poll();
+			assertEquals(List.of("A", "B", "E"), executed, "C must never run");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void queueWaitsForActualWorkOutcomeAndContinueDoesNotPoll() throws Exception {
+		var backend = new RecordingBackend();
+		var executed = new ArrayList<String>();
+		var workState = new java.util.concurrent.atomic.AtomicReference<>("RUNNING");
+		var provider = new PlannerToolProvider() {
+			public String id() { return "fifo_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				executed.add(call.id()); return CompletableFuture.completedFuture("Tool result for mine_blocks: {\"accepted\":true,\"workId\":\"JOB:" + call.id() + "\",\"state\":\"RUNNING\"}");
+			}
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(PlannerActionToolExecutor.DISABLED));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world",10,10,"controller","work",
+			Map.of("work", List.of(Map.of("workId", "JOB:A", "state", workState.get()))), events.query(null)));
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of("A", "B").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList(), null));
+			long deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(List.of("A"), executed); assertEquals(1, backend.callCount());
+			workState.set("FAILED");
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertEquals(List.of("A", "B"), executed);
+			assertTrue(conversationText(backend.conversation(1)).contains("FAILED"));
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("skip", "continue", new JsonObject(), null, null)), null));
+			deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(2, backend.callCount(), "continue must not generate a follow-up loop");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
 	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {
 		RecordingBackend backend = new RecordingBackend();
 		var order = new ArrayList<String>();

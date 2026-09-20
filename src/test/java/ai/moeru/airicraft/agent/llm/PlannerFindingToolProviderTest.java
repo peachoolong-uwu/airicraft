@@ -14,6 +14,19 @@ class PlannerFindingToolProviderTest {
 	}
 	private static final PlannerToolCall FINDING = finding("{\"sourceToolCallId\":\"query-1\",\"result\":null,\"memory\":\"West area unloaded; not evidence of no hole. Try loaded east section.\"}");
 
+	@Test void queuedAcknowledgmentsAreNotObservationsAndFindingCanAccompanyPlan() {
+		var queued = LlmConversation.of(List.of(LlmChatMessage.assistantToolCall("", QUERY), LlmChatMessage.tool(QUERY.id(), "QUEUED: awaiting execution")));
+		assertNull(PlannerFindingToolProvider.pending(queued));
+		var next = new PlannerToolCall("next", "mine_blocks", new JsonObject(), null, null);
+		assertNull(PlannerFindingToolProvider.validateQueuedResponse(RAW, List.of(FINDING, next)));
+		var batch = RAW.withAppended(LlmChatMessage.assistantToolCalls("", List.of(FINDING, next)))
+			.withAppended(LlmChatMessage.tool(FINDING.id(), "accepted")).withAppended(LlmChatMessage.tool(next.id(), "QUEUED: next"));
+		var retained = PlannerFindingToolProvider.afterTool(batch, FINDING, "accepted");
+		assertTrue(retained.messages().stream().anyMatch(m -> m.toolCalls().contains(next)));
+		assertTrue(retained.messages().stream().anyMatch(m -> next.id().equals(m.toolCallId())));
+		assertFalse(retained.messages().stream().anyMatch(m -> m.toolCalls().contains(FINDING)));
+	}
+
 	@Test void cannotSkipFindingWithAnotherQueryBatchOrFinalReply() {
 		assertNotNull(PlannerFindingToolProvider.validateNext(RAW, List.of(QUERY)));
 		assertNotNull(PlannerFindingToolProvider.validateNext(RAW, List.of()));

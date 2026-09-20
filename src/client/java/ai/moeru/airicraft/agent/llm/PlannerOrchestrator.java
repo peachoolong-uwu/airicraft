@@ -325,6 +325,7 @@ public final class PlannerOrchestrator {
 	}
 
 	private LlmConversation appendDecisionContext(LlmConversation conversation) {
+		conversation = appendQueueContext(conversation);
 		if (decisionContextSource == null) {
 			LlmConversation delivered = deferredWorkReceipts.deliver(conversation, Map.of());
 			contextAggregator.retainConversation(delivered);
@@ -354,6 +355,7 @@ public final class PlannerOrchestrator {
 
 	public void updateSafetyContext(long safetyEpoch, String holdId, boolean activeReflex) {
 		minimumSafetyEpoch = Math.max(minimumSafetyEpoch, Math.max(0L, safetyEpoch));
+		queueReflexActive = activeReflex;
 		currentSafetyHoldId = holdId;
 		// A reflex owns actuators, not reasoning. Executor policies gate physical tools.
 		safetyLaunchBlocked = false;
@@ -412,6 +414,7 @@ public final class PlannerOrchestrator {
 	}
 
 	public PlannerExecutionResult poll() {
+		tickToolQueue();
 		if (plannerExecutor.hasInFlight()) recordConversationSources();
 		if (compactionService.hasInFlight()) {
 			return pollCompaction();
@@ -479,7 +482,9 @@ public final class PlannerOrchestrator {
 
 	private PlannerExecutionResult finishSuccessfulPlannerResult(PlannerExecutionResult plannerResult) {
 		if (toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME)) {
-			String error = PlannerFindingToolProvider.validateNext(sessionCoordinator.conversationFor(plannerResult.generation()), effectiveToolCalls(plannerResult.response()));
+			String error = usesToolQueue()
+				? PlannerFindingToolProvider.validateQueuedResponse(sessionCoordinator.conversationFor(plannerResult.generation()), effectiveToolCalls(plannerResult.response()))
+				: PlannerFindingToolProvider.validateNext(sessionCoordinator.conversationFor(plannerResult.generation()), effectiveToolCalls(plannerResult.response()));
 			if (error != null) {
 				var failure = rejectToolRequest(plannerResult, error);
 				if (scheduleParseRepairRetry(failure)) return null;
@@ -521,6 +526,8 @@ public final class PlannerOrchestrator {
 			committedSnapshotGenerations.remove(plannerResult.generation());
 			return toolRequestFailure;
 		}
+		if (usesToolQueue())
+			return enqueueTools(plannerResult, toolCalls);
 		return startToolExecution(plannerResult, toolCalls);
 	}
 
@@ -615,7 +622,7 @@ public final class PlannerOrchestrator {
 			}
 		}
 		PlannerToolRegistry.ReadOnlyBatchAuthorization batchAuthorization = toolRegistry.authorizeReadOnlyBatch(toolCalls);
-		if (toolCalls.size() > 1 && !batchAuthorization.authorized()) {
+		if (!usesToolQueue() && toolCalls.size() > 1 && !batchAuthorization.authorized()) {
 			Airicraft.LOGGER.warn(
 				"Planner returned unsupported multi-tool batch names={} reason={} rejectedTool={}",
 				toolCallNames(toolCalls),
@@ -791,9 +798,8 @@ public final class PlannerOrchestrator {
 		String reminder = TOOL_CALL_REPAIR_PREFIX
 			+ " Previous response was rejected: "
 			+ (failureMessage == null || failureMessage.isBlank() ? "parse error" : failureMessage)
-			+ "\nCall exactly one tool in this response unless every tool call is a read-only text tool."
-			+ "\nDo not batch multiple action tool calls such as navigate_to, mine_blocks, collect_resource, craft_recipe, smelt_items, drop_items, give_player, attack_entity, use_entity, place_block, use_block, cancel_task, clear_goal, or update_event_policy."
-			+ "\nIf multiple actions are needed, call only the next single action tool now and wait for the tool result or TASK UPDATE before another action. A single transfer_container call may use items[] for several item types in one open container. A single place_block, use_block, or break_blocks call may use ordered targets[] when all targets were inspected and the schema supports them."
+			+ (usesToolQueue() ? "\nTool calls append to a sequential FIFO. Use continue to yield or clear_queue to abort and replace the plan."
+				: "\nCall exactly one tool unless every call is a read-only text tool. Do not batch action calls.")
 			+ "\nWhen calling a tool, leave assistant content empty and put visible pre-action text in the tool narration argument.";
 		String failedToolSchema = failedToolSchema(failureMessage);
 		if (failedToolSchema == null) {
@@ -815,6 +821,179 @@ public final class PlannerOrchestrator {
 		return toolRegistry.activeOpenAiTool(matcher.group(1))
 			.map(GSON::toJson)
 			.orElse(null);
+	}
+
+	/** Each planner owns its plan; a delegated planner runs while its caller awaits the handoff. */
+	private static final class QueueState {
+		final PlannerToolQueue<ToolExecutionOutcome> tools = new PlannerToolQueue<>();
+		final java.util.LinkedHashMap<String, ToolExecutionResult> reports = new java.util.LinkedHashMap<>();
+		final java.util.Map<String, LlmImageAttachment> images = new java.util.HashMap<>();
+		PlannerRequest seed;
+		CompletableFuture<ToolExecutionOutcome> abort;
+		PlannerToolCall abortCall;
+		long observationTick;
+		long firstResultMs;
+		long lastResultMs;
+	}
+	private final QueueState toolQueue = new QueueState();
+	private boolean queueReflexActive;
+	private boolean usesToolQueue() { return toolRegistry.isKnownTool(PlannerQueueToolProvider.CONTINUE); }
+
+	private PlannerExecutionResult enqueueTools(PlannerExecutionResult result, List<PlannerToolCall> calls) {
+		PlannerExecutionResult promotionFailure = promoteBackendCandidate(result);
+		if (promotionFailure != null) return finishFailedPlannerResult(promotionFailure);
+		commitSnapshotIfNeeded(result.generation());
+		var snapshot = sessionCoordinator.contextSnapshotFor(result.generation())
+			.withConversation(sessionCoordinator.conversationFor(result.generation()));
+		var receipts = new ArrayList<String>();
+		// clear_queue is an immediate control, regardless of its position in the response.
+		var clear = calls.stream().filter(c -> PlannerQueueToolProvider.CLEAR.equals(c.name())).findFirst();
+		if (clear.isPresent()) {
+			var cancelled = new ArrayList<>(toolQueue.tools.pending());
+			if (toolQueue.tools.active() != null) cancelled.addFirst(toolQueue.tools.active());
+			toolQueue.tools.clear((call, work) -> {});
+			for (var call : cancelled) queueReport(call, new TextToolExecutionOutcome("Cancelled by clear_queue; completed effects are not undone."));
+			toolQueue.abortCall = clear.get();
+			toolQueue.abort = requestPlannerTools(List.of(clear.get()), snapshot.plannerConversation());
+		}
+		for (var call : calls) {
+			String receipt;
+			if (PlannerQueueToolProvider.CONTINUE.equals(call.name())) receipt = "Turn skipped; queue continues.";
+			else if (PlannerQueueToolProvider.CLEAR.equals(call.name())) receipt = "Queue cleared; aborting active work.";
+			else if (PlannerFindingToolProvider.NAME.equals(call.name())) receipt = "Finding accepted into conversation context.";
+			else {
+				toolQueue.tools.append(List.of(call));
+				receipt = "QUEUED: " + call.id() + "; execution result will arrive in a later review.";
+			}
+			receipts.add(receipt);
+			recordToolExchange(result.generation(), snapshot, result.response().rawAssistantContent(), call, receipt, false);
+			lifecycleListener.onToolRequested(result.generation(), call);
+		}
+		var acceptedConversation = contextAggregator.buildPlannerFollowUpConversation(snapshot, calls, receipts);
+		for (var call : calls) if (PlannerFindingToolProvider.NAME.equals(call.name()))
+			acceptedConversation = PlannerFindingToolProvider.afterTool(acceptedConversation, call, "Finding accepted");
+		contextAggregator.retainConversation(acceptedConversation);
+		commitRecordedToolExchanges(result.generation());
+		toolQueue.seed = result.request();
+		debugRecorder.recordPlannerCompletion(result);
+		sessionCoordinator.finishGeneration(result.generation(), false);
+		committedSnapshotGenerations.remove(result.generation());
+		endTurnSpan();
+		lifecycleListener.onPlannerExecutionApplied(result);
+		return null;
+	}
+
+	public boolean hasQueuedToolWork() { return !toolQueue.tools.isEmpty() || !toolQueue.reports.isEmpty() || toolQueue.abort != null; }
+
+	public void tickToolQueue() {
+		if (!usesToolQueue() || !enabled || !hasQueuedToolWork() || !decisionAuthority.getAsBoolean()) return;
+		PlannerDecisionContext context = decisionContextSource == null ? null : decisionContextSource.get();
+		toolQueue.observationTick = context == null ? (toolQueue.seed == null ? 0 : toolQueue.seed.tick()) : context.tick();
+		if (context != null && decisionWorldSessionId != null
+			&& !decisionWorldSessionId.equals(context.worldSessionId())) {
+			toolQueue.tools.clear((call, id) -> {});
+			toolQueue.reports.clear(); toolQueue.images.clear();
+			return;
+		}
+		if (toolQueue.abort != null) {
+			if (!toolQueue.abort.isDone()) return;
+			ToolExecutionOutcome outcome;
+			try { outcome = toolQueue.abort.join(); }
+			catch (CompletionException error) { outcome = new TextToolExecutionOutcome(failedToolResultText(toolQueue.abortCall, error)); }
+			queueReport(toolQueue.abortCall, outcome);
+			toolQueue.abort = null;
+			if (outcome.toolResultText().startsWith("TOOL_ERROR:")) toolQueue.tools.clear((call, id) -> {});
+		}
+		var completion = toolQueue.tools.tick(call -> {
+			narrationSink.onToolNarration(call);
+			return requestPlannerTools(List.of(call), contextAggregator.retainedToolContext());
+		}, outcome -> ongoingWorkId(outcome.toolResultText()), id -> terminalQueuedWork(id, context),
+			!queueReflexActive && (toolQueue.tools.active() == null || !toolRegistry.endsTurn(toolQueue.tools.active().name())));
+		if (completion != null) {
+			ToolExecutionOutcome outcome = completion.failure() != null
+				? new TextToolExecutionOutcome(failedToolResultText(completion.call(), completion.failure()))
+				: completion.workOutcome() != null ? new TextToolExecutionOutcome(completion.workOutcome()) : completion.result();
+			queueReport(completion.call(), outcome);
+			if (!outcome.toolResultText().startsWith("TOOL_ERROR:") && !outcome.toolResultText().startsWith("TOOL_UNAVAILABLE:"))
+				toolRegistry.afterResultCommitted(completion.call().name());
+		}
+		// A quiet interval gathers quick chains; a hard bound prevents slow calls starving reports.
+		if (toolQueue.reports.isEmpty() || toolQueue.seed == null || sessionCoordinator.hasInFlight()
+			|| pendingToolExecution != null || awaitingAcceptedReplyRecord || compactionService.hasInFlight()) return;
+		long now = clock.millis();
+		boolean nextReadRunning = toolQueue.tools.active() != null && toolRegistry.isReadTool(toolQueue.tools.active().name());
+		if ((now - toolQueue.lastResultMs < 250 || nextReadRunning) && now - toolQueue.firstResultMs < 1000) return;
+		PlannerRequest seed = toolQueue.seed;
+		submit(PlannerRequest.ofTrigger(toolQueue.observationTick, now, seed.sessionMode(), seed.primaryInteractionPlayer(), seed.activeGoal(),
+			PlannerTriggerType.SYSTEM, "tool_queue", "Queued tools produced results. Review the results and current TOOL QUEUE; execution continues independently.", null)
+			.withSafetyContext(minimumSafetyEpoch, currentSafetyHoldId));
+	}
+
+	private void queueReport(PlannerToolCall call, ToolExecutionOutcome outcome) {
+		if (toolQueue.reports.isEmpty()) toolQueue.firstResultMs = clock.millis();
+		toolQueue.lastResultMs = clock.millis();
+		toolQueue.reports.put(call.id(), new ToolExecutionResult(call, outcome.toolResultText(), outcome.hasImageAttachment()));
+		if (outcome instanceof ImageToolExecutionOutcome image) toolQueue.images.put(call.id(), image.imageAttachment());
+		debugRecorder.recordTerminalTool(toolQueue.observationTick, call, outcome.toolResultText(), outcome.hasImageAttachment());
+		lifecycleListener.onToolExchange(call, outcome.toolResultText(), outcome.hasImageAttachment());
+		lifecycleListener.onToolCompleted(0, outcome.toolResultText(), outcome.hasImageAttachment());
+	}
+
+	private static String ongoingWorkId(String text) {
+		int start = text.indexOf(": ");
+		if (!text.startsWith("Tool result for ") || start < 0) return null;
+		try {
+			var receipt = com.google.gson.JsonParser.parseString(text.substring(start + 2)).getAsJsonObject();
+			return receipt.has("accepted") && receipt.get("accepted").getAsBoolean() && receipt.has("workId") && receipt.has("state")
+				&& List.of("QUEUED", "RUNNING", "WAITING", "PAUSED").contains(receipt.get("state").getAsString())
+				? receipt.get("workId").getAsString() : null;
+		} catch (IllegalStateException | IllegalArgumentException | com.google.gson.JsonParseException error) { return null; }
+	}
+
+	private static String terminalQueuedWork(String workId, PlannerDecisionContext context) {
+		if (context == null) return null;
+		Object entries = context.current().get("work");
+		if (entries instanceof List<?> work) for (Object entry : work) {
+			if (entry instanceof Map<?, ?> value && workId.equals(value.get("workId"))
+				&& List.of("SUCCEEDED", "FAILED", "CANCELLED").contains(String.valueOf(value.get("state"))))
+				return "Work outcome: " + GSON.toJson(ai.moeru.airicraft.agent.work.WorkSnapshot.summarize(value));
+		}
+		return null;
+	}
+
+	private LlmConversation appendQueueContext(LlmConversation conversation) {
+		if (!usesToolQueue()) return conversation;
+		var remaining = new java.util.LinkedHashMap<>(toolQueue.reports);
+		var messages = new ArrayList<LlmChatMessage>();
+		for (var message : conversation.messages()) {
+			// Queue snapshots are current state, not growing historical narration.
+			if (message.content().startsWith("TOOL QUEUE:")) continue;
+			var report = remaining.remove(message.toolCallId());
+			if (report == null) messages.add(message);
+			else messages.add(new LlmChatMessage("tool", report.toolResultText(), LlmMessageKind.TOOL_RESULT,
+				toolQueue.images.get(message.toolCallId()), null, List.of(), message.toolCallId()));
+		}
+		// Provider-managed history and role handoffs may not carry local tool envelopes.
+		for (var report : remaining.values()) {
+			String text = "Execution result for " + report.toolCall().id() + " (" + report.toolCall().name() + "): " + report.toolResultText();
+			var image = toolQueue.images.get(report.toolCall().id());
+			messages.add(image == null ? LlmChatMessage.user(text, LlmMessageKind.TOOL_RESULT)
+				: LlmChatMessage.userWithImage(text, LlmMessageKind.TOOL_RESULT, image));
+		}
+		if (plannerExecutor.managesConversationHistory()) backendHistoryImages += toolQueue.images.size();
+		toolQueue.reports.clear(); toolQueue.images.clear();
+		var state = new java.util.LinkedHashMap<String, Object>();
+		state.put("active", toolQueue.tools.active() == null ? null : queuedCallView(toolQueue.tools.active()));
+		state.put("workId", toolQueue.tools.activeWorkId());
+		state.put("pending", toolQueue.tools.pending().stream().map(PlannerOrchestrator::queuedCallView).toList());
+		state.put("aborting", toolQueue.abort != null);
+		messages.add(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(state)
+			+ "\nExecution continues while you think. continue skips this turn; clear_queue aborts active work and discards pending calls.", LlmMessageKind.NOTICE));
+		return LlmConversation.of(messages);
+	}
+
+	private static Map<String, Object> queuedCallView(PlannerToolCall call) {
+		return Map.of("id", call.id(), "name", call.name(), "arguments", call.arguments());
 	}
 
 	private PlannerExecutionResult startToolExecution(PlannerExecutionResult plannerResult, List<PlannerToolCall> toolCalls) {
@@ -1303,7 +1482,7 @@ public final class PlannerOrchestrator {
 		}
 		if (toolCalls.size() == 1) {
 			PlannerToolCall call = toolCalls.getFirst();
-			boolean atImageLimit = Math.max(backendHistoryImages, PlannerVisionService.imageCount(conversation)) >= plannerMaxImages;
+			boolean atImageLimit = Math.max(backendHistoryImages, PlannerVisionService.imageCount(conversation)) + toolQueue.images.size() >= plannerMaxImages;
 			return requestPlannerTool(call).thenCompose(outcome -> {
 				if (!atImageLimit || visionMode != PlannerVisionMode.NATIVE_TOOL_IMAGE
 					|| !(outcome instanceof ImageToolExecutionOutcome image)) {
@@ -1529,6 +1708,10 @@ public final class PlannerOrchestrator {
 	}
 
 	private void cancelPendingTool() {
+		toolQueue.tools.clear((call, workId) -> {});
+		toolQueue.reports.clear(); toolQueue.images.clear();
+		if (toolQueue.abort != null) toolQueue.abort.cancel(true);
+		toolQueue.abort = null;
 		if (pendingToolExecution != null) {
 			pendingToolExecution.future().cancel(true);
 			pendingToolExecution = null;
