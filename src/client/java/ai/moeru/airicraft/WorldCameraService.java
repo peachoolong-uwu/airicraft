@@ -98,15 +98,87 @@ public final class WorldCameraService {
 		return new CameraPose(pos.x, pos.y, pos.z, yaw, pitch);
 	}
 
+	private volatile CameraPose lastRenderedPose;
+
 	public synchronized CameraPose pose(MinecraftClient client) {
+		CameraPose result;
 		if (shoulderActive) {
-			CameraPose shoulder = shoulderPose(client);
-			playerTranslucent = shoulder != null && playerBlocksView(client, shoulder);
-			return shoulder;
+			result = shoulderPose(client);
+			playerTranslucent = result != null && playerBlocksView(client, result);
 		}
-		playerTranslucent = false;
-		return pose;
+		else {
+			playerTranslucent = false;
+			result = pose;
+		}
+		lastRenderedPose = result;
+		return result;
 	}
+	/**
+	 * Draw a compass rose on the captured frame, aligned to world north (-Z).
+	 * Camera yaw 0 faces south, so the needle angle is 180 - yaw clockwise
+	 * from screen-up.
+	 */
+	private static FirstPersonScreenshotService.CapturedScreenshot withCompass(
+		FirstPersonScreenshotService.CapturedScreenshot screenshot,
+		CameraPose cam
+	) {
+		if (screenshot == null || cam == null) {
+			return screenshot;
+		}
+		try {
+			java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
+				new java.io.ByteArrayInputStream(screenshot.imageBytes()));
+			java.awt.Graphics2D g = image.createGraphics();
+			try {
+				g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+				int cx = image.getWidth() - 44;
+				int cy = 44;
+				int r = 26;
+				// Rose background.
+				g.setColor(new java.awt.Color(0, 0, 0, 110));
+				g.fillOval(cx - r, cy - r, r * 2, r * 2);
+				g.setColor(new java.awt.Color(255, 255, 255, 160));
+				g.setStroke(new java.awt.BasicStroke(1.5f));
+				g.drawOval(cx - r, cy - r, r * 2, r * 2);
+				// Cardinal ticks.
+				double needleRad = Math.toRadians(180.0 - cam.yaw());
+				g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.BOLD, 11));
+				String[] labels = {"N", "E", "S", "W"};
+				for (int i = 0; i < 4; i++) {
+					double angle = needleRad + i * Math.PI / 2;
+					int tx = cx + (int) Math.round(Math.sin(angle) * (r - 8));
+					int ty = cy - (int) Math.round(Math.cos(angle) * (r - 8));
+					g.setColor(i == 0 ? new java.awt.Color(255, 80, 80) : new java.awt.Color(230, 230, 230));
+					var fm = g.getFontMetrics();
+					g.drawString(labels[i], tx - fm.stringWidth(labels[i]) / 2, ty + fm.getAscent() / 2 - 1);
+				}
+				// Needle: red half toward north, white half toward south.
+				int nx = cx + (int) Math.round(Math.sin(needleRad) * (r - 14));
+				int ny = cy - (int) Math.round(Math.cos(needleRad) * (r - 14));
+				int sx = cx - (int) Math.round(Math.sin(needleRad) * (r - 14));
+				int sy = cy + (int) Math.round(Math.cos(needleRad) * (r - 14));
+				g.setStroke(new java.awt.BasicStroke(2.5f));
+				g.setColor(new java.awt.Color(255, 80, 80));
+				g.drawLine(cx, cy, nx, ny);
+				g.setColor(new java.awt.Color(230, 230, 230));
+				g.drawLine(cx, cy, sx, sy);
+			}
+			finally {
+				g.dispose();
+			}
+			java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+			javax.imageio.ImageIO.write(image, "png", out);
+			return new FirstPersonScreenshotService.CapturedScreenshot(
+				screenshot.format(), screenshot.width(), screenshot.height(),
+				screenshot.sourceWidth(), screenshot.sourceHeight(),
+				screenshot.capturedAtMs(), out.toByteArray());
+		}
+		catch (Exception exception) {
+			Airicraft.LOGGER.warn("Failed to draw compass overlay", exception);
+			return screenshot;
+		}
+	}
+
 
 	/**
 	 * Project a world point into NDC [-1,1] for the given camera pose.
@@ -360,7 +432,7 @@ public final class WorldCameraService {
 				if (!keepPose) {
 					clear();
 				}
-				return new TacticalResult(framing, screenshot);
+				return new TacticalResult(framing, withCompass(screenshot, lastRenderedPose));
 			});
 		}
 	}
@@ -388,7 +460,7 @@ public final class WorldCameraService {
 				if (!keepPose) {
 					clear();
 				}
-				return new TacticalResult(null, screenshot);
+				return new TacticalResult(null, withCompass(screenshot, lastRenderedPose));
 			});
 		}
 	}
