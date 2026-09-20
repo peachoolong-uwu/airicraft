@@ -77,7 +77,7 @@ public final class ClientRuntimeController {
 				var dashboard = config.debugDashboard();
 				return ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime.enabled()
 					? new ai.moeru.airicraft.dashboard.DebugDashboardConfig(dashboard.enabled(), dashboard.basePort(), dashboard.portScanLimit(),
-						dashboard.historyByteBudget(), true, 20)
+						dashboard.historyByteBudget(), true, 1)
 					: dashboard;
 			}
 		);
