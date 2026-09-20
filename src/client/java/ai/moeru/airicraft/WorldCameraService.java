@@ -258,7 +258,7 @@ public final class WorldCameraService {
 		}
 
 		double[] pitches = {45.0, 55.0, 65.0};
-		double[] distanceScales = {0.75, 1.0, 1.5};
+		double[] distanceScales = {0.6, 0.8, 1.0};
 		int yawSteps = 16;
 
 		CameraPose bestPose = null;
@@ -422,8 +422,8 @@ public final class WorldCameraService {
 		// Hard penalty: camera inside any collidable geometry.
 		BlockPos eyeBlock = BlockPos.ofFloored(eye);
 		double penalty = client.world.getBlockState(eyeBlock).getCollisionShape(client.world, eyeBlock).isEmpty() ? 0.0 : 1.0;
-		// Mild preference for closer shots.
-		penalty += 0.05 * (distance / radius - 1.0);
+		// Preference for closer shots: tactical views should read, not survey.
+		penalty += 0.15 * (distance / radius - 0.6);
 		double totalWeight = 0.0;
 		double visibleWeight = 0.0;
 		// Camera forward vector (MC convention: yaw 0 = +Z, pitch + = down).
