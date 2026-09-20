@@ -13,3 +13,5 @@ The helper was stopped gracefully before building. Final recording is `REPORTED`
 `automatic_playtest/v1/airicraft-evaluation--58cdf97d-ed55-4661-98ac-d78545094d46/players/AiricraftTest--d0a06f8c-4222-3e72-988a-8e0924bde20d/plays/20260920T103526.922Z--ecd435c8-7f2f-4098-bbba-325c813b7a98`
 
 The extension manifest confirms pause and checkpoint server tick 5507, checkpoint world time 256528, captured while paused. Its immutable `world-save.zip` was extracted into `run/nether-furnace-resume-20260920`; `level.dat` exists. The resumed run retains the Nether objective, recording profile and 1800-second budget.
+
+Validation: `./gradlew build` passed. Prompt correction committed as `ca4403b2`. Resumed run `20260920-184214-546720-57128-530881f8-b675-4e64-9e0d-5ef8d01335ca` joined the world, started recording, received the Nether objective and the updated system prompt, and began `query_world` / `read_logbook` calls. This verifies prompt delivery and resumed planning, not yet successful smelting or Nether entry. Duplicate delivery of the original handoff must not launch another client.
