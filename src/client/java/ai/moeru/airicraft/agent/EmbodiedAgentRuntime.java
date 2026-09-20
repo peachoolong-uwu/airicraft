@@ -2582,6 +2582,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	/** Embedded planner receipts; the external wrapper retains its existing text adapter. */
 	CompletableFuture<String> executePlannerAction(PlannerToolCall call) {
+		if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_UNAVAILABLE: run_policy disabled");
 		refreshWorkHistory();
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
 		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
@@ -2738,7 +2739,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		String normalizedToolName = PlannerToolCatalog.normalizeName(toolCall.name());
 		return switch (normalizedToolName) {
 			case "inspect_work", "list_work", "cancel_work", "resume_work", "wait_for_work" -> executeWorkTool(toolCall);
-			case "run_policy" -> startPolicy(toolCall);
+			case "run_policy" -> "TOOL_UNAVAILABLE: run_policy disabled";
 			case PlannerToolCatalog.RESUME_TASK -> {
 				String holdId = stringArg(args, "holdId").orElseThrow(() -> new IllegalArgumentException("holdId is required"));
 				SurvivalReflexSnapshot reflex = resumeSafetyHold(holdId, "planner_tool");

@@ -1,5 +1,12 @@
 # Finite JavaScript policies
 
+As of 2026-09-20, action policies are disabled. `run_policy` is not advertised
+or executable, and the planner shell does not start speculative continuations.
+Action-policy prompts are retained only as test fixtures. `query_world`,
+self-created read-only tools, and query-only `read_policy_docs` remain available.
+Use ordinary gameplay tools for actions. The action-policy details below document
+the retained experimental implementation, not the current planner interface.
+
 `run_policy` lets the controller planner express a finite procedure as a JavaScript generator. Java executes its yielded effects and resumes the same generator with their results. No model call is needed between effects. The existing work history owns the invocation's identity, terminal outcome and cancellation surface.
 
 `run_policy` exposes named JavaScript functions for most native gameplay tools: navigation, mining/gathering, crafting, construction, containers, equipment, eating, entity interactions, smelting, and reads. Each uses the existing argument contract and native executor. `yield p.describe('craftRecipe')` returns the exact schema. No container is required to start; the original verified container helpers remain available in singleplayer. Policies are finite and do not persist JavaScript stacks across restarts.

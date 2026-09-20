@@ -12,19 +12,19 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PolicyGuidanceTest {
-	@Test void policyToolsAndGuidanceAreAvailableWithoutDiscoveryAndAfterReset() {
+	@Test void queryToolsRemainAvailableWithoutActionPolicyAfterReset() {
 		var registry = PlannerToolRegistry.of(
 			new PolicyToolProvider(call -> { throw new AssertionError("unexpected action"); }),
 			WorldQueryScriptToolProvider.forClient(() -> -1L, ignored -> {}),
 			new PolicyDocsToolProvider());
 		for (int pass = 0; pass < 2; pass++) {
-			for (String name : List.of("run_policy", "query_world", "read_policy_docs")) {
+			for (String name : List.of("query_world", "read_policy_docs")) {
 				assertTrue(registry.activeOpenAiTool(name).isPresent(), name);
 			}
 			String prompt = PlannerPromptPolicy.systemPrompt(PlannerVisionMode.EXTERNAL_SUMMARY, registry);
-			assertTrue(prompt.contains("Prefer run_policy"));
+			assertFalse(prompt.contains("run_policy"));
 			assertTrue(prompt.contains("Prefer query_world"));
-			assertTrue(prompt.contains("Use read_policy_docs before writing unfamiliar procedures"));
+			assertTrue(registry.activeOpenAiTool("run_policy").isEmpty());
 			registry.resetToolSurface();
 		}
 		assertFalse(PlannerToolRegistry.of(new PolicyDocsToolProvider()).activeOpenAiTool("run_policy").isPresent());
@@ -37,21 +37,21 @@ class PolicyGuidanceTest {
 		assertFalse(registry.endsTurn("read_policy_docs"));
 		String text = registry.execute(new PlannerToolCall("docs", "read_policy_docs", new JsonObject(), null, null)).get();
 		assertTrue(text.contains("## query_world"));
-		assertTrue(text.contains("## run_policy"));
-		assertTrue(text.contains("Native") || text.contains("FAILED native effects"));
+		assertFalse(text.contains("run_policy"));
+		assertTrue(text.contains("## Self-created read-only tools"));
 		var invalid = new JsonObject();
 		invalid.addProperty("path", "/tmp/arbitrary-file");
 		assertThrows(IllegalArgumentException.class, () -> docs.validateArguments("read_policy_docs", invalid));
 	}
 
-	@Test void frozenControllerPromptIncludesRunnableExamplesButOtherRolesDoNotGetPolicyGuidance() {
+	@Test void frozenPromptDoesNotAdvertiseDisabledPolicy() {
 		var registry = PlannerToolRegistry.of(new PolicyToolProvider(call -> { throw new AssertionError("unexpected action"); }), new PolicyDocsToolProvider());
 		registry.freezeToolPrefix();
 		String prompt = PlannerPromptPolicy.systemPrompt(PlannerVisionMode.EXTERNAL_SUMMARY, registry);
-		assertTrue(prompt.contains("Prefer run_policy"));
-		assertTrue(prompt.contains("function* main(p, input)"));
-		assertTrue(registry.endsTurn("run_policy"));
-		assertFalse(registry.isReadTool("run_policy"));
+		assertFalse(prompt.contains("run_policy"));
+		assertFalse(prompt.contains("function* main(p, input)"));
+		assertTrue(registry.activeOpenAiTool("run_policy").isEmpty());
+
 		var readOnlyRegistry = PlannerToolRegistry.of(new PolicyDocsToolProvider());
 		readOnlyRegistry.freezeToolPrefix();
 		assertFalse(PlannerPromptPolicy.systemPrompt(PlannerVisionMode.EXTERNAL_SUMMARY, readOnlyRegistry).contains("Prefer run_policy"));

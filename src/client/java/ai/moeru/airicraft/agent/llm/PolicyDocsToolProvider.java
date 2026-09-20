@@ -15,7 +15,7 @@ public final class PolicyDocsToolProvider implements PlannerToolProvider {
 	@Override public String id() { return "policy_docs"; }
 	@Override public boolean handles(String name) { return name.equals("read_policy_docs"); }
 	@Override public List<Map<String, Object>> openAiTools() {
-		return List.of(toolForProvider("read_policy_docs", "Read this build's run_policy and query_world API, limits and debugging guide. "
+		return List.of(toolForProvider("read_policy_docs", "Read this build's query_world and self-created read-only tool API, limits and debugging guide. "
 			+ "Use when unsure about a method or after a JavaScript failure. No world or open container required.",
 			propertiesForProvider(), List.of()));
 	}

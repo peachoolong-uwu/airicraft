@@ -7,13 +7,11 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import static ai.moeru.airicraft.agent.llm.PlannerToolCatalog.*;
 
-/** One finite invocation, exposed only to the controller planner. */
+/** Disabled action-policy adapter retained for isolated engine tests. */
 public final class PolicyToolProvider implements PlannerToolProvider {
-	private static final String GUIDANCE = PolicyDocsToolProvider.readResource("/prompts/planner-policy.md");
-	private final PlannerActionToolExecutor executor;
-	public PolicyToolProvider(PlannerActionToolExecutor executor) { this.executor = executor; }
+	public PolicyToolProvider(PlannerActionToolExecutor executor) { }
 	@Override public String id() { return "policy"; }
-	@Override public String promptInstructions() { return GUIDANCE; }
+	@Override public boolean available() { return false; }
 	@Override public boolean handles(String name) { return name.equals("run_policy"); }
 	@Override public boolean isReadTool(String name) { return false; }
 	@Override public boolean endsTurn(String name) { return name.equals("run_policy"); }
@@ -38,5 +36,5 @@ public final class PolicyToolProvider implements PlannerToolProvider {
 		if (!args.get("input").isJsonObject() || args.get("input").toString().length() > GraalPolicyInvocation.MAX_VALUE_CHARS)
 			throw new IllegalArgumentException("policy_input_limit");
 	}
-	@Override public CompletableFuture<String> execute(PlannerToolCall call) { return executor.execute(call); }
+	@Override public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture("TOOL_UNAVAILABLE: run_policy disabled"); }
 }

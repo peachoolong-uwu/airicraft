@@ -21,7 +21,7 @@ public final class PlannerToolSurface {
 		PlannerToolCatalog.CANCEL_ACTION_GOAL,
 		PlannerToolCatalog.CLEAR_GOAL,
 		"set_planner_goal", "change_planner_goal", "finish_planner_goal", "inspect_planner_goal", "something_wrong",
-		"query_world", "run_policy", "read_policy_docs"
+		"query_world", "read_policy_docs"
 	); }
 
 	private final LinkedHashSet<String> activeToolNames = new LinkedHashSet<>(coreToolNames());

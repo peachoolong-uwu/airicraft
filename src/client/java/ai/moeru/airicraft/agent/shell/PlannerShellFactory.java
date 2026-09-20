@@ -214,7 +214,6 @@ public final class PlannerShellFactory {
 		var dialogueRef = new java.util.concurrent.atomic.AtomicReference<DialogueRuntime>();
 		java.util.concurrent.Executor clientExecutor = command -> MinecraftClient.getInstance().execute(command);
 		var controllerProviders = new java.util.ArrayList<>(sharedProviders);
-		controllerProviders.add(new ai.moeru.airicraft.agent.llm.PolicyToolProvider(effectiveActionToolExecutor));
 		controllerProviders.add(new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, clientExecutor, true, () -> !handoff.active()));
 		if (dual) controllerProviders.add(new ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider(
 			ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.CONTROLLER, handoff, clientExecutor,
@@ -232,36 +231,6 @@ public final class PlannerShellFactory {
 		controllerRef.set(orchestrator);
 		DialogueRuntime dialogue = new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock, plannerGoal);
 		dialogueRef.set(dialogue);
-		var continuationTools = PlannerToolRegistry.isolated(new ai.moeru.airicraft.agent.llm.PolicyContinuationToolProvider());
-		continuationTools.freezeToolPrefix();
-		LlmBackend continuationBackend = switch (controllerConfig.plannerBackend()) {
-			case OPENAI_COMPATIBLE -> new OpenAiCompatibleLlmBackend(controllerConfig, observability, continuationTools, "airicraft:continuation:" + java.util.UUID.randomUUID());
-			case CODEX_APP_SERVER -> new CodexAppServerLlmBackend(controllerConfig, observability, continuationTools);
-		};
-		var continuationThread = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
-			var thread = new Thread(runnable, "airicraft-policy-continuation");
-			thread.setDaemon(true);
-			return thread;
-		});
-		dialogue.configurePolicyContinuation(new ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner(conversation ->
-			java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-				try {
-					// Dedicated backend: hypothetical outputs never advance either live planner role's history.
-					continuationBackend.resetBackend();
-					return continuationBackend.generate(conversation).payload();
-				} catch (ai.moeru.airicraft.agent.llm.LlmBackendException error) {
-					throw new java.util.concurrent.CompletionException(error);
-				}
-			}, continuationThread), () -> {
-				continuationThread.shutdownNow();
-				continuationBackend.shutdownBackend();
-			}), block -> {
-				var client = MinecraftClient.getInstance();
-				var pos = new BlockPos(block.get("x").getAsInt(), block.get("y").getAsInt(), block.get("z").getAsInt());
-				return client != null && client.world != null && client.world.isChunkLoaded(pos)
-					&& net.minecraft.registry.Registries.BLOCK.getId(client.world.getBlockState(pos).getBlock()).toString()
-						.equals(block.get("blockId").getAsString());
-			}, effectiveActionToolExecutor);
 
 		if (dual) {
 			var thinkingProviders = new java.util.ArrayList<>(sharedProviders);
