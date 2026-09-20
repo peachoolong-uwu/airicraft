@@ -10,6 +10,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentConfigLoaderTest {
+	@Test void shortTermFindingsAreOptInAndPreservedForRoles() {
+		assertFalse(AgentConfig.defaults().llm().plannerSummarizeToolResults());
+		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerSummarizeToolResults", true), AgentConfig.defaults()).llm();
+		assertTrue(config.plannerSummarizeToolResults());
+		assertTrue(config.forRole("thinker", "medium").plannerSummarizeToolResults());
+	}
+
+	@Test void shortTermFindingsRejectBackendOwnedHistory() {
+		assertThrows(IllegalArgumentException.class, () -> AgentConfigLoader.fromMapStrict(
+			Map.of("plannerSummarizeToolResults", true, "plannerBackend", "codex-app-server"), AgentConfig.defaults()));
+	}
+
 	@Test void readsNativeImageLimitAndPreservesItForPlannerRoles() {
 		assertEquals(8, AgentConfig.defaults().llm().plannerMaxImages());
 		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerMaxImages", 3), AgentConfig.defaults()).llm();

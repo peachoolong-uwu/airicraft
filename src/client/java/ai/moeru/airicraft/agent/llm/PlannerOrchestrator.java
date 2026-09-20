@@ -472,7 +472,17 @@ public final class PlannerOrchestrator {
 	}
 
 	private PlannerExecutionResult finishSuccessfulPlannerResult(PlannerExecutionResult plannerResult) {
+		if (toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME)) {
+			String error = PlannerFindingToolProvider.validateNext(sessionCoordinator.conversationFor(plannerResult.generation()), effectiveToolCalls(plannerResult.response()));
+			if (error != null) {
+				var failure = rejectToolRequest(plannerResult, error);
+				if (scheduleParseRepairRetry(failure)) return null;
+				return finishFailedPlannerResult(failure);
+			}
+		}
+
 		if (plannerResult.phase() == PlannerSessionPhase.TOOL_FOLLOW_UP
+			&& !(toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME) && effectiveToolCalls(plannerResult.response()).stream().anyMatch(c -> PlannerFindingToolProvider.NAME.equals(c.name())))
 			&& completedToolCallCount(plannerResult.generation()) + effectiveToolCalls(plannerResult.response()).size() > MAX_TOOL_CALLS_PER_TURN) {
 			return yieldToolTurn(plannerResult);
 		}
@@ -1228,6 +1238,9 @@ public final class PlannerOrchestrator {
 			);
 		}
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
+		if (toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME) && toolExecution.toolCalls().size() == 1) {
+			completedToolConversation = PlannerFindingToolProvider.afterTool(completedToolConversation, toolExecution.toolCalls().getFirst(), toolOutcome.toolResultText());
+		}
 		contextAggregator.retainConversation(completedToolConversation);
 		if (plannerExecutor.managesConversationHistory() && toolOutcome.hasImageAttachment()) backendHistoryImages++;
 		// Completed effects remain evidence even when safety invalidates the next decision.

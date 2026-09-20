@@ -205,6 +205,7 @@ public final class PlannerShellFactory {
 				() -> ai.moeru.airicraft.AiricraftClient.runtimeController().automaticPlaytest().resultCommitted(),
 				command -> MinecraftClient.getInstance().execute(command)));
 		}
+		if (config.llm().plannerSummarizeToolResults()) sharedProviders.add(new ai.moeru.airicraft.agent.llm.PlannerFindingToolProvider());
 		boolean dual = config.llm().thinkingPlanner().enabled();
 		if (dual && config.llm().plannerBackend() != AgentConfig.PlannerBackend.OPENAI_COMPATIBLE)
 			throw new IllegalArgumentException("thinkingPlanner requires the openai-compatible backend");
@@ -219,7 +220,7 @@ public final class PlannerShellFactory {
 			ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.CONTROLLER, handoff, clientExecutor,
 			plannerGoal::context, () -> dialogueRef.get().delegationWorkIdle()));
 		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(controllerProviders.toArray(ai.moeru.airicraft.agent.llm.PlannerToolProvider[]::new));
-		if (dual) toolRegistry.freezeToolPrefix();
+		if (dual || config.llm().plannerSummarizeToolResults()) toolRegistry.freezeToolPrefix();
 		var controllerConfig = dual ? config.llm().forRole(config.llm().model(), "none") : config.llm();
 		String cacheSession = dual ? "airicraft:" + java.util.UUID.randomUUID() : null;
 		PlannerCallJournal plannerCallJournal = new PlannerCallJournal(effectiveClock, effectiveServerTickSupplier,

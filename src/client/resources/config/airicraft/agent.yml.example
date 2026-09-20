@@ -141,3 +141,7 @@ observability:
   #   wandb.entity: "shinohara-rin"
   #   wandb.project: "airicraft"
   # vendorProfile: "weave"
+
+# Experimental sequential short-term findings for world inspection/query results.
+# Requires openai-compatible. Raw results remain in debug records, not future context.
+plannerSummarizeToolResults: false

@@ -53,6 +53,50 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerOrchestratorTest {
 	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+	void findingReplacesRawQueryAcrossSubsequentTurns(boolean noFinding) {
+		var conversations = new ArrayList<LlmConversation>();
+		var args = JsonParser.parseString("{\"sourceToolCallId\":\"wall-query\",\"result\":null,\"memory\":\"Checked x=100..106; no hole. Search east next.\"}").getAsJsonObject();
+		if (!noFinding) { args.addProperty("result", "L-shaped hole"); args.addProperty("memory", "Place stone bricks at (109,65,50), (109,66,50), (110,65,50)."); }
+		var provider = new PlannerToolProvider() {
+			public String id() { return "finding_fixture"; }
+			public boolean handles(String name) { return "query_world".equals(name); }
+			public List<Map<String, Object>> openAiTools() { return List.of(
+				PlannerToolCatalog.toolForProvider("query_world", "Query blocks", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture(
+				call.name().equals("query_world") ? "RAW_WALL_BLOCK_LIST_12345" : "Finding accepted"); }
+		};
+		LlmBackend backend = new LlmBackend() {
+			public LlmCallResult<PlannerResponse> generate(LlmConversation conversation) {
+				conversations.add(conversation);
+				return LlmCallResult.of(switch (conversations.size()) {
+					case 1 -> new PlannerResponse("", new PlannerToolCall("wall-query", "query_world", new JsonObject(), null, null), null);
+					case 2 -> new PlannerResponse("", new PlannerToolCall("finding", "record_finding", args, null, null), null);
+					default -> noActionResponse();
+				}, null);
+			}
+			public void injectMockResponse(PlannerResponse r) {} public void injectTimeout() {} public boolean isConfigured() { return true; }
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerFindingToolProvider());
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(request("Fix the hole in the stone-brick wall", 1));
+			assertTrue(awaitResult(orchestrator).succeeded());
+			assertTrue(conversations.get(1).messages().stream().anyMatch(m -> m.content().contains("RAW_WALL_BLOCK_LIST_12345")));
+			orchestrator.onAcceptedReplyRecorded();
+			orchestrator.submit(request("Continue the repair", 2));
+			assertTrue(awaitResult(orchestrator).succeeded());
+			for (var conversation : conversations.subList(2, conversations.size())) {
+				assertFalse(conversation.messages().stream().anyMatch(m -> m.content().contains("RAW_WALL_BLOCK_LIST_12345")), "Raw result must leave future context");
+				assertTrue(conversation.messages().stream().anyMatch(m -> m.content().contains(args.get("memory").getAsString())));
+				assertEquals(1, conversation.messages().stream().filter(m -> "wall-query".equals(m.toolCallId())).count());
+			}
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest
 	@org.junit.jupiter.params.provider.ValueSource(ints = {1, 8})
 	void nativeImagesStopAtLimitWithoutChangingPrefixAndResetAndCompactionRestoreBudget(int maxImages) throws Exception {
 		try (var server = CompactionTestServer.start()) {
