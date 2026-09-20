@@ -6,7 +6,7 @@ Enable in `agent.yml` and reload the agent:
 plannerSummarizeToolResults: true
 ```
 
-Default: `false`. Requires the `openai-compatible` backend, whose conversation Airicraft owns. The Codex app-server backend owns its history and is rejected with this switch enabled. The switch is preserved for both planner roles.
+Default: `true` for `openai-compatible`; set `false` to opt out. Requires the `openai-compatible` backend, whose conversation Airicraft owns. The Codex app-server backend owns its history, defaults this switch off, and rejects an explicit opt-in. The switch is preserved for both planner roles.
 
 The experiment applies to `inspect_world`, `query_world`, `inspect_nearby_entities`, `find_world_features`, and `custom_` world queries. Other results, including images and action receipts, retain their existing behavior. Tool calls become sequential while enabled.
 

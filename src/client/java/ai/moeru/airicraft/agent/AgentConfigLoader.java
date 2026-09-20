@@ -120,7 +120,7 @@ public final class AgentConfigLoader {
 			readString(root, "plannerReasoningEffort", defaults.llm().reasoningEffort(), strict),
 			thinkingPlanner,
 			readInt(root, "plannerMaxImages", defaults.llm().plannerMaxImages()),
-			readBoolean(root, "plannerSummarizeToolResults", defaults.llm().plannerSummarizeToolResults(), strict)
+			readBoolean(root, "plannerSummarizeToolResults", defaults.llm().plannerSummarizeToolResults() && readPlannerBackend(root, defaults.llm().plannerBackend(), strict) != AgentConfig.PlannerBackend.CODEX_APP_SERVER, strict)
 		);
 		AgentConfig.IdleConfig idle = new AgentConfig.IdleConfig(
 			readInt(root, "idleInitialDelaySeconds", defaults.idle().initialDelaySeconds()),
@@ -198,7 +198,7 @@ public final class AgentConfigLoader {
 		yamlData.put("requestTimeoutMillis", readInt(root, "requestTimeoutMillis", defaults.llm().requestTimeoutMillis()));
 		yamlData.put("visionRequestTimeoutMillis", readInt(root, "visionRequestTimeoutMillis", defaults.llm().visionRequestTimeoutMillis()));
 		yamlData.put("maxRecentConversationTurns", readInt(root, "maxRecentConversationTurns", defaults.llm().maxRecentConversationTurns()));
-		yamlData.put("plannerSummarizeToolResults", readBoolean(root, "plannerSummarizeToolResults", defaults.llm().plannerSummarizeToolResults(), false));
+		yamlData.put("plannerSummarizeToolResults", readBoolean(root, "plannerSummarizeToolResults", defaults.llm().plannerSummarizeToolResults() && readPlannerBackend(root, defaults.llm().plannerBackend(), false) != AgentConfig.PlannerBackend.CODEX_APP_SERVER, false));
 		yamlData.put("plannerMaxImages", readInt(root, "plannerMaxImages", defaults.llm().plannerMaxImages()));
 		yamlData.put("plannerCompactionTriggerTokens", readInt(root, "plannerCompactionTriggerTokens", defaults.llm().plannerCompactionTriggerTokens()));
 		yamlData.put("plannerPendingSemanticEventCap", readInt(root, "plannerPendingSemanticEventCap", defaults.llm().plannerPendingSemanticEventCap()));

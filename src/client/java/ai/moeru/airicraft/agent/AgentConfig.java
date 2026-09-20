@@ -140,7 +140,7 @@ public record AgentConfig(
 				reasoningEffort,
 				thinkingPlanner,
 				plannerMaxImages,
-				false
+				plannerBackend != PlannerBackend.CODEX_APP_SERVER
 			);
 		}
 

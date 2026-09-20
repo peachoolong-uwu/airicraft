@@ -144,4 +144,4 @@ observability:
 
 # Experimental sequential short-term findings for world inspection/query results.
 # Requires openai-compatible. Raw results remain in debug records, not future context.
-plannerSummarizeToolResults: false
+plannerSummarizeToolResults: true

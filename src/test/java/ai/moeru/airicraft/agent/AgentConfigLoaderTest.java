@@ -10,11 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentConfigLoaderTest {
-	@Test void shortTermFindingsAreOptInAndPreservedForRoles() {
-		assertFalse(AgentConfig.defaults().llm().plannerSummarizeToolResults());
+	@Test void shortTermFindingsDefaultOnAndPreserveExplicitOptOut() {
+		assertTrue(AgentConfig.defaults().llm().plannerSummarizeToolResults());
 		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerSummarizeToolResults", true), AgentConfig.defaults()).llm();
 		assertTrue(config.plannerSummarizeToolResults());
 		assertTrue(config.forRole("thinker", "medium").plannerSummarizeToolResults());
+		var disabled = AgentConfigLoader.fromMapStrict(Map.of("plannerSummarizeToolResults", false), AgentConfig.defaults()).llm();
+		assertFalse(disabled.forRole("thinker", "medium").plannerSummarizeToolResults());
+		assertFalse(AgentConfigLoader.fromMapStrict(Map.of("plannerBackend", "codex-app-server"), AgentConfig.defaults()).llm().plannerSummarizeToolResults());
 	}
 
 	@Test void shortTermFindingsRejectBackendOwnedHistory() {
