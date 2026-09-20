@@ -83,6 +83,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DialogueRuntimeTest {
 	@Test
+	void routinePolicyEventsDoNotCompeteWithSpeculationButDamageStillWakesPlanner() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		runtime.waitForWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of()));
+		for (var type : List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK)) {
+			runtime.onPlannerTrigger(PlannerTrigger.autonomous(type, "self", "progress", 11, 11, "progress"),
+				SessionSnapshot.initial(), null, Optional.empty(), null, null, events);
+			assertFalse(runtime.plannerDebugSnapshot().inFlight(), type.name());
+		}
+		runtime.onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.DAMAGE, "self", "hurt", 12, 12, "damage"),
+			SessionSnapshot.initial(), null, Optional.empty(), null, null, events);
+		assertTrue(runtime.plannerDebugSnapshot().inFlight());
+		runtime.shutdown();
+	}
+
+	@Test
 	void continuationRunsDuringPolicyAndDispatchesOnceWithoutNormalPlannerCall() {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend);

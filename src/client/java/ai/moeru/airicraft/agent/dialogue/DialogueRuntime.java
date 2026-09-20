@@ -502,6 +502,11 @@ public final class DialogueRuntime {
 		if (trigger == null) {
 			return;
 		}
+		// Policy effects already consume these observations. Retain the evidence in the
+		// event buffer, but do not launch a competing turn for ordinary progress.
+		if (waitingForWork != null && waitingForWork.label().equals("run_policy")
+			&& !trigger.maySupersedeLaunchedTurn() && safetyHoldId == null && !reflexActive
+			&& List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK).contains(trigger.type())) return;
 		submitPlannerTrigger(
 			new PlannerRequest(
 				trigger.tick(),
