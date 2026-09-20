@@ -56,3 +56,33 @@ Keep two concerns distinct:
 A useful diagnostic example is: “Returning to surface; breaking stone; holding furnace; stone pickaxe available in slot 34; work has run for several minutes with slow upward progress.” The planner can then reassess strategy using actual behavior. Unknown failure patterns should remain observable, rather than restricting the report to a hard-coded no-progress condition.
 
 No tool-selection or execution-check-in fix was made during this separate investigation. No performance improvement from such a fix is claimed.
+
+## Follow-up implementation: inventory access and slow-mining notices
+
+User-authorized follow-up implemented in `4766f4ea`:
+
+- Enable Baritone `allowInventory` alongside existing `autoTool`, allowing its inventory behavior to bring carried tools into the hotbar.
+- Observe actual client block breaking during active agent jobs, including navigation excavation. After 40 sustained ticks, warn if predicted total break time is at least 100 ticks (or no progress is predicted); also warn after 100 elapsed ticks even when the estimate predicts faster breaking.
+- Emit `task.notice` / `slow_mining` with work context, target block/position, held item, break progress, elapsed/predicted ticks, and carried-tool ranking by base speed and harvest suitability. This ranking is explicitly not an enchanted/player-condition timing estimate.
+- Report once per continuous block/tool/work episode, with a 600-tick global cooldown. World/lifecycle changes reset observation. Warnings queue behind an in-flight planner, bypass routine policy-progress suppression when free, and discard speculative continuations. They do not cancel work automatically.
+- Teach the planner to review fresh work, tools and conditions; a slow block can be expected, and an old warning does not establish current failure.
+
+Validation: regressions first failed for disabled inventory access, missing warnings, and suppressed policy attention. Focused tests and full `./gradlew build` then passed: 1,445 root tests (two existing skips), 95 wrapper tests, no failures. Tests cover timing, stalled faster estimates, interruption/reset, cooldown, policy wakeup, and preserving an in-flight planner request.
+
+### Focused live reproduction
+
+Run `20260920-183048-924686-53551-e5c40b53-bb98-4b0b-a6b3-4f00c73b6557` used a copy of the earlier underground checkpoint, with a focused surface-return objective and no planner-side manual equipment changes. Budget was 180 seconds; the helper was gracefully stopped after completion and evidence capture.
+
+- Initial tick 91: player at approximately (-0.52,108,6.7), furnace selected in slot 1.
+- `RETURN_TO_SURFACE` started at tick 203, work `JOB:job-252800e9-cd5a-43d5-908b-9c4d196babd7`.
+- Tick 217: stone pickaxe selected in hotbar slot 0.
+- All 31 RUNNING snapshots held either the stone pickaxe (25) or dirt (6); none held the furnace.
+- `task.completed` at tick 828 with `surface_reached`: 625 client ticks, 31.21 wall seconds after start. Final position approximately (-0.54,127,13.31), health 20.
+- No slow-mining notice occurred. This proves the inventory behavior in live navigation, not live warning delivery; warning behavior is established by offline tests.
+- The objective/path differed from the earlier recording, so these timings are not a controlled speedup measurement.
+
+Finalization: `COMPLETED`, `recordingComplete: true`, `bugReported: false`, `terminationReason: manual_interrupt`. Client stopped. Play and saved world:
+
+`automatic_playtest/v1/airicraft-evaluation--865ff895-131f-45b8-9476-161bd2772ba0/players/AiricraftTest--d0a06f8c-4222-3e72-988a-8e0924bde20d/plays/20260920T103115.330Z--56dc8ae4-c0ae-44d1-b405-13adbe3274ac`
+
+Read `extensions/airicraft.playtest/playtest.json`, `events.jsonl.gz`, `live-recording.jsonl.gz`, and `world-save.zip`. Recording primitives were not modified.
