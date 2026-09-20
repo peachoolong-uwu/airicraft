@@ -439,7 +439,8 @@ public final class ModBridgeServer {
 				boolean keepPose = request != null && Boolean.TRUE.equals(request.keepPose());
 				boolean fadeOccluders = request != null && Boolean.TRUE.equals(request.fadeOccluders());
 				Integer hideAboveY = request != null ? request.hideAboveY() : null;
-				if (fadeOccluders || hideAboveY != null) {
+				boolean autoFade = "auto".equals(mode) && !framing.focusClear();
+				if (fadeOccluders || hideAboveY != null || autoFade) {
 					Vec3d focus = request != null && request.x() != null && request.y() != null && request.z() != null
 						? new Vec3d(request.x(), request.y(), request.z())
 						: client.player.getPos();
@@ -448,12 +449,20 @@ public final class ModBridgeServer {
 					java.util.Set<BlockPos> occluders = fadeOccluders
 						? service.computeOccluders(client, framing.pose(), service.samplesFor(client, focus, radius, purpose))
 						: java.util.Set.of();
+					if (autoFade) {
+						// No clear pose exists: fade whatever blocks the focus sphere.
+						java.util.Set<BlockPos> focusOccluders = service.computeOccluders(
+							client, framing.pose(),
+							service.focusSphereSamples(focus));
+						occluders = new java.util.HashSet<>(occluders);
+						occluders.addAll(focusOccluders);
+					}
 					service.setFade(client, new WorldCameraService.FadeFilter(occluders, hideAboveY),
 						BlockPos.ofFloored(focus).add(-(int) Math.ceil(radius) - 2, -16, -(int) Math.ceil(radius) - 2),
 						BlockPos.ofFloored(focus).add((int) Math.ceil(radius) + 2, 16, (int) Math.ceil(radius) + 2));
 					framing = new WorldCameraService.FrameResult(
 						framing.pose(), framing.candidates(), framing.samples(), framing.visibleSamples(),
-						framing.score(), occluders.size());
+						framing.score(), occluders.size(), framing.focusClear());
 				}
 				return service.capture(client, framing.pose(), framing, settleFrames, keepPose);
 			});

@@ -47,10 +47,14 @@ public final class WorldCameraService {
 		int samples,
 		int visibleSamples,
 		double score,
-		int fadedBlocks
+		int fadedBlocks,
+		boolean focusClear
 	) {
 		public FrameResult(CameraPose pose, int candidates, int samples, int visibleSamples, double score) {
-			this(pose, candidates, samples, visibleSamples, score, 0);
+			this(pose, candidates, samples, visibleSamples, score, 0, true);
+		}
+		public FrameResult(CameraPose pose, int candidates, int samples, int visibleSamples, double score, int fadedBlocks) {
+			this(pose, candidates, samples, visibleSamples, score, fadedBlocks, true);
 		}
 	}
 
@@ -496,10 +500,12 @@ public final class WorldCameraService {
 		CameraPose bestPose = null;
 		double bestScore = Double.NEGATIVE_INFINITY;
 		double bestVisibleWeight = 0.0;
+		boolean bestFocusClear = false;
 		double totalWeight = 0.0;
 		for (SamplePoint sample : samples) {
 			totalWeight += sample.weight();
 		}
+		List<Vec3d> focusSphere = focusSpherePoints(focus);
 		int candidates = 0;
 		for (double pitchDeg : pitches) {
 			double pitch = Math.toRadians(pitchDeg);
@@ -518,10 +524,15 @@ public final class WorldCameraService {
 					CameraPose candidate = new CameraPose(cx, cy, cz, (float) yawDeg, (float) pitchDeg);
 					candidates++;
 					PoseScore scored = scorePose(client, candidate, samples, distance, r);
-					if (scored.score() > bestScore) {
+					boolean focusClear = focusSphereClear(client, candidate, focusSphere);
+					// A pose that keeps the focus sphere fully visible always
+					// beats one that doesn't, regardless of aggregate score.
+					if ((focusClear && !bestFocusClear)
+						|| (focusClear == bestFocusClear && scored.score() > bestScore)) {
 						bestScore = scored.score();
 						bestPose = candidate;
 						bestVisibleWeight = scored.visibleWeight();
+						bestFocusClear = focusClear;
 					}
 				}
 			}
@@ -534,10 +545,13 @@ public final class WorldCameraService {
 			for (CameraPose candidate : interiorCandidates(client, focus, r)) {
 				candidates++;
 				PoseScore scored = scorePose(client, candidate, samples, r, r);
-				if (scored.score() > bestScore) {
+				boolean focusClear = focusSphereClear(client, candidate, focusSphere);
+				if ((focusClear && !bestFocusClear)
+					|| (focusClear == bestFocusClear && scored.score() > bestScore)) {
 					bestScore = scored.score();
 					bestPose = candidate;
 					bestVisibleWeight = scored.visibleWeight();
+					bestFocusClear = focusClear;
 				}
 			}
 		}
@@ -545,7 +559,51 @@ public final class WorldCameraService {
 		int visibleSamples = totalWeight > 0
 			? (int) Math.round(samples.size() * bestVisibleWeight / totalWeight)
 			: 0;
-		return new FrameResult(bestPose, candidates, samples.size(), visibleSamples, bestScore);
+		return new FrameResult(bestPose, candidates, samples.size(), visibleSamples, bestScore, 0, bestFocusClear);
+	}
+
+	/**
+	 * A small sphere of points around the focus: center + 6 axis offsets.
+	 * All must be COLLIDER-visible for the focus to count as clear — leaves
+	 * and other VISUAL-transparent blocks still occlude the subject.
+	 */
+	private static List<Vec3d> focusSpherePoints(Vec3d focus) {
+		double r = 0.9;
+		return List.of(
+			focus,
+			focus.add(r, 0, 0), focus.add(-r, 0, 0),
+			focus.add(0, r, 0), focus.add(0, -r, 0),
+			focus.add(0, 0, r), focus.add(0, 0, -r));
+	}
+
+	private boolean focusSphereClear(MinecraftClient client, CameraPose candidate, List<Vec3d> sphere) {
+		Vec3d eye = new Vec3d(candidate.x(), candidate.y(), candidate.z());
+		for (Vec3d point : sphere) {
+			Vec3d delta = point.subtract(eye);
+			double distance = delta.length();
+			if (distance < 1.0E-6) {
+				continue;
+			}
+			Vec3d end = eye.add(delta.normalize().multiply(Math.max(0.0, distance - 0.3)));
+			BlockHitResult hit = client.world.raycast(new RaycastContext(
+				eye, end, RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE,
+				net.minecraft.block.ShapeContext.absent()));
+			if (hit.getType() != HitResult.Type.MISS) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Focus sphere as sample points for occluder computation.
+	 */
+	public List<SamplePoint> focusSphereSamples(Vec3d focus) {
+		List<SamplePoint> samples = new ArrayList<>();
+		for (Vec3d point : focusSpherePoints(focus)) {
+			samples.add(new SamplePoint(point, 1.0));
+		}
+		return samples;
 	}
 
 	/**
