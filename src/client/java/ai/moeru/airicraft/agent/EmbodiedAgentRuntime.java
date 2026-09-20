@@ -2396,7 +2396,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	public CompletableFuture<String> execute(PlannerToolCall toolCall) {
 		if (!dispatchingPolicyTool && policyRuntime != null && policyRuntime.active() && toolCall != null
 			&& !PlannerToolCatalog.isReadTool(toolCall.name())
-			&& !List.of("inspect_work", "list_work", "cancel_work", "wait_for_work", "configure_reflex").contains(toolCall.name())) {
+			&& !List.of("inspect_work", "list_work", "cancel_work", "configure_reflex").contains(toolCall.name())) {
 			return CompletableFuture.completedFuture("TOOL_ERROR: policy_active; inspect or cancel workId=" + policyWork.id());
 		}
 		return plannerActionToolExecutor.execute(toolCall);
@@ -2431,7 +2431,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING,
 			"run_policy", "POLICY", true, tickCount, Map.of("source", source, "input", input));
 		recordWork(work);
-		dialogueRuntime.waitForWork(work);
+		dialogueRuntime.observeAcceptedWork(work);
 		return "Tool result for run_policy: " + new com.google.gson.Gson().toJson(work.summary());
 	}
 
@@ -2615,6 +2615,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			if (admitted.isPresent()) {
 				var work = workHistory.find(admitted.get().handle()).orElseThrow();
 				receipt.putAll(work.summary());
+				dialogueRuntime.observeAcceptedWork(work);
 			} else if (accepted) {
 				var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION,
 					java.util.UUID.randomUUID().toString());
@@ -2624,6 +2625,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					Map.of("result", text, "afterEventSequence", eventBuffer.latestSeqNo()));
 				recordWork(work);
 				receipt.putAll(work.summary());
+				dialogueRuntime.observeAcceptedWork(work);
 			}
 			String prefix = "Tool result for " + call.name() + ": ";
 			receipt.put("result", text.startsWith(prefix) ? text.substring(prefix.length()) : text);
@@ -2645,7 +2647,6 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		var handle = work.handle();
 		switch (call.name()) {
 			case "inspect_work" -> { }
-			case "wait_for_work" -> dialogueRuntime.waitForWork(work);
 			case "cancel_work" -> {
 				if (!work.parentWorkId().isBlank()) return "TOOL_ERROR: control_parent_work workId=" + work.parentWorkId();
 				if (!work.state().terminal()) {
@@ -2687,6 +2688,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		var result = new LinkedHashMap<>(call.name().equals("inspect_work") ? workHistory.find(handle).orElseThrow().payload()
 			: workHistory.find(handle).orElseThrow().summary());
 		if (!call.name().equals("inspect_work")) result.put("accepted", true);
+		if (call.name().equals("resume_work")) dialogueRuntime.observeAcceptedWork(workHistory.find(handle).orElseThrow());
 		return "Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(result);
 	}
 
@@ -2738,7 +2740,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		JsonObject args = toolCall.arguments();
 		String normalizedToolName = PlannerToolCatalog.normalizeName(toolCall.name());
 		return switch (normalizedToolName) {
-			case "inspect_work", "list_work", "cancel_work", "resume_work", "wait_for_work" -> executeWorkTool(toolCall);
+			case "inspect_work", "list_work", "cancel_work", "resume_work" -> executeWorkTool(toolCall);
 			case "run_policy" -> "TOOL_UNAVAILABLE: run_policy disabled";
 			case PlannerToolCatalog.RESUME_TASK -> {
 				String holdId = stringArg(args, "holdId").orElseThrow(() -> new IllegalArgumentException("holdId is required"));

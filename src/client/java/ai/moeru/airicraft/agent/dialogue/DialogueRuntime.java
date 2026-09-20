@@ -40,7 +40,7 @@ public final class DialogueRuntime {
 	private long delegationEventCursor;
 	private final ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore plannerGoal;
 	private long nextGoalContinuationTick;
-	private ai.moeru.airicraft.agent.work.WorkSnapshot waitingForWork;
+	private ai.moeru.airicraft.agent.work.WorkSnapshot acceptedWork;
 	private final Clock clock;
 	private final int maxRecentTurns;
 	private final List<DialogueTurn> recentTurns = new ArrayList<>();
@@ -173,19 +173,20 @@ public final class DialogueRuntime {
 
 	public void updateGameplayWorkIdle(boolean idle) { delegationWorkIdle = idle; }
 
-	public void waitForWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
-		waitingForWork = work.state().terminal() ? null : work;
+	public void observeAcceptedWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
+		if (!work.state().terminal() && work.state() != ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED) acceptedWork = work;
 		if (work.label().equals("run_policy") && work.parentWorkId().isBlank()) continuationParent = work;
 	}
 
 	public void observeWork(List<ai.moeru.airicraft.agent.work.WorkSnapshot> work) {
 		if (continuationParent != null) continuationParent = work.stream()
 			.filter(current -> current.handle().equals(continuationParent.handle())).findFirst().orElse(null);
-		if (waitingForWork == null) return;
+		if (acceptedWork == null) return;
 		for (var current : work) {
-			if (current.handle().equals(waitingForWork.handle())
-				&& (current.state() != waitingForWork.state() || !current.phase().equals(waitingForWork.phase()))) {
-				waitingForWork = null;
+			if (current.handle().equals(acceptedWork.handle())
+				&& (current.state().terminal() || current.state() == ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED
+					|| current.phase().equals("CHECK_OUTPUT"))) {
+				acceptedWork = null;
 				nextGoalContinuationTick = 0;
 				return;
 			}
@@ -208,7 +209,7 @@ public final class DialogueRuntime {
 		continuationAdmission = null;
 		admittedContinuation = null;
 		lastSupervisedHold = null;
-		waitingForWork = null;
+		acceptedWork = null;
 		if (delegation != null) delegation.reset(reason);
 		planners().forEach(PlannerOrchestrator::reset);
 		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
@@ -225,7 +226,7 @@ public final class DialogueRuntime {
 		delegationWorkIdle = workIdle;
 		boolean delegated = delegation != null && delegation.active();
 		if (delegated && (delegation.starting() || delegation.returning())) return true;
-		if (waitingForWork != null) return true;
+		if (acceptedWork != null) return true;
 		if (!delegated && plannerGoal != null && plannerGoal.blocked()) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
@@ -502,9 +503,9 @@ public final class DialogueRuntime {
 		if (trigger == null) {
 			return;
 		}
-		// Policy effects already consume these observations. Retain the evidence in the
+		// Accepted work already consumes these observations. Retain the evidence in the
 		// event buffer, but do not launch a competing turn for ordinary progress.
-		if (waitingForWork != null && waitingForWork.label().equals("run_policy")
+		if (acceptedWork != null
 			&& !trigger.maySupersedeLaunchedTurn() && safetyHoldId == null && !reflexActive
 			&& List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK).contains(trigger.type())) return;
 		submitPlannerTrigger(
@@ -780,7 +781,7 @@ public final class DialogueRuntime {
 			return false;
 		}
 		while (!pendingTaskWakeups.isEmpty()) {
-			if (waitingForWork != null && waitingForWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive
+			if (acceptedWork != null && acceptedWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive
 				&& !pendingTaskWakeups.peekFirst().attention()) return false;
 			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
 			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
@@ -819,7 +820,7 @@ public final class DialogueRuntime {
 	private void supersedePendingInternalTaskUpdates(String reason, long tick, SemanticEventBuffer eventBuffer) {
 		if (policyContinuation != null) policyContinuation.discard(reason);
 		continuationParent = null;
-		waitingForWork = null;
+		acceptedWork = null;
 		userGuidanceRevision++;
 		while (!pendingTaskWakeups.isEmpty()) {
 			recordSupersededInternalTaskUpdate(pendingTaskWakeups.removeFirst(), reason, null, tick, eventBuffer);

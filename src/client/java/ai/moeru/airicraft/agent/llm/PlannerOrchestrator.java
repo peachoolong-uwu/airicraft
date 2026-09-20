@@ -34,6 +34,7 @@ public final class PlannerOrchestrator {
 	/** Lifetime gameplay requests, including tool follow-ups but excluding transport retries. */
 	public long gameplayDecisionCount() { return sessionCoordinator.gameplayDecisionCount(); }
 	private static final Gson GSON = new Gson();
+	private final DeferredWorkReceipts deferredWorkReceipts = new DeferredWorkReceipts();
 	private static final Pattern FAILED_TOOL_ARGUMENTS_PATTERN = Pattern.compile("Invalid ([a-z0-9_]+) tool arguments:");
 	private static final String VISUAL_TOOL_NAME = "take_a_look";
 	private static final String WORLD_TOOL_NAME = "inspect_world";
@@ -324,8 +325,13 @@ public final class PlannerOrchestrator {
 	}
 
 	private LlmConversation appendDecisionContext(LlmConversation conversation) {
-		if (decisionContextSource == null) return conversation;
+		if (decisionContextSource == null) {
+			LlmConversation delivered = deferredWorkReceipts.deliver(conversation, Map.of());
+			contextAggregator.retainConversation(delivered);
+			return delivered;
+		}
 		PlannerDecisionContext context = decisionContextSource.get();
+		conversation = deferredWorkReceipts.deliver(conversation, context.current());
 		if (!context.worldSessionId().equals(decisionWorldSessionId)) {
 			decisionWorldSessionId = context.worldSessionId();
 			incorporatedDecisionEventSequence = 0;
@@ -924,6 +930,7 @@ public final class PlannerOrchestrator {
 
 	private void clearRuntimeState(String reason) {
 		backendHistoryImages = 0;
+		deferredWorkReceipts.clear();
 		contextAggregator.clear();
 		toolRegistry.resetToolSurface();
 		turnJournal.clear(reason);
@@ -1246,6 +1253,9 @@ public final class PlannerOrchestrator {
 		// Completed effects remain evidence even when safety invalidates the next decision.
 		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
 			&& !toolOutcome.toolResultText().startsWith("TOOL_ERROR:");
+		for (ToolExecutionResult result : toolResults) {
+			if (deferredWorkReceipts.defer(result.toolCall(), result.toolResultText())) terminalTool = true;
+		}
 		boolean safetyContextChanged = isStaleSafetyRequest(snapshot.request());
 		boolean toolMayReleaseHold = toolExecution.toolCalls().stream().anyMatch(PlannerOrchestrator::isSideEffectTool);
 		boolean sameEpochHoldRelease = safetyContextChanged

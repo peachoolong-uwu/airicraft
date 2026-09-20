@@ -76,7 +76,7 @@ record EmbodiedPlannerActionToolExecutor(
 			return ToolPolicy.READ;
 		}
 		return switch (toolName) {
-			case "inspect_work", "list_work", "cancel_work", "wait_for_work" -> ToolPolicy.READ;
+			case "inspect_work", "list_work", "cancel_work" -> ToolPolicy.READ;
 			case "resume_work" -> ToolPolicy.ACTION;
 			case PlannerToolCatalog.CANCEL_ACTION_GOAL, PlannerToolCatalog.CANCEL_SMELTING,
 				PlannerToolCatalog.CONFIGURE_REFLEX -> ToolPolicy.READ;
@@ -106,7 +106,7 @@ record EmbodiedPlannerActionToolExecutor(
 			+ " activeStepKind=" + (task == null || task.activeStepKind() == null ? "UNKNOWN" : task.activeStepKind().name())
 			+ " taskExecutionState=" + (execution == null || execution.state() == null ? "UNKNOWN" : execution.state().name())
 			+ " taskExecutionProcess=" + (execution == null || execution.processName() == null ? "UNKNOWN" : execution.processName())
-			+ ". Task-changing tools would preempt the active job. Use wait_for_work, or cancel_work with the exact workId if another approach better serves the objective.";
+			+ ". Task-changing tools would preempt the active job. Use cancel_work with the exact workId if another approach better serves the objective.";
 	}
 
 	private static String activeGraphError(String toolName, ActionGraphExecutionSnapshot snapshot) {

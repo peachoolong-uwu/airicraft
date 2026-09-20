@@ -82,14 +82,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DialogueRuntimeTest {
-	@Test
-	void routinePolicyEventsDoNotCompeteWithSpeculationButDamageStillWakesPlanner() {
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(strings = {"run_policy", "mine_blocks"})
+	void routineProgressDoesNotWakeAcceptedWorkButDamageStillDoes(String label) {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend);
 		SemanticEventBuffer events = new SemanticEventBuffer(32);
-		runtime.waitForWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(
+		runtime.observeAcceptedWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(
 			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
-			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of()));
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, label, "POLICY", true, 10, java.util.Map.of()));
 		for (var type : List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK)) {
 			runtime.onPlannerTrigger(PlannerTrigger.autonomous(type, "self", "progress", 11, 11, "progress"),
 				SessionSnapshot.initial(), null, Optional.empty(), null, null, events);
@@ -120,7 +121,7 @@ class DialogueRuntimeTest {
 		var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "parent");
 		var parent = new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "",
 			ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
-		runtime.waitForWork(parent);
+		runtime.observeAcceptedWork(parent);
 		runtime.poll(10, events);
 		assertEquals(1, requests.size());
 		response.complete(new PlannerResponse("", new PlannerToolCall("next", "run_policy", com.google.gson.JsonParser.parseString("""
@@ -150,7 +151,7 @@ class DialogueRuntimeTest {
 		var policy = new ai.moeru.airicraft.agent.work.WorkSnapshot(
 			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
 			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
-		runtime.waitForWork(policy);
+		runtime.observeAcceptedWork(policy);
 		runtime.queueTaskWakeup(null, 11, events.append(11, "work.changed", java.util.Map.of("workId", "child")).seqNo());
 		runtime.poll(12, events);
 		assertFalse(runtime.plannerDebugSnapshot().inFlight());
@@ -165,7 +166,7 @@ class DialogueRuntimeTest {
 		var policy = new ai.moeru.airicraft.agent.work.WorkSnapshot(
 			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
 			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
-		runtime.waitForWork(policy);
+		runtime.observeAcceptedWork(policy);
 		runtime.queueTaskWakeup(null, 11, events.append(11, "work.changed", java.util.Map.of("workId", "child")).seqNo());
 		runtime.queueTaskAttention(12, events.append(12, "task.notice", java.util.Map.of("reason", "slow_mining", "message", "Slow mining stone with furnace")).seqNo());
 		runtime.poll(12, events);
@@ -255,9 +256,10 @@ class DialogueRuntimeTest {
 				true, true, "minecraft:overworld", true, 25565, 1);
 			var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(new ai.moeru.airicraft.agent.work.WorkHandle("JOB:iron"), "",
 				ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "Mine iron", "BREAK", true, 1, java.util.Map.of());
-			runtime.waitForWork(work);
+			runtime.observeAcceptedWork(work);
 			for (int tick = 1; tick < 500; tick++) {
-				runtime.observeWork(List.of(work));
+				runtime.observeWork(List.of(new ai.moeru.airicraft.agent.work.WorkSnapshot(work.handle(), "",
+					ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "Mine iron", tick % 2 == 0 ? "NAVIGATE" : "BREAK", true, tick, java.util.Map.of())));
 				runtime.continuePlannerGoal(tick, true, session, null, Optional.empty(), null, null, events);
 			}
 			assertEquals(0, backend.conversationCount());

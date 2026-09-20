@@ -166,6 +166,42 @@ class PlannerOrchestratorTest {
 	}
 	}
 
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+	void acceptedWorkYieldsUntilAnEventAndDeliversLatestOutcome(boolean failed) throws Exception {
+		var backend = new RecordingBackend();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "work_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture(
+				"Tool result for mine_blocks: {\"accepted\":true,\"workId\":\"JOB:iron\",\"state\":\"RUNNING\"}"); }
+		};
+		var registry = PlannerToolRegistry.of(provider);
+		registry.activateAllForTesting();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var current = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>(Map.of());
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10, "controller", "work", current.get(), events.query(null)));
+		try {
+			orchestrator.submit(baseRequest(null));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, new PlannerResponse("", new PlannerToolCall("mine-1", "mine_blocks", new JsonObject(), null, null), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (orchestrator.hasInFlight() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertFalse(orchestrator.hasInFlight());
+			assertEquals(1, backend.callCount(), "Acceptance must not request another model turn");
+			if (failed) current.set(Map.of("work", List.of(Map.of("workId", "JOB:iron", "state", "FAILED", "details", Map.of("failure", "unreachable")))));
+			orchestrator.submit(requestAt(20L, 2000L, "Alice", "What happened?"));
+			backend.awaitCalls(2, Duration.ofSeconds(1));
+			var receipt = backend.conversation(1).messages().stream().filter(m -> "mine-1".equals(m.toolCallId())).findFirst().orElseThrow();
+			assertEquals(!failed, receipt.content().contains("accepted"));
+			assertTrue(receipt.content().contains(failed ? "unreachable" : "RUNNING"));
+			assertTrue(backend.conversation(1).messages().stream().anyMatch(m -> m.toolCalls().stream().anyMatch(c -> c.id().equals("mine-1"))));
+		} finally { orchestrator.shutdown(); }
+	}
+
 	@Test
 	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {
 		RecordingBackend backend = new RecordingBackend();
