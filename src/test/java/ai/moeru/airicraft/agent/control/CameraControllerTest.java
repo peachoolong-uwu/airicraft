@@ -6,9 +6,49 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CameraControllerTest {
+	@Test void externalCorrectionIsObservedEvenWithoutAnotherTargetRequest() {
+		var camera = new CameraController();
+		camera.startMotion(new CameraController.Rotation(0, 0), new CameraController.Rotation(90, 0), 0, "vision");
+		camera.tickMotion();
+		var waiting = camera.whenAligned();
+		var next = camera.tickMotion(new CameraController.Rotation(100, 0)).orElseThrow();
+		assertTrue(next.yaw() > 90 && next.yaw() < 100);
+		assertFalse(waiting.isCompletedExceptionally());
+	}
+
+	@Test void unchangedViewPreservesMomentumAndWrappedYawDoesNotJumpFullCircle() {
+		var camera = new CameraController();
+		var reference = new CameraController();
+		var start = new CameraController.Rotation(350, 0);
+		var target = new CameraController.Rotation(80, 0);
+		camera.startMotion(start, target, 0, "baritone");
+		reference.startMotion(start, target, 0, "baritone");
+		var actual = camera.tickMotion().orElseThrow();
+		reference.tickMotion();
+		var wrapped = new CameraController.Rotation(actual.yaw() - 360, actual.pitch());
+		camera.startMotion(wrapped, target, 0, "baritone");
+		var next = camera.tickMotion(wrapped).orElseThrow();
+		var expected = reference.tickMotion().orElseThrow();
+		assertEquals(expected.yaw() - 360, next.yaw(), .001);
+		assertTrue(Math.abs(next.yaw() - wrapped.yaw()) < 90);
+	}
+
+	@Test void retargetAfterExternalRotationStartsFromActualView() {
+		var camera = new CameraController();
+		camera.startMotion(new CameraController.Rotation(0, 0), new CameraController.Rotation(90, 30), 0, "baritone");
+		camera.tickMotion();
+		var actual = new CameraController.Rotation(90, -20);
+		var target = new CameraController.Rotation(100, -10);
+		camera.startMotion(actual, target, 0, "baritone");
+		var next = camera.tickMotion().orElseThrow();
+		assertTrue(next.yaw() > 90 && next.yaw() < 100, "Must not jump back to the old spring yaw");
+		assertTrue(next.pitch() > -20 && next.pitch() < -10);
+	}
+
 	@Test void blockHitAllowsOffCenterAimButRejectsMissOrOccluder() {
 		var pos = new net.minecraft.util.math.BlockPos(0, 0, 3);
 		var eye = new Vec3d(0.5, 0.5, 0);

@@ -156,7 +156,7 @@ public final class CameraController {
 			clear();
 			return;
 		}
-		tickMotion().ifPresent(rotation -> {
+		tickMotion(new Rotation(player.getYaw(), player.getPitch())).ifPresent(rotation -> {
 			// Leave previous angles intact for Minecraft's render interpolation.
 			player.setYaw(rotation.yaw());
 			player.setPitch(rotation.pitch());
@@ -188,8 +188,14 @@ public final class CameraController {
 
 	void startMotion(Rotation start, Rotation target, int durationTicks, String reason) {
 		if (spring == null) spring = new RotationSpring(Objects.requireNonNull(start));
+		else spring.synchronize(Objects.requireNonNull(start));
 		activeMotion = new CameraMotion(Objects.requireNonNull(target),
 			durationTicks > 0 ? 120.0D / durationTicks : 18.0D, normalizeReason(reason));
+	}
+
+	Optional<Rotation> tickMotion(Rotation actual) {
+		if (spring != null) spring.synchronize(actual);
+		return tickMotion();
 	}
 
 	Optional<Rotation> tickMotion() {

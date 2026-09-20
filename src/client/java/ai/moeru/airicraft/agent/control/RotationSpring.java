@@ -14,6 +14,20 @@ final class RotationSpring {
 		pitch = start.pitch();
 	}
 
+	/** Rebase after external view changes, without discarding normal tracking momentum. */
+	void synchronize(CameraController.Rotation actual) {
+		if (Math.abs(MathHelper.wrapDegrees(actual.yaw() - yaw)) > 0.01D
+			|| Math.abs(actual.pitch() - pitch) > 0.01D) {
+			yaw = actual.yaw();
+			pitch = actual.pitch();
+			yawVelocity = 0;
+			pitchVelocity = 0;
+		} else {
+			// Equivalent wrapped angles must also retain the player's representation for rendering.
+			yaw += 360.0D * Math.rint((actual.yaw() - yaw) / 360.0D);
+		}
+	}
+
 	boolean atRest() { return Math.abs(yawVelocity) < 0.1D && Math.abs(pitchVelocity) < 0.1D; }
 
 	CameraController.Rotation advance(CameraController.Rotation target, double seconds, double frequency) {

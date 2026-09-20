@@ -90,3 +90,17 @@ Production now supplies the shared camera to the reflex and its underwater
 recovery controller. An identity regression fails with the old constructor call
 and verifies the production runtime forwards the supplied instance. Source run:
 `20260920-214730-045922-175-4ac6e232-2f17-4ab9-8da7-45aaf906ecbd`.
+
+### External rotation synchronization
+
+The spring now compares its current orientation with the player's actual view
+when accepting a target and before advancing a client tick. An external angular
+change greater than 0.01 degrees rebases the spring and clears stale velocity;
+normal tracking preserves momentum. Equivalent yaw wrapping rebases only the
+angle representation, retaining velocity so rendering does not jump 360 degrees.
+
+Regression tests cover the observed stale-state reproduction (an external move to
+90 degrees previously led to a spring write near 50.6 degrees), changes without
+a new target request, momentum retention, and equivalent wrapped yaw. These tests
+establish the resynchronization fix, not that external corrections caused every
+reported navigation jitter. The 10-degree movement-input threshold is unchanged.
