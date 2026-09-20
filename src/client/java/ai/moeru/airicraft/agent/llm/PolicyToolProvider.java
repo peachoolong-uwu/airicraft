@@ -23,7 +23,7 @@ public final class PolicyToolProvider implements PlannerToolProvider {
 			+ "Each tool call awaits its identified work and returns {ok,tool,result,work?}; check ok before continuing. "
 			+ "Existing observeContainer/withdraw/closeContainer(syncId) helpers retain verified singleplayer container semantics. "
 			+ "No open chest required for other methods. Maximum 128 effects and 12000 client ticks. "
-			+ "Returns root work and yields this planner turn; cancel_work or safety interruption stops the policy and its active child. "
+			+ "Returns root work and yields this planner turn; clear_queue or safety interruption stops the policy and its active child. "
 			+ "Committed effects remain. No host access, recursive policies, planner/delegation controls or image/LLM tools.",
 			propertiesForProvider(propForProvider("source", stringForProvider("JavaScript defining function* main(policy, input), maximum 32768 characters.")),
 				propForProvider("input", Map.of("type", "object", "description", "JSON input for this invocation."))), List.of("source", "input")));

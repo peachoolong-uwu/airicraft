@@ -2584,6 +2584,15 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	CompletableFuture<String> executePlannerAction(PlannerToolCall call) {
 		if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_UNAVAILABLE: run_policy disabled");
 		refreshWorkHistory();
+		if (call.name().equals("continue")) {
+			var reflex = survivalReflexRuntime.snapshot();
+			if (reflex.state() == ai.moeru.airicraft.agent.reflex.SurvivalReflexState.AWAITING_PLANNER) {
+				resumeSafetyHold(reflex.holdId(), "planner_continue");
+				refreshWorkHistory();
+				return CompletableFuture.completedFuture("Plan retained; paused work resumed.");
+			}
+			return CompletableFuture.completedFuture("Plan retained; queue continues when safety permits.");
+		}
 		if (call.name().equals("clear_queue")) {
 			var results = new ArrayList<String>();
 			for (var work : workHistory.list()) {
@@ -2595,6 +2604,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 				if (result.startsWith("TOOL_ERROR:")) return CompletableFuture.completedFuture(result);
 				results.add(result);
 			}
+			survivalReflexRuntime.discardHold("planner_clear_queue", tickCount);
+			processSurvivalReflexEvents();
 			return CompletableFuture.completedFuture("Tool result for clear_queue: " + results);
 		}
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
@@ -2607,7 +2618,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_ERROR: run_policy work_in_safety_hold");
 			return CompletableFuture.completedFuture("Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(Map.of(
 				"accepted",false,"reason","work_in_safety_hold","holdId",survivalReflexRuntime.snapshot().holdId(),
-				"requiredAction","Use inspect_work then cancel_work or resume_work with exact workId and current holdId before admitting another gameplay action.")));
+				"requiredAction","Use continue to resume the retained plan after the reflex releases control, or clear_queue to abort it before replacing the plan.")));
 		}
 		var before = workHistory.list().stream().map(ai.moeru.airicraft.agent.work.WorkSnapshot::handle).collect(java.util.stream.Collectors.toSet());
 		CompletableFuture<String> result = execute(call);
@@ -3133,7 +3144,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 						args.get("drowningEnabled").getAsBoolean(), args.get("maxThreatDistance").getAsInt(),
 						args.get("requireLineOfSight").getAsBoolean()));
 				yield "Tool result for configure_reflex: " + (args.isEmpty() ? "current " : "applied ") + policy
-					+ "; changes take effect next tick. Observe ownership release, then use resume_work with the exact workId and current holdId, or cancel_work.";
+					+ "; changes take effect next tick. Observe ownership release, then use continue to resume the plan, or clear_queue to replace it.";
 			}
 			default -> "TOOL_ERROR: unknown_tool " + toolCall.name();
 		};
@@ -4614,7 +4625,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			+ " holdId=" + (holdId == null ? "none" : holdId)
 			+ (holdId == null
 				? ". Review the consolidated safety episode; no interrupted task requires resumption."
-				: ". Review the consolidated safety episode and explicitly resume_task with this holdId, replace the task, or cancel it.");
+				: ". Review the consolidated safety episode and use continue to retain and resume the plan, or clear_queue to abort and replace it.");
 		if ("combat_stalemate".equals(reason)) {
 			message += " Combat is still unresolved and made no target-health or closing progress for "
 				+ event.payload().get("noProgressTicks") + " ticks. Position=" + event.payload().get("position")

@@ -243,7 +243,7 @@ public final class DialogueRuntime {
 			+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
 			+ plannerGoal.context();
 		if (awaitingSafetyDecision) continuation = "Safety hold " + safetyHoldId
-			+ " still awaits your decision. The previous job remains paused. Use inspect_work and resume_work with its exact workId and this holdId, or cancel_work."
+			+ " still awaits your decision. The previous job remains paused. Use continue to keep and resume the plan, or clear_queue to abort and replace it."
 			+ " Saying you will act does not release the hold.\n" + continuation;
 		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
 			continuation, tick, clock.millis(), "planner_goal"),

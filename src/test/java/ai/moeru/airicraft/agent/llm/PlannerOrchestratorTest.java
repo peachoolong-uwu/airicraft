@@ -299,7 +299,7 @@ class PlannerOrchestratorTest {
 				executed.add(call.id()); return CompletableFuture.completedFuture("Tool result for mine_blocks: {\"accepted\":true,\"workId\":\"JOB:" + call.id() + "\",\"state\":\"RUNNING\"}");
 			}
 		};
-		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(PlannerActionToolExecutor.DISABLED));
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> { executed.add(call.name()); return CompletableFuture.completedFuture("Plan retained"); }));
 		registry.activateAllForTesting(); registry.freezeToolPrefix();
 		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
 			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
@@ -320,6 +320,7 @@ class PlannerOrchestratorTest {
 			deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
 			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
 			assertEquals(2, backend.callCount(), "continue must not generate a follow-up loop");
+			assertEquals(List.of("A", "B", "continue"), executed, "continue must reach runtime while B owns the FIFO");
 		} finally { orchestrator.shutdown(); }
 	}
 

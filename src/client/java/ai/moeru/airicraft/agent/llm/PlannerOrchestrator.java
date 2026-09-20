@@ -858,7 +858,13 @@ public final class PlannerOrchestrator {
 		}
 		for (var call : calls) {
 			String receipt;
-			if (PlannerQueueToolProvider.CONTINUE.equals(call.name())) receipt = "Turn skipped; queue continues.";
+			if (PlannerQueueToolProvider.CONTINUE.equals(call.name())) {
+				receipt = "Plan retained; continue requested.";
+				if (clear.isEmpty() && toolQueue.abort == null) {
+					toolQueue.abortCall = call;
+					toolQueue.abort = requestPlannerTools(List.of(call), snapshot.plannerConversation());
+				}
+			}
 			else if (PlannerQueueToolProvider.CLEAR.equals(call.name())) receipt = "Queue cleared; aborting active work.";
 			else if (PlannerFindingToolProvider.NAME.equals(call.name())) receipt = "Finding accepted into conversation context.";
 			else {
@@ -904,9 +910,10 @@ public final class PlannerOrchestrator {
 			ToolExecutionOutcome outcome;
 			try { outcome = toolQueue.abort.join(); }
 			catch (CompletionException error) { outcome = new TextToolExecutionOutcome(failedToolResultText(toolQueue.abortCall, error)); }
-			queueReport(toolQueue.abortCall, outcome);
+			if (!PlannerQueueToolProvider.CONTINUE.equals(toolQueue.abortCall.name())
+				|| outcome.toolResultText().startsWith("TOOL_ERROR:")) queueReport(toolQueue.abortCall, outcome);
 			toolQueue.abort = null;
-			if (outcome.toolResultText().startsWith("TOOL_ERROR:")) toolQueue.tools.clear((call, id) -> {});
+			if (PlannerQueueToolProvider.CLEAR.equals(toolQueue.abortCall.name()) && outcome.toolResultText().startsWith("TOOL_ERROR:")) toolQueue.tools.clear((call, id) -> {});
 		}
 		var completion = toolQueue.tools.tick(call -> {
 			narrationSink.onToolNarration(call);
@@ -992,7 +999,7 @@ public final class PlannerOrchestrator {
 		state.put("pending", toolQueue.tools.pending().stream().map(PlannerOrchestrator::queuedCallView).toList());
 		state.put("aborting", toolQueue.abort != null);
 		messages.add(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(state)
-			+ "\nExecution continues while you think. continue skips this turn; clear_queue aborts active work and discards pending calls.", LlmMessageKind.NOTICE));
+			+ "\nExecution continues while you think. continue retains the plan and resumes resolved safety holds; clear_queue aborts active work and discards pending calls.", LlmMessageKind.NOTICE));
 		return LlmConversation.of(messages);
 	}
 
