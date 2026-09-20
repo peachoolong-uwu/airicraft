@@ -324,6 +324,37 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void partialFindingsCommitAndRequestOnlyTheRemainingObservation() throws Exception {
+		var backend = new RecordingBackend();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "queries"; }
+			public boolean handles(String name) { return name.equals("query_world"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("query_world", "Query", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture("RAW_" + call.id()); }
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerFindingToolProvider(), new PlannerQueueToolProvider(PlannerActionToolExecutor.DISABLED));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("south", "query_world", new JsonObject(), null, null),
+				new PlannerToolCall("east", "query_world", new JsonObject(), null, null)), null));
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			var finding = JsonParser.parseString("{\"sourceToolCallId\":\"south\",\"result\":\"Forest south\",\"memory\":\"Forest at (10,64,20)\"}").getAsJsonObject();
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("summary", "record_finding", finding, null, null)), null));
+			awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(2));
+			String next = conversationText(backend.conversation(2));
+			assertTrue(next.contains("Forest at (10,64,20)"));
+			assertFalse(next.contains("RAW_south"), "Accepted summary must replace the raw query");
+			assertTrue(next.contains("RAW_east"));
+			assertTrue(next.contains("Next pending observation: east"));
+			assertFalse(next.contains("TOOL CALL FORMAT REMINDER"), "Partial progress must not enter parse repair");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
 	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {
 		RecordingBackend backend = new RecordingBackend();
 		var order = new ArrayList<String>();

@@ -873,6 +873,10 @@ public final class PlannerOrchestrator {
 		for (var call : calls) if (PlannerFindingToolProvider.NAME.equals(call.name()))
 			acceptedConversation = PlannerFindingToolProvider.afterTool(acceptedConversation, call, "Finding accepted");
 		contextAggregator.retainConversation(acceptedConversation);
+		if (calls.stream().anyMatch(c -> PlannerFindingToolProvider.NAME.equals(c.name()))) {
+			var pendingFinding = PlannerFindingToolProvider.pending(acceptedConversation);
+			if (pendingFinding != null) queueReport(calls.getLast(), new TextToolExecutionOutcome("Findings committed. Next pending observation: " + pendingFinding.toolCallId()));
+		}
 		commitRecordedToolExchanges(result.generation());
 		toolQueue.seed = result.request();
 		debugRecorder.recordPlannerCompletion(result);

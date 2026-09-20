@@ -27,6 +27,15 @@ class PlannerFindingToolProviderTest {
 		assertFalse(retained.messages().stream().anyMatch(m -> m.toolCalls().contains(FINDING)));
 	}
 
+	@Test void partialFindingBatchCommitsProgressInsteadOfRejectingAllFindings() {
+		var second = new PlannerToolCall("query-2", "find_world_features", new JsonObject(), null, null);
+		var input = RAW.withAppended(LlmChatMessage.assistantToolCall("", second)).withAppended(LlmChatMessage.tool(second.id(), "No forest east"));
+		assertNull(PlannerFindingToolProvider.validateQueuedResponse(input, List.of(FINDING)));
+		var committed = PlannerFindingToolProvider.afterTool(input, FINDING, "accepted");
+		assertEquals("query-2", PlannerFindingToolProvider.pending(committed).toolCallId());
+		assertNotNull(PlannerFindingToolProvider.validateQueuedResponse(input, List.of(FINDING, QUERY)), "New work still requires all visible observations to be summarized");
+	}
+
 	@Test void cannotSkipFindingWithAnotherQueryBatchOrFinalReply() {
 		assertNotNull(PlannerFindingToolProvider.validateNext(RAW, List.of(QUERY)));
 		assertNotNull(PlannerFindingToolProvider.validateNext(RAW, List.of()));

@@ -29,7 +29,7 @@ public final class PlannerFindingToolProvider implements PlannerToolProvider {
 			), List.of("sourceToolCallId", "result", "memory")));
 	}
 	@Override public String promptInstructions() {
-		return "Short-term findings: summarize completed inspect_world, query_world, inspect_nearby_entities, find_world_features and custom_ queries with record_finding. Multiple completed queries can be summarized together in a review; queued acknowledgments are not observations. "
+		return "Short-term findings: summarize completed inspect_world, query_world, inspect_nearby_entities, find_world_features and custom_ queries with record_finding. Completed queries can be summarized individually or together in a review; accepted findings commit immediately, and any remaining query is requested next; queued acknowledgments are not observations. "
 			+ "Answer the original task-specific question, not a general description of surroundings. Preserve exact actionable coordinates/materials and uncertainty. Use result:null whenever the requested target was not found, even if the query ran successfully. For example, searching for a wall hole and finding an intact wall requires result:null, with the intact checked section and remaining search area in memory. "
 			+ "Only your finding and the original query remain in context; raw results are removed after acceptance. Findings are observations at query time, not eternal facts.";
 	}
@@ -70,7 +70,8 @@ public final class PlannerFindingToolProvider implements PlannerToolProvider {
 			if (error != null) return error;
 			reviewed = afterTool(reviewed, call, "Finding accepted");
 		}
-		if (calls.stream().anyMatch(c -> PlannerQueueToolProvider.CLEAR.equals(c.name()))) return null;
+		if (calls.stream().anyMatch(c -> PlannerQueueToolProvider.CLEAR.equals(c.name()))
+			|| !calls.isEmpty() && calls.stream().allMatch(c -> NAME.equals(c.name()) || PlannerQueueToolProvider.CONTINUE.equals(c.name()))) return null;
 		var pending = pending(reviewed);
 		return pending == null ? null : "Include record_finding for completed query " + pending.toolCallId() + " before planning new calls.";
 	}
