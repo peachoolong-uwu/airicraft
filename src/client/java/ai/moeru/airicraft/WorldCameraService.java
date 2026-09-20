@@ -299,8 +299,8 @@ public final class WorldCameraService {
 	/**
 	 * Blocks the renderer should treat as air. Read from chunk-mesh worker
 	 * threads via {@link #isFaded}; must be an immutable snapshot.
-	 * {@code fadeLeaves} additionally hides all leaf blocks — they are
-	 * visually noisy and rarely task-relevant.
+	 * {@code fadeLeaves} hides every other leaf block (3D checkerboard) so
+	 * the canopy stays visible as a translucent lattice instead of vanishing.
 	 */
 	public record FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY, boolean fadeLeaves) {
 		public FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY) {
@@ -321,7 +321,8 @@ public final class WorldCameraService {
 		if (filter == null) {
 			return false;
 		}
-		if (filter.fadeLeaves() && state.getBlock() instanceof net.minecraft.block.LeavesBlock) {
+		if (filter.fadeLeaves() && state.getBlock() instanceof net.minecraft.block.LeavesBlock
+			&& ((pos.getX() + pos.getY() + pos.getZ()) & 1) == 0) {
 			return true;
 		}
 		if (filter.hideAboveY() != null && pos.getY() >= filter.hideAboveY()) {
@@ -796,14 +797,33 @@ public final class WorldCameraService {
 				double w = image.getWidth(), h = image.getHeight();
 				Vec3d[] basis = cameraBasis(cam);
 				Vec3d eye = new Vec3d(cam.x(), cam.y(), cam.z());
-
-				// 8 corners, 12 edges.
+				// 8 corners, 12 edges, 6 faces.
 				double[][] c = new double[8][];
 				for (int i = 0; i < 8; i++) {
 					c[i] = new double[] {
 						(i & 1) == 0 ? min.getX() : max.getX() + 1,
 						(i & 2) == 0 ? min.getY() : max.getY() + 1,
 						(i & 4) == 0 ? min.getZ() : max.getZ() + 1};
+				}
+				int[][] faces = {
+					{0,1,3,2}, {4,5,7,6},
+					{0,2,6,4}, {1,3,7,5},
+					{0,1,5,4}, {2,3,7,6}};
+				g.setColor(new java.awt.Color(80, 160, 255, 48));
+				for (int[] f : faces) {
+					java.awt.Polygon poly = new java.awt.Polygon();
+					boolean ok = true;
+					for (int corner : f) {
+						double[] p = projectToScreen(c[corner], eye, basis, tanHalfFovY, aspect, w, h);
+						if (p == null) {
+							ok = false;
+							break;
+						}
+						poly.addPoint((int) p[0], (int) p[1]);
+					}
+					if (ok) {
+						g.fillPolygon(poly);
+					}
 				}
 				int[][] edges = {
 					{0,1},{1,3},{3,2},{2,0},
