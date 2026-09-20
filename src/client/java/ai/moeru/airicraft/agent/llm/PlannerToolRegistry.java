@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 
 public final class PlannerToolRegistry {
 	private final List<PlannerToolProvider> providers;
+	private final boolean includeNativeTools;
 	private final PlannerToolSurface toolSurface = new PlannerToolSurface();
 	private List<Map<String, Object>> fixedTools;
 	private String fixedInstructions;
@@ -50,9 +51,15 @@ public final class PlannerToolRegistry {
 			.collect(Collectors.joining("\n"));
 	}
 
-	private PlannerToolRegistry(List<PlannerToolProvider> providers) {
+	private PlannerToolRegistry(List<PlannerToolProvider> providers) { this(providers, true); }
+
+	private PlannerToolRegistry(List<PlannerToolProvider> providers, boolean includeNativeTools) {
 		this.providers = List.copyOf(providers);
+		this.includeNativeTools = includeNativeTools;
 	}
+
+	/** A proposal backend must not inherit the normal planner's gameplay tool catalog. */
+	public static PlannerToolRegistry isolated(PlannerToolProvider provider) { return new PlannerToolRegistry(List.of(provider), false); }
 
 	public static PlannerToolRegistry empty() {
 		return new PlannerToolRegistry(List.of());
@@ -115,7 +122,7 @@ public final class PlannerToolRegistry {
 	}
 
 	private List<Map<String, Object>> availableOpenAiTools() {
-		ArrayList<Map<String, Object>> tools = new ArrayList<>(PlannerToolCatalog.openAiTools());
+		ArrayList<Map<String, Object>> tools = new ArrayList<>(includeNativeTools ? PlannerToolCatalog.openAiTools() : List.of());
 		for (PlannerToolProvider provider : providers) {
 			if (provider.available()) {
 				tools.addAll(provider.openAiTools());

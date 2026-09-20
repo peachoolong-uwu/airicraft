@@ -108,6 +108,13 @@ class PolicyContinuationPlannerTest {
 		assertEquals(1, requests.size());
 	}
 
+	@Test void speculativeRegistryAdvertisesOnlyProposalTool() {
+		var registry = PlannerToolRegistry.isolated(new PolicyContinuationToolProvider());
+		registry.freezeToolPrefix();
+		assertEquals(1, registry.openAiTools().size());
+		assertEquals("run_policy", ((Map<?, ?>) registry.openAiTools().getFirst().get("function")).get("name"));
+	}
+
 	private void start() { planner.start(work(WorkSnapshot.State.RUNNING, Map.of("source", "gather wood")), context("world", 0), "goal: craft", 1, 0); }
 	private WorkSnapshot success() { return work(WorkSnapshot.State.SUCCEEDED, Map.of("result", Map.of("gathered", true))); }
 	private WorkSnapshot work(WorkSnapshot.State state, Map<String, Object> details) {

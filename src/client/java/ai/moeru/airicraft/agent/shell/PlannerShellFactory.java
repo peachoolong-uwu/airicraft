@@ -231,7 +231,7 @@ public final class PlannerShellFactory {
 		controllerRef.set(orchestrator);
 		DialogueRuntime dialogue = new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock, plannerGoal);
 		dialogueRef.set(dialogue);
-		var continuationTools = PlannerToolRegistry.of(new ai.moeru.airicraft.agent.llm.PolicyContinuationToolProvider());
+		var continuationTools = PlannerToolRegistry.isolated(new ai.moeru.airicraft.agent.llm.PolicyContinuationToolProvider());
 		continuationTools.freezeToolPrefix();
 		LlmBackend continuationBackend = switch (controllerConfig.plannerBackend()) {
 			case OPENAI_COMPATIBLE -> new OpenAiCompatibleLlmBackend(controllerConfig, observability, continuationTools, "airicraft:continuation:" + java.util.UUID.randomUUID());
