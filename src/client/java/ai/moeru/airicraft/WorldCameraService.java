@@ -60,8 +60,138 @@ public final class WorldCameraService {
 	) {
 	}
 
-	public synchronized CameraPose pose() {
+	private volatile boolean shoulderActive;
+	private volatile boolean playerTranslucent;
+
+	public boolean shoulderActive() {
+		return shoulderActive;
+	}
+
+	/**
+	 * Whether the player currently blocks a significant part of the view:
+	 * either a large screen fraction, or the full projection of a nearby
+	 * block. Recomputed each frame while shoulder mode is active.
+	 */
+	public boolean playerTranslucent() {
+		return playerTranslucent;
+	}
+
+	/**
+	 * Shoulder-surf pose: behind and to the right of the player's eye,
+	 * tracking the player's look direction each frame.
+	 */
+	public CameraPose shoulderPose(MinecraftClient client) {
+		if (client == null || client.player == null) {
+			return null;
+		}
+		Vec3d eye = client.player.getEyePos();
+		float yaw = client.player.getYaw();
+		float pitch = client.player.getPitch();
+		double yawRad = Math.toRadians(yaw);
+		double pitchRad = Math.toRadians(pitch);
+		Vec3d forward = new Vec3d(
+			-Math.sin(yawRad) * Math.cos(pitchRad),
+			-Math.sin(pitchRad),
+			Math.cos(yawRad) * Math.cos(pitchRad));
+		Vec3d right = new Vec3d(-forward.z, 0.0, forward.x);
+		Vec3d pos = eye.subtract(forward.multiply(4.0)).add(right.multiply(1.1)).add(0.0, 0.3, 0.0);
+		return new CameraPose(pos.x, pos.y, pos.z, yaw, pitch);
+	}
+
+	public synchronized CameraPose pose(MinecraftClient client) {
+		if (shoulderActive) {
+			CameraPose shoulder = shoulderPose(client);
+			playerTranslucent = shoulder != null && playerBlocksView(client, shoulder);
+			return shoulder;
+		}
+		playerTranslucent = false;
 		return pose;
+	}
+
+	/**
+	 * Project a world point into NDC [-1,1] for the given camera pose.
+	 * Returns null when the point is behind the camera.
+	 */
+	private static double[] projectNdc(Vec3d point, CameraPose cam, double tanHalfFovY, double aspect) {
+		double yawRad = Math.toRadians(cam.yaw());
+		double pitchRad = Math.toRadians(cam.pitch());
+		Vec3d forward = new Vec3d(
+			-Math.sin(yawRad) * Math.cos(pitchRad),
+			-Math.sin(pitchRad),
+			Math.cos(yawRad) * Math.cos(pitchRad));
+		Vec3d right = new Vec3d(-forward.z, 0.0, forward.x).normalize();
+		Vec3d up = right.crossProduct(forward);
+		Vec3d d = point.subtract(new Vec3d(cam.x(), cam.y(), cam.z()));
+		double cz = d.dotProduct(forward);
+		if (cz < 0.05) {
+			return null;
+		}
+		double cx = d.dotProduct(right) / cz / (tanHalfFovY * aspect);
+		double cy = d.dotProduct(up) / cz / tanHalfFovY;
+		return new double[] {cx, cy};
+	}
+
+	/**
+	 * Translucent iff the player's screen rect covers a large fraction of the
+	 * frame, or fully contains the projection of some nearby solid block.
+	 */
+	private boolean playerBlocksView(MinecraftClient client, CameraPose cam) {
+		if (client.player == null || client.world == null) {
+			return false;
+		}
+		double fovY = client.options.getFov().getValue();
+		double aspect = client.getWindow().getFramebufferWidth()
+			/ (double) Math.max(1, client.getWindow().getFramebufferHeight());
+		double tanHalfFovY = Math.tan(Math.toRadians(fovY) / 2.0);
+
+		Box box = client.player.getBoundingBox();
+		double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
+		double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
+		for (double x : new double[] {box.minX, box.maxX}) {
+			for (double y : new double[] {box.minY, box.maxY}) {
+				for (double z : new double[] {box.minZ, box.maxZ}) {
+					double[] ndc = projectNdc(new Vec3d(x, y, z), cam, tanHalfFovY, aspect);
+					if (ndc == null) {
+						// Corner behind the camera: the player fills the view.
+						return true;
+					}
+					minX = Math.min(minX, ndc[0]);
+					maxX = Math.max(maxX, ndc[0]);
+					minY = Math.min(minY, ndc[1]);
+					maxY = Math.max(maxY, ndc[1]);
+				}
+			}
+		}
+		double coverW = Math.min(1.0, maxX) - Math.max(-1.0, minX);
+		double coverH = Math.min(1.0, maxY) - Math.max(-1.0, minY);
+		if (coverW * coverH / 4.0 > 0.12) {
+			return true;
+		}
+
+		// Whole-block test: does the player rect fully contain some nearby
+		// solid block's projection?
+		BlockPos center = client.player.getBlockPos();
+		for (BlockPos pos : BlockPos.iterate(center.add(-3, -2, -3), center.add(3, 2, 3))) {
+			var state = client.world.getBlockState(pos);
+			if (state.isAir() || state.getCollisionShape(client.world, pos).isEmpty()) {
+				continue;
+			}
+			boolean allInside = true;
+			for (int i = 0; i < 8 && allInside; i++) {
+				Vec3d corner = new Vec3d(
+					pos.getX() + ((i & 1) == 0 ? 0 : 1),
+					pos.getY() + ((i & 2) == 0 ? 0 : 1),
+					pos.getZ() + ((i & 4) == 0 ? 0 : 1));
+				double[] ndc = projectNdc(corner, cam, tanHalfFovY, aspect);
+				if (ndc == null || ndc[0] < minX || ndc[0] > maxX || ndc[1] < minY || ndc[1] > maxY) {
+					allInside = false;
+				}
+			}
+			if (allInside) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public synchronized void setPose(CameraPose nextPose) {
@@ -116,6 +246,7 @@ public final class WorldCameraService {
 	}
 
 	public synchronized void clear() {
+		shoulderActive = false;
 		pose = null;
 		if (pending != null) {
 			pending.future().completeExceptionally(
@@ -233,6 +364,35 @@ public final class WorldCameraService {
 			});
 		}
 	}
+	/**
+	 * Shoulder-surf capture: camera tracks behind-right of the player's eye
+	 * each frame; the player renders semi-transparent via the entity mixin.
+	 */
+	public CompletableFuture<TacticalResult> captureShoulder(
+		MinecraftClient client,
+		int settleFrames,
+		boolean keepPose
+	) {
+		synchronized (this) {
+			if (pending != null) {
+				throw new BridgeUnavailableException("capture_in_progress", "A world camera capture is already in progress");
+			}
+			shoulderActive = true;
+			if (!client.options.hudHidden) {
+				hudHiddenSaved = true;
+				client.options.hudHidden = true;
+			}
+			CompletableFuture<FirstPersonScreenshotService.CapturedScreenshot> future = new CompletableFuture<>();
+			pending = new PendingCapture(Math.max(0, settleFrames), future);
+			return future.thenApply(screenshot -> {
+				if (!keepPose) {
+					clear();
+				}
+				return new TacticalResult(null, screenshot);
+			});
+		}
+	}
+
 
 	private void restoreHud() {
 		MinecraftClient client = MinecraftClient.getInstance();

@@ -405,6 +405,11 @@ public final class ModBridgeServer {
 					service.clear();
 					return CompletableFuture.completedFuture(new WorldCameraService.TacticalResult(null, null));
 				}
+				if ("shoulder".equals(mode)) {
+					int settleFrames = request != null && request.settleFrames() != null ? request.settleFrames() : 8;
+					boolean keepPose = request != null && Boolean.TRUE.equals(request.keepPose());
+					return service.captureShoulder(client, settleFrames, keepPose);
+				}
 				WorldCameraService.FrameResult framing;
 				if ("pose".equals(mode)) {
 					if (request == null || request.x() == null || request.y() == null || request.z() == null
@@ -428,7 +433,7 @@ public final class ModBridgeServer {
 					framing = service.autoFrame(client, focus, radius, purpose);
 				}
 				else {
-					throw new BridgeUnavailableException("invalid_request", "mode must be auto, pose, or clear");
+					throw new BridgeUnavailableException("invalid_request", "mode must be auto, pose, shoulder, or clear");
 				}
 				int settleFrames = request != null && request.settleFrames() != null ? request.settleFrames() : 8;
 				boolean keepPose = request != null && Boolean.TRUE.equals(request.keepPose());

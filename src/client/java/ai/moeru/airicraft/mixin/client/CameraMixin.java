@@ -22,7 +22,7 @@ public abstract class CameraMixin {
 		CallbackInfo ci
 	) {
 		WorldCameraService service = AiricraftClient.runtimeController().worldCameraService();
-		WorldCameraService.CameraPose pose = service.pose();
+		WorldCameraService.CameraPose pose = service.pose(net.minecraft.client.MinecraftClient.getInstance());
 		if (pose == null) {
 			return;
 		}
