@@ -759,8 +759,15 @@ public final class DialogueRuntime {
 		pendingTimeoutVisibleReply = directUserGuidance && submitted;
 	}
 
+	public void queueTaskAttention(long tick, long eventSequence) {
+		if (externalDriverActive) return;
+		if (policyContinuation != null) policyContinuation.discard("execution_attention");
+		continuationParent = null;
+		pendingTaskWakeups.addFirst(new PendingTaskWakeup(tick, userGuidanceRevision, null, eventSequence, true));
+	}
+
 	public void queueTaskWakeup(String missionId, long tick, long eventSequence) {
-		if (!externalDriverActive) pendingTaskWakeups.addLast(new PendingTaskWakeup(tick, userGuidanceRevision, missionId, eventSequence));
+		if (!externalDriverActive) pendingTaskWakeups.addLast(new PendingTaskWakeup(tick, userGuidanceRevision, missionId, eventSequence, false));
 	}
 
 	private boolean submitNextPendingInternalTaskUpdate(
@@ -768,15 +775,16 @@ public final class DialogueRuntime {
 		TaskSnapshot activeTask, MissionExecutionSnapshot missionExecution
 	) {
 		if (externalDriverActive || pendingTaskWakeups.isEmpty() || activePlanner().hasInFlight()) return false;
-		if (waitingForWork != null && waitingForWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive) return false;
 		if ((state.degraded() && activePlanner().isEnabled()) || !activePlanner().isConfigured()) {
 			pendingTaskWakeups.clear();
 			return false;
 		}
 		while (!pendingTaskWakeups.isEmpty()) {
+			if (waitingForWork != null && waitingForWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive
+				&& !pendingTaskWakeups.peekFirst().attention()) return false;
 			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
 			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
-			if (plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()
+			if (!wake.attention() && plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()
 				.anyMatch(event -> event.seqNo() == wake.eventSequence() && (plannerGoal.relevantToBlock(event.type())
 					|| isSupervisoryEvent(event.type())))) continue;
 			String currentMissionId = missionId(activeTask, missionExecution);
@@ -908,6 +916,6 @@ public final class DialogueRuntime {
 		);
 	}
 
-	private record PendingTaskWakeup(long tick, long userGuidanceRevision, String missionId, long eventSequence) { }
+	private record PendingTaskWakeup(long tick, long userGuidanceRevision, String missionId, long eventSequence, boolean attention) { }
 
 }

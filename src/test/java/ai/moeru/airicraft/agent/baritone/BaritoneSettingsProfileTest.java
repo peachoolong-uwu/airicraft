@@ -19,7 +19,7 @@ class BaritoneSettingsProfileTest {
 		assertFalse(target.chatControl);
 		assertFalse(target.chatControlAnyway);
 		assertFalse(target.prefixControl);
-		assertFalse(target.allowInventory);
+		assertTrue(target.allowInventory);
 		assertTrue(target.allowPlace);
 		assertTrue(target.allowParkour);
 		assertFalse(target.allowDownward);
@@ -49,7 +49,7 @@ class BaritoneSettingsProfileTest {
 		private boolean chatControl = true;
 		private boolean chatControlAnyway = true;
 		private boolean prefixControl = true;
-		private boolean allowInventory = true;
+		private boolean allowInventory = false;
 		private boolean allowPlace = true;
 		private boolean allowParkour = true;
 		private boolean allowDownward = true;

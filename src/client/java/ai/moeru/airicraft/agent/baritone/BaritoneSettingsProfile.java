@@ -106,7 +106,7 @@ public final class BaritoneSettingsProfile {
 		settings.chatControl(false);
 		settings.chatControlAnyway(false);
 		settings.prefixControl(false);
-		settings.allowInventory(false);
+		settings.allowInventory(true);
 		settings.allowPlace(true);
 		settings.allowParkour(true);
 		settings.allowDownward(false);

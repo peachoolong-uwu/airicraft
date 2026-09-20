@@ -240,6 +240,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final ChatIngestService chatIngestService = new ChatIngestService();
 	private final LocalDamageTracker localDamageTracker = new LocalDamageTracker();
 	private PhysicalEventObserver physicalEventObserver;
+	private ai.moeru.airicraft.agent.events.SlowMiningObserver slowMiningObserver;
 	private Object physicalObservationWorld;
 	private final NearbyPlayerTracker nearbyPlayerTracker;
 	private final PrimaryInteractionResolver primaryInteractionResolver = new PrimaryInteractionResolver(200L);
@@ -413,6 +414,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		autoLanOpenState.clear();
 		localDamageTracker.clear();
 		physicalObserver().reset();
+		if (slowMiningObserver != null) slowMiningObserver.reset();
 		physicalObservationWorld = null;
 		sessionSnapshotOverrideForTests = null;
 		blockAcquisitionsOverrideForTests = null;
@@ -479,9 +481,11 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			worldLoadTick = tickCount;
 			localDamageTracker.onLifecycleReset(tickCount);
 			physicalObserver().reset();
+			if (slowMiningObserver != null) slowMiningObserver.reset();
 		}
 		if (sessionSnapshot.requiresRespawn()) {
 			physicalObserver().reset();
+			if (slowMiningObserver != null) slowMiningObserver.reset();
 			behaviorTreeRuntime.tick(
 				client,
 				sessionSnapshot,
@@ -498,6 +502,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			return;
 		}
 		observePhysicalEvents(client);
+		observeSlowMining(client);
 		openLanIfSingleplayerLocal(client);
 		surfaceMemory.tick(client, tickCount);
 		playerItemUseController.tick(client, tickCount).ifPresent(result -> eventBuffer.append(
@@ -714,11 +719,13 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private void observePhysicalEvents(MinecraftClient client) {
 		if (client == null || client.player == null || client.world == null || !client.player.isAlive()) {
 			physicalObserver().reset();
+			if (slowMiningObserver != null) slowMiningObserver.reset();
 			physicalObservationWorld = null;
 			return;
 		}
 		if (physicalObservationWorld != client.world) {
 			physicalObserver().reset();
+			if (slowMiningObserver != null) slowMiningObserver.reset();
 			physicalObservationWorld = client.world;
 		}
 		var player = client.player;
@@ -734,6 +741,60 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			player.getAbilities().flying || player.isGliding() || player.hasVehicle(), directional, player.isOnFire(),
 			player.isSubmergedInWater() && player.getAir() <= config.reflex().lowAirTicks(), player.getAir(), player.getHealth(), physicalTaskContext());
 		for (var event : physicalObserver().observe(sample)) eventBuffer.append(tickCount, "player.physical", event.payload());
+	}
+
+	private void observeSlowMining(MinecraftClient client) {
+		if (slowMiningObserver == null) slowMiningObserver = new ai.moeru.airicraft.agent.events.SlowMiningObserver();
+		var job = activeJobRuntime.current();
+		if (client == null || client.player == null || client.world == null || client.interactionManager == null
+			|| job.jobId() == null || job.status().terminal()) {
+			slowMiningObserver.observe(tickCount, null, 0);
+			return;
+		}
+		var breaking = (ai.moeru.airicraft.mixin.client.ClientPlayerInteractionManagerAccessor) client.interactionManager;
+		var pos = breaking.airicraft$currentBreakingPos();
+		if (!breaking.airicraft$breakingBlock() || pos == null) {
+			slowMiningObserver.observe(tickCount, null, 0);
+			return;
+		}
+		var block = client.world.getBlockState(pos);
+		var held = client.player.getMainHandStack();
+		String heldId = Registries.ITEM.getId(held.getItem()).toString();
+		String blockId = Registries.BLOCK.getId(block.getBlock()).toString();
+		float delta = block.calcBlockBreakingDelta(client.player, client.world, pos);
+		double estimatedTicks = delta > 0 ? Math.ceil(1.0 / delta) : -1;
+		String target = job.jobId() + ":" + pos.asLong() + ":" + blockId + ":" + heldId;
+		if (!slowMiningObserver.observe(tickCount, target, estimatedTicks)) return;
+		int bestSlot = -1;
+		double bestScore = -1;
+		String bestItem = "minecraft:air";
+		for (int slot = 0; slot < 36; slot++) {
+			var stack = client.player.getInventory().getStack(slot);
+			if (stack.isEmpty()) continue;
+			// Rank base tool speed and harvest suitability; the live estimate above includes player conditions.
+			double score = stack.getMiningSpeedMultiplier(block) / (block.isToolRequired() && !stack.isSuitableFor(block) ? 100.0 : 30.0);
+			if (score > bestScore) {
+				bestScore = score;
+				bestSlot = slot;
+				bestItem = Registries.ITEM.getId(stack.getItem()).toString();
+			}
+		}
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("reason", "slow_mining");
+		payload.put("context", physicalTaskContext());
+		payload.put("block", blockId);
+		payload.put("position", Map.of("x", pos.getX(), "y", pos.getY(), "z", pos.getZ()));
+		payload.put("heldItem", heldId);
+		payload.put("breakProgress", breaking.airicraft$currentBreakingProgress());
+		payload.put("elapsedTicks", slowMiningObserver.elapsedTicks(tickCount));
+		payload.put("estimatedBreakTicks", estimatedTicks);
+		payload.put("bestCarriedToolByBaseSpeed", Map.of("item", bestItem, "slot", bestSlot));
+		payload.put("message", "Slow mining observed: " + blockId + " with " + heldId
+			+ "; elapsed " + slowMiningObserver.elapsedTicks(tickCount) + " ticks, estimated total " + estimatedTicks
+			+ " ticks (-1 means no progress predicted). Best carried tool by base speed: " + bestItem + " in slot " + bestSlot
+			+ ". Review current work and tool/conditions before continuing; this observation is not a task failure.");
+		var event = eventBuffer.append(tickCount, "task.notice", payload);
+		dialogueRuntime.queueTaskAttention(tickCount, event.seqNo());
 	}
 
 	private void tickSurvivalReflex(MinecraftClient client) {
@@ -947,6 +1008,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		autoLanOpenState.clear();
 		localDamageTracker.clear();
 		physicalObserver().reset();
+		if (slowMiningObserver != null) slowMiningObserver.reset();
 		physicalObservationWorld = null;
 		nearbyPlayerTracker.clear(tickCount, eventBuffer);
 		eventPipeline.clearForShutdown();
@@ -1696,6 +1758,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	public void onPlayerRespawned() {
 		localDamageTracker.onLifecycleReset(tickCount);
 		physicalObserver().reset();
+		if (slowMiningObserver != null) slowMiningObserver.reset();
 		lastKnownPlayerHealth = null;
 		if (sessionSnapshotOverrideForTests != null && sessionSnapshot.requiresRespawn()) {
 			sessionSnapshotOverrideForTests = sessionSnapshotOverrideForTests.withPlayerLifecycleState(PlayerLifecycleState.ALIVE);
