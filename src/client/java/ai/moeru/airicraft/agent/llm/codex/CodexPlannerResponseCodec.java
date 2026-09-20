@@ -263,7 +263,7 @@ final class CodexPlannerResponseCodec {
 		if (message.hasToolCalls()) {
 			rendered.append("\nPROPOSED AIRICRAFT TOOL CALLS: ").append(PlannerToolCatalog.toOpenAiToolCalls(message.toolCalls()));
 		}
-		return rendered.toString().strip();
+		return ai.moeru.airicraft.agent.llm.PlannerInputText.message("presentation", rendered.toString().strip());
 	}
 
 	private static String stripCodeFence(String value) {

@@ -12,6 +12,19 @@ public final class PlannerInputText {
 
 	/** The canonical history stays intact for cursors, replay and recorder dispatch metadata. */
 	public static String message(String role, String content) {
+		// Round only planner-facing evidence; canonical state and protocol identities stay exact.
+		var numbers = java.util.regex.Pattern.compile(
+		"\"(?:\\\\.|[^\"\\\\])*\"|(?<![\\p{L}\\p{N}_./@+-])[-+]?(?:[0-9]+\\.[0-9]+|\\.[0-9]+|[0-9]+[eE][+-]?[0-9]+)(?:[eE][+-]?[0-9]+)?(?![\\p{L}\\p{N}_./@])").matcher(content);
+		var rounded = new StringBuilder();
+		while (numbers.find()) {
+			String value = numbers.group();
+			String replacement = value.startsWith("\"") ? value : new java.math.BigDecimal(value)
+				.setScale(1, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
+			numbers.appendReplacement(rounded, java.util.regex.Matcher.quoteReplacement(replacement));
+		}
+		numbers.appendTail(rounded);
+		content = rounded.toString();
+
 		if (role.equals("tool")) return toolResult(content);
 		if (!role.equals("user")) return content;
 		String[] paragraphs = content.split("\n\n", -1);

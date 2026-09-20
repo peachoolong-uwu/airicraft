@@ -24,6 +24,7 @@ public final class PlannerReferences {
 	}
 
 	public synchronized String present(String text) {
+		text = PlannerInputText.message("presentation", text);
 		return NATIVE_ID.matcher(text).replaceAll(match -> {
 			String nativeId = match.group();
 			String reference = references.get(nativeId);
