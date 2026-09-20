@@ -432,6 +432,24 @@ public final class ModBridgeServer {
 				}
 				int settleFrames = request != null && request.settleFrames() != null ? request.settleFrames() : 8;
 				boolean keepPose = request != null && Boolean.TRUE.equals(request.keepPose());
+				boolean fadeOccluders = request != null && Boolean.TRUE.equals(request.fadeOccluders());
+				Integer hideAboveY = request != null ? request.hideAboveY() : null;
+				if (fadeOccluders || hideAboveY != null) {
+					Vec3d focus = request != null && request.x() != null && request.y() != null && request.z() != null
+						? new Vec3d(request.x(), request.y(), request.z())
+						: client.player.getPos();
+					double radius = request != null && request.radius() != null ? request.radius() : 16.0;
+					String purpose = request != null && request.purpose() != null ? request.purpose() : "surroundings";
+					java.util.Set<BlockPos> occluders = fadeOccluders
+						? service.computeOccluders(client, framing.pose(), service.samplesFor(client, focus, radius, purpose))
+						: java.util.Set.of();
+					service.setFade(client, new WorldCameraService.FadeFilter(occluders, hideAboveY),
+						BlockPos.ofFloored(focus).add(-(int) Math.ceil(radius) - 2, -16, -(int) Math.ceil(radius) - 2),
+						BlockPos.ofFloored(focus).add((int) Math.ceil(radius) + 2, 16, (int) Math.ceil(radius) + 2));
+					framing = new WorldCameraService.FrameResult(
+						framing.pose(), framing.candidates(), framing.samples(), framing.visibleSamples(),
+						framing.score(), occluders.size());
+				}
 				return service.capture(client, framing.pose(), framing, settleFrames, keepPose);
 			});
 			WorldCameraService.TacticalResult result = awaitTacticalCapture(captureFuture);
@@ -442,6 +460,7 @@ public final class ModBridgeServer {
 				framingPayload.put("samples", result.framing().samples());
 				framingPayload.put("visibleSamples", result.framing().visibleSamples());
 				framingPayload.put("score", result.framing().score());
+				framingPayload.put("fadedBlocks", result.framing().fadedBlocks());
 				WorldCameraService.CameraPose pose = result.framing().pose();
 				framingPayload.put("pose", Map.of(
 					"x", pose.x(), "y", pose.y(), "z", pose.z(),
@@ -2601,6 +2620,7 @@ public final class ModBridgeServer {
 	private record DifficultyRequest(String difficulty) {
 	}
 
+
 	private record JoinServerRequest(String serverId) {
 	}
 
@@ -2617,7 +2637,9 @@ public final class ModBridgeServer {
 		Double radius,
 		String purpose,
 		Integer settleFrames,
-		Boolean keepPose
+		Boolean keepPose,
+		Boolean fadeOccluders,
+		Integer hideAboveY
 	) {
 	}
 

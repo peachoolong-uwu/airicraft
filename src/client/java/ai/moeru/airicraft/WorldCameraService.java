@@ -46,8 +46,12 @@ public final class WorldCameraService {
 		int candidates,
 		int samples,
 		int visibleSamples,
-		double score
+		double score,
+		int fadedBlocks
 	) {
+		public FrameResult(CameraPose pose, int candidates, int samples, int visibleSamples, double score) {
+			this(pose, candidates, samples, visibleSamples, score, 0);
+		}
 	}
 
 	public record TacticalResult(
@@ -64,6 +68,53 @@ public final class WorldCameraService {
 		pose = nextPose;
 	}
 
+	/**
+	 * Blocks the renderer should treat as air. Read from chunk-mesh worker
+	 * threads via {@link #isFaded}; must be an immutable snapshot.
+	 */
+	public record FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY) {
+	}
+
+	private volatile FadeFilter fadeFilter;
+	private BlockPos fadeBoundsMin;
+	private BlockPos fadeBoundsMax;
+
+	public FadeFilter fadeFilter() {
+		return fadeFilter;
+	}
+
+	public boolean isFaded(BlockPos pos) {
+		FadeFilter filter = fadeFilter;
+		if (filter == null) {
+			return false;
+		}
+		if (filter.hideAboveY() != null && pos.getY() >= filter.hideAboveY()) {
+			return true;
+		}
+		return filter.blocks() != null && filter.blocks().contains(pos);
+	}
+
+	/**
+	 * Apply a fade filter and schedule remeshing of the affected region.
+	 * Client thread only.
+	 */
+	public synchronized void setFade(MinecraftClient client, FadeFilter filter, BlockPos boundsMin, BlockPos boundsMax) {
+		fadeFilter = filter;
+		fadeBoundsMin = boundsMin;
+		fadeBoundsMax = boundsMax;
+		scheduleFadeRemesh(client);
+	}
+
+	private void scheduleFadeRemesh(MinecraftClient client) {
+		if (fadeBoundsMin == null || fadeBoundsMax == null || client.worldRenderer == null) {
+			return;
+		}
+		// Expand by one: faces of neighbouring blocks become visible too.
+		client.worldRenderer.scheduleBlockRenders(
+			fadeBoundsMin.getX() - 1, fadeBoundsMin.getY() - 1, fadeBoundsMin.getZ() - 1,
+			fadeBoundsMax.getX() + 1, fadeBoundsMax.getY() + 1, fadeBoundsMax.getZ() + 1);
+	}
+
 	public synchronized void clear() {
 		pose = null;
 		if (pending != null) {
@@ -71,8 +122,59 @@ public final class WorldCameraService {
 				new BridgeUnavailableException("capture_failed", "World camera was cleared during capture"));
 			pending = null;
 		}
+		if (fadeFilter != null) {
+			fadeFilter = null;
+			MinecraftClient client = MinecraftClient.getInstance();
+			if (client != null) {
+				scheduleFadeRemesh(client);
+			}
+		}
 		restoreHud();
 	}
+	/**
+	 * Every collidable block intersected by eye→sample rays, excluding the
+	 * sample's own block. These are the blocks to fade for this shot.
+	 */
+	public java.util.Set<BlockPos> computeOccluders(MinecraftClient client, CameraPose camera, List<SamplePoint> samples) {
+		java.util.Set<BlockPos> occluders = new java.util.HashSet<>();
+		java.util.Set<BlockPos> sampleBlocks = new java.util.HashSet<>();
+		for (SamplePoint sample : samples) {
+			sampleBlocks.add(BlockPos.ofFloored(sample.pos()));
+		}
+		Vec3d eye = new Vec3d(camera.x(), camera.y(), camera.z());
+		for (SamplePoint sample : samples) {
+			Vec3d target = sample.pos();
+			Vec3d delta = target.subtract(eye);
+			double distance = delta.length();
+			if (distance < 1.0E-6) {
+				continue;
+			}
+			Vec3d step = delta.normalize().multiply(0.4);
+			// Stop short of the target: the sample's own block is not an occluder.
+			int steps = (int) Math.max(0, (distance - 0.5) / 0.4);
+			Vec3d cursor = eye;
+			for (int i = 0; i < steps; i++) {
+				cursor = cursor.add(step);
+				BlockPos pos = BlockPos.ofFloored(cursor);
+				if (sampleBlocks.contains(pos) || occluders.contains(pos)) {
+					continue;
+				}
+				var state = client.world.getBlockState(pos);
+				if (!state.isAir() && !state.getCollisionShape(client.world, pos).isEmpty()) {
+					occluders.add(pos);
+				}
+			}
+		}
+		return occluders;
+	}
+
+	/**
+	 * Re-collect samples for a focus region (exposed for occluder computation).
+	 */
+	public List<SamplePoint> samplesFor(MinecraftClient client, Vec3d focus, double radius, String purpose) {
+		return collectSamples(client, focus, MathHelper.clamp(radius, 4.0, MAX_RADIUS), purpose);
+	}
+
 
 	/**
 	 * Called once per rendered world frame from the Camera mixin.
@@ -156,7 +258,7 @@ public final class WorldCameraService {
 		}
 
 		double[] pitches = {45.0, 55.0, 65.0};
-		double[] distanceScales = {1.0, 1.5, 2.0};
+		double[] distanceScales = {0.75, 1.0, 1.5};
 		int yawSteps = 16;
 
 		CameraPose bestPose = null;
