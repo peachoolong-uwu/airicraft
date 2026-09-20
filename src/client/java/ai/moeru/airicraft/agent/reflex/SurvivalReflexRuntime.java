@@ -830,8 +830,7 @@ public final class SurvivalReflexRuntime {
 			"reason", reason,
 			"position", goal(player.getBlockPos()),
 			"remainingThreats", threatSnapshots(threats),
-			"noProgressTicks", combatProgress != null && combatProgress.stalled() ? tick - combatProgress.lastProgressTick()
-				: combatStalemate != null && combatStalemate.deferred() ? tick - combatStalemate.sinceTick() : null,
+			"noProgressTicks", noProgressTicks(combatProgress, combatStalemate, tick),
 			"nextState", nextState.name()
 		)));
 		snapshot = new SurvivalReflexSnapshot(
@@ -846,6 +845,12 @@ public final class SurvivalReflexRuntime {
 		}
 		lastMobDamageTick = Long.MIN_VALUE;
 		resetSecurityProgress();
+	}
+
+	static Long noProgressTicks(CombatProgress progress, CombatStalemate approach, long tick) {
+		if (progress != null && progress.stalled()) return tick - progress.lastProgressTick();
+		if (approach != null && approach.deferred()) return tick - approach.sinceTick();
+		return null;
 	}
 
 	static String safetyHoldId(String existingHoldId, boolean holdRequired) {

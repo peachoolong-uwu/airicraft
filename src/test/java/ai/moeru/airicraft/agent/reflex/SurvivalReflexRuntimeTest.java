@@ -15,6 +15,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void resolvedCombatCanHaveNoStallDuration() {
+		assertNull(SurvivalReflexRuntime.noProgressTicks(null, null, 7609));
+		var progressing = new CombatProgress(7500, java.util.Map.of(), false);
+		var approaching = new CombatStalemate(CombatStalemate.Phase.APPROACHING, 7400,
+			net.minecraft.util.math.Vec3d.ZERO, java.util.Map.of());
+		assertNull(SurvivalReflexRuntime.noProgressTicks(progressing, approaching, 7609));
+	}
+
+	@Test void resolvedStalemateReportsItsDurationWithCombatProgressTakingPrecedence() {
+		var stalled = new CombatProgress(7400, java.util.Map.of(), true);
+		var deferred = new CombatStalemate(CombatStalemate.Phase.DEFERRED, 7000,
+			net.minecraft.util.math.Vec3d.ZERO, java.util.Map.of());
+		assertEquals(Long.valueOf(209), SurvivalReflexRuntime.noProgressTicks(stalled, deferred, 7609));
+		assertEquals(Long.valueOf(609), SurvivalReflexRuntime.noProgressTicks(null, deferred, 7609));
+	}
+
 	@Test void awarenessIncludesFlankersOutsideTheEngagementGate() {
 		var policy = ReflexPolicy.defaults();
 		assertTrue(policy.observesMob(12));
