@@ -21,7 +21,8 @@
 		"GameRendererMixin",
 		"GameRendererPauseMixin",
 		"MessageHandlerMixin",
-		"MinecraftClientTickDebugMixin",
+		"RenderLayersMixin",
+		"SectionBuilderMixin",
 		"SlotMixin"
 	],
 	"injectors": {

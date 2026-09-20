@@ -299,8 +299,8 @@ public final class WorldCameraService {
 	/**
 	 * Blocks the renderer should treat as air. Read from chunk-mesh worker
 	 * threads via {@link #isFaded}; must be an immutable snapshot.
-	 * {@code fadeLeaves} hides every other leaf block (3D checkerboard) so
-	 * the canopy stays visible as a translucent lattice instead of vanishing.
+	 * {@code fadeLeaves} renders leaf blocks at ~20% opacity (see
+	 * RenderLayersMixin/SectionBuilderMixin) instead of hiding them.
 	 */
 	public record FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY, boolean fadeLeaves) {
 		public FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY) {
@@ -316,14 +316,15 @@ public final class WorldCameraService {
 		return fadeFilter;
 	}
 
+	public boolean fadeLeavesActive() {
+		FadeFilter filter = fadeFilter;
+		return filter != null && filter.fadeLeaves();
+	}
+
 	public boolean isFaded(BlockPos pos, BlockState state) {
 		FadeFilter filter = fadeFilter;
 		if (filter == null) {
 			return false;
-		}
-		if (filter.fadeLeaves() && state.getBlock() instanceof net.minecraft.block.LeavesBlock
-			&& ((pos.getX() + pos.getY() + pos.getZ()) & 1) == 0) {
-			return true;
 		}
 		if (filter.hideAboveY() != null && pos.getY() >= filter.hideAboveY()) {
 			return true;
@@ -809,7 +810,7 @@ public final class WorldCameraService {
 					{0,1,3,2}, {4,5,7,6},
 					{0,2,6,4}, {1,3,7,5},
 					{0,1,5,4}, {2,3,7,6}};
-				g.setColor(new java.awt.Color(80, 160, 255, 48));
+				g.setColor(new java.awt.Color(80, 160, 255, 26));
 				for (int[] f : faces) {
 					java.awt.Polygon poly = new java.awt.Polygon();
 					boolean ok = true;
