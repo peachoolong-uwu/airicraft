@@ -1,30 +1,18 @@
-# Experimental short-term query findings
+# Planner inspection micro-compaction
 
-Enable in `agent.yml` and reload the agent:
+`plannerSummarizeToolResults` remains enabled by default. Completed inspections automatically enter a background micro-compaction pass using the configured planner model. The planner does not call a summary tool: `record_finding` is no longer exposed or required.
 
-```yaml
-plannerSummarizeToolResults: true
-```
+Normal planning and FIFO execution continue with raw results while the pass runs. The micro-compactor receives the task context, original inspection arguments, and raw evidence (including images), without gameplay tools. It returns a task-specific result or explicit null plus checked coverage, negative evidence, failures and uncertainty. Multiple completed observations are coalesced into one pass. World, inventory, work, entity, recipe and other inspection families are eligible; gameplay action receipts are not.
 
-Default: `true` for `openai-compatible`; set `false` to opt out. Requires the `openai-compatible` backend, whose conversation Airicraft owns. The Codex app-server backend owns its history, defaults this switch off, and rejects an explicit opt-in. The switch is preserved for both planner roles.
+Completed findings replace only their matching source result in future context, preserving the original call/result identity. A request already in flight keeps its immutable snapshot. Replacement records also prevent a later response based on that snapshot from restoring old raw results. Summaries are short-term context, not persistent memory; raw debug/flight recordings remain intact. Delegation evidence is updated separately, without pretending a tool executed.
 
-The experiment applies to `inspect_world`, `query_world`, `inspect_nearby_entities`, `find_world_features`, and `custom_` world queries. Other results, including images and action receipts, retain their existing behavior. Tool calls become sequential while enabled.
+Full compaction does not wait for micro-compaction. Its input is an immutable snapshot containing whichever representation was available when it started. Successful full compaction starts a new context epoch: pending micro-work is cancelled and its replacement cache is discarded. Late results cannot restore observations absorbed by the checkpoint. If full compaction fails, the original context remains available and micro-compaction may still finish. Reset and world changes clear the same state.
 
-After an eligible result, the only permitted next response is one `record_finding` call:
+Micro-compaction failures retain raw evidence and do not consume planner repair attempts or degrade the planner. The same failed observation is not retried on every tick; ordinary full compaction can still absorb it. The existing configuration restriction to OpenAI-compatible planner history remains.
 
-```json
-{
-  "sourceToolCallId": "the-original-query-call-id",
-  "result": null,
-  "memory": "Searched x=-6..0, y=65..68, z=-4 for missing wall blocks. None found; all stone bricks. Search the eastern half next."
-}
-```
+## Historical experiment
 
-`result` is a task-specific answer or explicit `null` for no target found. `memory` must retain relevant exact positions/materials, searched coverage, failures and uncertainty. The planner is instructed to summarize the question motivating its query, rather than its general surroundings. Memory text is required even when the result is null.
-
-The orchestrator validates the source ID and argument shape, rejects other tools or final replies while an observation is pending, and replaces that observation's tool message only after accepting the finding. The original query/result pairing stays valid. The finding call and receipt are removed from retained context to avoid keeping duplicate summaries. Invalid findings preserve the raw result for correction. Reset clears these findings with normal conversation history; normal context compaction still applies.
-
-There is no new persistent memory store, retrieval system or cross-session recall. Existing debug/flight recordings retain raw results for diagnosis. Delegation reports replace matching raw observations when their findings arrive, so returning control does not reintroduce the discarded output.
+The construction results below measured the earlier, synchronous tool-driven design, not the current parallel implementation.
 
 ## Construction experiment — 2026-09-20
 
@@ -50,4 +38,4 @@ Local experiment launcher and full recordings are under `run/planner-findings-ex
 
 ## Automated validation
 
-`source .envrc && ./gradlew build`: 1,456 root tests, 2 skipped; 95 wrapper tests; no failures. Tests cover positive/null replacement across subsequent turns, source validation, required negative-evidence text, sequential gating, failed receipts preserving raw evidence, opt-in config, role propagation, unsupported backend rejection, and delegation evidence replacement.
+Regression coverage includes concurrent planning with raw evidence, positive/null replacement on later requests, immutable in-flight snapshots, source/version matching, invalid summaries retaining raw evidence, multiple inspection families, delegation replacement, and both completion orders with full compaction.

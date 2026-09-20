@@ -61,6 +61,8 @@ public final class PlannerToolRegistry {
 	/** A proposal backend must not inherit the normal planner's gameplay tool catalog. */
 	public static PlannerToolRegistry isolated(PlannerToolProvider provider) { return new PlannerToolRegistry(List.of(provider), false); }
 
+	public static PlannerToolRegistry noTools() { return new PlannerToolRegistry(List.of(), false); }
+
 	public static PlannerToolRegistry empty() {
 		return new PlannerToolRegistry(List.of());
 	}

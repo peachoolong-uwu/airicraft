@@ -206,7 +206,6 @@ public final class PlannerShellFactory {
 				() -> ai.moeru.airicraft.AiricraftClient.runtimeController().automaticPlaytest().resultCommitted(),
 				command -> MinecraftClient.getInstance().execute(command)));
 		}
-		if (config.llm().plannerSummarizeToolResults()) sharedProviders.add(new ai.moeru.airicraft.agent.llm.PlannerFindingToolProvider());
 		boolean dual = config.llm().thinkingPlanner().enabled();
 		if (dual && config.llm().plannerBackend() != AgentConfig.PlannerBackend.OPENAI_COMPATIBLE)
 			throw new IllegalArgumentException("thinkingPlanner requires the openai-compatible backend");
@@ -246,6 +245,9 @@ public final class PlannerShellFactory {
 			var thinkingConfig = config.llm().forRole(thinkingProfile.model().isBlank() ? config.llm().model() : thinkingProfile.model(), thinkingProfile.reasoningEffort());
 			var thinkingCalls = plannerCallJournal.forkRole("thinking", thinkingConfig.plannerBackend().wireValue(), plannerModelName(thinkingConfig), thinkingRegistry::openAiTools);
 			var handoffEvidence = new ai.moeru.airicraft.agent.llm.PlannerLifecycleListener() {
+				@Override public void onObservationCompacted(ai.moeru.airicraft.agent.llm.PlannerToolCall call, String finding) {
+					handoff.recordObservationFinding(call, finding);
+				}
 				@Override public void onToolExchange(ai.moeru.airicraft.agent.llm.PlannerToolCall call, String result, boolean imageAttached) {
 					handoff.recordToolExchange(call, result, imageAttached);
 				}
@@ -269,7 +271,7 @@ public final class PlannerShellFactory {
 			case OPENAI_COMPATIBLE -> new OpenAiCompatibleLlmBackend(llm, observability, tools, cacheKey);
 			case CODEX_APP_SERVER -> new CodexAppServerLlmBackend(llm, observability, tools);
 		};
-		return new PlannerOrchestrator(new PlannerExecutor(backend, observability),
+		var orchestrator = new PlannerOrchestrator(new PlannerExecutor(backend, observability),
 			new PlannerCompactionService(new OpenAiCompatibleChatClient(llm, observability, tools,
 				cacheKey == null ? null : cacheKey + ":compaction"), observability),
 			new PlannerContextAggregator(clock, llm.plannerCompactionTriggerTokens(), llm.plannerPendingSemanticEventCap(),
@@ -278,6 +280,8 @@ public final class PlannerShellFactory {
 			llm.plannerSessionCoalesceMinMillis(), llm.plannerSessionCoalesceMaxMillis(), clock, observability,
 			listener, debug, actions, narration, tools, toolObserver, llm.plannerMaxImages(),
 			new ai.moeru.airicraft.agent.llm.PlannerVisionService(llm, observability));
+		if (llm.plannerSummarizeToolResults()) orchestrator.configureMicroCompaction(new ai.moeru.airicraft.agent.llm.PlannerMicroCompactor(llm, observability, tools));
+		return orchestrator;
 	}
 
 	private static String plannerModelName(AgentConfig.LlmConfig config) {

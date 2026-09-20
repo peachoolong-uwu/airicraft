@@ -309,6 +309,10 @@ public final class PlannerOrchestrator {
 	private java.util.function.Supplier<PlannerDecisionContext> decisionContextSource;
 	private String decisionWorldSessionId;
 	private java.util.function.BooleanSupplier decisionAuthority = () -> true;
+	public void configureMicroCompaction(PlannerMicroCompactor service) {
+		service.onFinding(lifecycleListener::onObservationCompacted);
+		contextAggregator.configureMicroCompaction(service);
+	}
 	public void configureDecisionAuthority(java.util.function.BooleanSupplier authority) { decisionAuthority = authority; }
 	private long incorporatedDecisionEventSequence;
 	private boolean decisionRefreshPending = true;
@@ -328,8 +332,7 @@ public final class PlannerOrchestrator {
 		conversation = appendQueueContext(conversation);
 		if (decisionContextSource == null) {
 			LlmConversation delivered = deferredWorkReceipts.deliver(conversation, Map.of());
-			contextAggregator.retainConversation(delivered);
-			return delivered;
+			return contextAggregator.retainConversation(delivered);
 		}
 		PlannerDecisionContext context = decisionContextSource.get();
 		conversation = deferredWorkReceipts.deliver(conversation, context.current());
@@ -340,7 +343,7 @@ public final class PlannerOrchestrator {
 		LlmConversation updated = conversation.withAppended(context.message(incorporatedDecisionEventSequence, decisionRefreshPending));
 		decisionRefreshPending = false;
 		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
-		contextAggregator.retainConversation(updated);
+		updated = contextAggregator.retainConversation(updated);
 		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
 		return updated;
 	}
@@ -414,6 +417,7 @@ public final class PlannerOrchestrator {
 	}
 
 	public PlannerExecutionResult poll() {
+		contextAggregator.refreshMicroCompaction();
 		tickToolQueue();
 		if (plannerExecutor.hasInFlight()) recordConversationSources();
 		if (compactionService.hasInFlight()) {
@@ -481,19 +485,8 @@ public final class PlannerOrchestrator {
 	}
 
 	private PlannerExecutionResult finishSuccessfulPlannerResult(PlannerExecutionResult plannerResult) {
-		if (toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME)) {
-			String error = usesToolQueue()
-				? PlannerFindingToolProvider.validateQueuedResponse(sessionCoordinator.conversationFor(plannerResult.generation()), effectiveToolCalls(plannerResult.response()))
-				: PlannerFindingToolProvider.validateNext(sessionCoordinator.conversationFor(plannerResult.generation()), effectiveToolCalls(plannerResult.response()));
-			if (error != null) {
-				var failure = rejectToolRequest(plannerResult, error);
-				if (scheduleParseRepairRetry(failure)) return null;
-				return finishFailedPlannerResult(failure);
-			}
-		}
 
 		if (plannerResult.phase() == PlannerSessionPhase.TOOL_FOLLOW_UP
-			&& !(toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME) && effectiveToolCalls(plannerResult.response()).stream().anyMatch(c -> PlannerFindingToolProvider.NAME.equals(c.name())))
 			&& completedToolCallCount(plannerResult.generation()) + effectiveToolCalls(plannerResult.response()).size() > MAX_TOOL_CALLS_PER_TURN) {
 			return yieldToolTurn(plannerResult);
 		}
@@ -866,7 +859,6 @@ public final class PlannerOrchestrator {
 				}
 			}
 			else if (PlannerQueueToolProvider.CLEAR.equals(call.name())) receipt = "Queue cleared; aborting active work.";
-			else if (PlannerFindingToolProvider.NAME.equals(call.name())) receipt = "Finding accepted into conversation context.";
 			else {
 				toolQueue.tools.append(List.of(call));
 				receipt = "QUEUED: " + call.id() + "; execution result will arrive in a later review.";
@@ -876,13 +868,7 @@ public final class PlannerOrchestrator {
 			lifecycleListener.onToolRequested(result.generation(), call);
 		}
 		var acceptedConversation = contextAggregator.buildPlannerFollowUpConversation(snapshot, calls, receipts);
-		for (var call : calls) if (PlannerFindingToolProvider.NAME.equals(call.name()))
-			acceptedConversation = PlannerFindingToolProvider.afterTool(acceptedConversation, call, "Finding accepted");
 		contextAggregator.retainConversation(acceptedConversation);
-		if (calls.stream().anyMatch(c -> PlannerFindingToolProvider.NAME.equals(c.name()))) {
-			var pendingFinding = PlannerFindingToolProvider.pending(acceptedConversation);
-			if (pendingFinding != null) queueReport(calls.getLast(), new TextToolExecutionOutcome("Findings committed. Next pending observation: " + pendingFinding.toolCallId()));
-		}
 		commitRecordedToolExchanges(result.generation());
 		toolQueue.seed = result.request();
 		debugRecorder.recordPlannerCompletion(result);
@@ -1115,6 +1101,7 @@ public final class PlannerOrchestrator {
 		sessionCoordinator.shutdown();
 		compactionService.shutdown();
 		plannerVision.close();
+		contextAggregator.closeMicroCompaction();
 		clearRuntimeState("shutdown");
 	}
 
@@ -1435,10 +1422,7 @@ public final class PlannerOrchestrator {
 			);
 		}
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
-		if (toolRegistry.isKnownTool(PlannerFindingToolProvider.NAME) && toolExecution.toolCalls().size() == 1) {
-			completedToolConversation = PlannerFindingToolProvider.afterTool(completedToolConversation, toolExecution.toolCalls().getFirst(), toolOutcome.toolResultText());
-		}
-		contextAggregator.retainConversation(completedToolConversation);
+		completedToolConversation = contextAggregator.retainConversation(completedToolConversation);
 		if (plannerExecutor.managesConversationHistory() && toolOutcome.hasImageAttachment()) backendHistoryImages++;
 		// Completed effects remain evidence even when safety invalidates the next decision.
 		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))

@@ -54,7 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PlannerOrchestratorTest {
 	@org.junit.jupiter.params.ParameterizedTest
 	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-	void findingReplacesRawQueryAcrossSubsequentTurns(boolean noFinding) {
+	void microCompactionDoesNotBlockPlanningAndReplacesFutureContext(boolean noFinding) {
 		var conversations = new ArrayList<LlmConversation>();
 		var args = JsonParser.parseString("{\"sourceToolCallId\":\"wall-query\",\"result\":null,\"memory\":\"Checked x=100..106; no hole. Search east next.\"}").getAsJsonObject();
 		if (!noFinding) { args.addProperty("result", "L-shaped hole"); args.addProperty("memory", "Place stone bricks at (109,65,50), (109,66,50), (110,65,50)."); }
@@ -71,20 +71,25 @@ class PlannerOrchestratorTest {
 				conversations.add(conversation);
 				return LlmCallResult.of(switch (conversations.size()) {
 					case 1 -> new PlannerResponse("", new PlannerToolCall("wall-query", "query_world", new JsonObject(), null, null), null);
-					case 2 -> new PlannerResponse("", new PlannerToolCall("finding", "record_finding", args, null, null), null);
+					case 2 -> noActionResponse();
 					default -> noActionResponse();
 				}, null);
 			}
 			public void injectMockResponse(PlannerResponse r) {} public void injectTimeout() {} public boolean isConfigured() { return true; }
 		};
-		var registry = PlannerToolRegistry.of(provider, new PlannerFindingToolProvider());
+		var registry = PlannerToolRegistry.of(provider);
 		registry.activateAllForTesting(); registry.freezeToolPrefix();
 		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
 			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var micro = new CompletableFuture<String>();
+		orchestrator.configureMicroCompaction(new PlannerMicroCompactor(c -> micro));
+		assertFalse(registry.isKnownTool("record_finding"));
 		try {
 			orchestrator.submit(request("Fix the hole in the stone-brick wall", 1));
 			assertTrue(awaitResult(orchestrator).succeeded());
 			assertTrue(conversations.get(1).messages().stream().anyMatch(m -> m.content().contains("RAW_WALL_BLOCK_LIST_12345")));
+			assertFalse(micro.isDone(), "Normal planner responded while micro-compaction remained pending");
+			micro.complete("{\"findings\":[" + args + "]}");
 			orchestrator.onAcceptedReplyRecorded();
 			orchestrator.submit(request("Continue the repair", 2));
 			assertTrue(awaitResult(orchestrator).succeeded());
@@ -324,36 +329,6 @@ class PlannerOrchestratorTest {
 		} finally { orchestrator.shutdown(); }
 	}
 
-	@Test
-	void partialFindingsCommitAndRequestOnlyTheRemainingObservation() throws Exception {
-		var backend = new RecordingBackend();
-		var provider = new PlannerToolProvider() {
-			public String id() { return "queries"; }
-			public boolean handles(String name) { return name.equals("query_world"); }
-			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("query_world", "Query", Map.of(), List.of())); }
-			public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture("RAW_" + call.id()); }
-		};
-		var registry = PlannerToolRegistry.of(provider, new PlannerFindingToolProvider(), new PlannerQueueToolProvider(PlannerActionToolExecutor.DISABLED));
-		registry.activateAllForTesting(); registry.freezeToolPrefix();
-		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
-			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
-		try {
-			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
-			backend.succeed(0, PlannerResponse.toolCalls(List.of(
-				new PlannerToolCall("south", "query_world", new JsonObject(), null, null),
-				new PlannerToolCall("east", "query_world", new JsonObject(), null, null)), null));
-			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
-			var finding = JsonParser.parseString("{\"sourceToolCallId\":\"south\",\"result\":\"Forest south\",\"memory\":\"Forest at (10,64,20)\"}").getAsJsonObject();
-			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("summary", "record_finding", finding, null, null)), null));
-			awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(2));
-			String next = conversationText(backend.conversation(2));
-			assertTrue(next.contains("Forest at (10,64,20)"));
-			assertFalse(next.contains("RAW_south"), "Accepted summary must replace the raw query");
-			assertTrue(next.contains("RAW_east"));
-			assertTrue(next.contains("Next pending observation: east"));
-			assertFalse(next.contains("TOOL CALL FORMAT REMINDER"), "Partial progress must not enter parse repair");
-		} finally { orchestrator.shutdown(); }
-	}
 
 	@Test
 	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {

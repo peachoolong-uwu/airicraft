@@ -28,7 +28,7 @@ class PlannerDelegationTest {
 		var args = new com.google.gson.JsonObject();
 		args.addProperty("sourceToolCallId", query.id()); args.add("result", com.google.gson.JsonNull.INSTANCE);
 		args.addProperty("memory", "West checked: no hole; inspect east next.");
-		handoff.recordToolExchange(new PlannerToolCall("finding", "record_finding", args, null, null), "Finding accepted", false);
+		handoff.recordObservationFinding(query, "Inspection finding: " + args);
 		handoff.requestReturn(handoff.id(), "success", "Search complete", true);
 		handoff.finish(Map.of());
 		assertFalse(future.join().contains("RAW_LARGE_BLOCK_LIST"));

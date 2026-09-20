@@ -95,7 +95,7 @@ public final class PlannerReferences {
 			return nativeId;
 		}
 		// Persist native references in planning notes and transfer canonical evidence on handoff.
-		if (List.of("objective", "constraints", "completionCriteria", "reason", "evidence", "decision", "outcome", "assignment", "summary").contains(key)) {
+		if (List.of("objective", "constraints", "completionCriteria", "reason", "evidence", "decision", "outcome", "assignment", "summary", "memory", "result").contains(key)) {
 			return REFERENCE.matcher(text).replaceAll(match -> java.util.regex.Matcher.quoteReplacement(identities.getOrDefault(match.group(), match.group())));
 		}
 		return text;

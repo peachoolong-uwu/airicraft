@@ -445,6 +445,7 @@ public final class PlannerContextAggregator {
 	}
 
 	public void applyCheckpoint(CompactionCheckpoint checkpoint) {
+		if (microCompactor != null) microCompactor.reset();
 		state = PlannerContextReducer.clearCompactionPending(state, checkpoint, clock.millis());
 		if (toolRegistry.hasFixedPrefix()) retainedConversation = LlmConversation.of(List.of(
 			LlmChatMessage.system(systemPrompt()), LlmChatMessage.user(checkpoint.renderMessage(), LlmMessageKind.CHECKPOINT)));
@@ -456,6 +457,7 @@ public final class PlannerContextAggregator {
 	}
 
 	public void clear() {
+		if (microCompactor != null) microCompactor.reset();
 		state = PlannerContextState.initial();
 		retainedConversation = null;
 		lastFrozenSnapshot = null;
@@ -480,8 +482,16 @@ public final class PlannerContextAggregator {
 	}
 
 	/** Keep the actual accepted wire conversation, including frozen notices and raw tool envelopes. */
-	public void retainConversation(LlmConversation conversation) {
+	private PlannerMicroCompactor microCompactor;
+	public void configureMicroCompaction(PlannerMicroCompactor service) { microCompactor = service; }
+	public void refreshMicroCompaction() {
+		if (retainedConversation != null && microCompactor != null) retainedConversation = microCompactor.update(retainedConversation);
+	}
+	public void closeMicroCompaction() { if (microCompactor != null) microCompactor.close(); }
+	public LlmConversation retainConversation(LlmConversation conversation) {
+		if (microCompactor != null) conversation = microCompactor.update(conversation);
 		if (toolRegistry.hasFixedPrefix() && !backendManagedHistory) retainedConversation = conversation;
+		return conversation;
 	}
 
 	private String systemPrompt() {
@@ -532,7 +542,7 @@ public final class PlannerContextAggregator {
 			messages.addAll(retainedConversation.messages());
 			messages.addAll(snapshotNotices);
 			if (terminalMessage != null) messages.add(terminalMessage);
-			return LlmConversation.of(messages);
+			return microCompactor == null ? LlmConversation.of(messages) : microCompactor.update(LlmConversation.of(messages));
 		}
 		messages.add(LlmChatMessage.system(systemPrompt()));
 		if (!backendManagedHistory && state.activeCheckpoint() != null) {
@@ -545,7 +555,7 @@ public final class PlannerContextAggregator {
 		if (terminalMessage != null) {
 			messages.add(terminalMessage);
 		}
-		return LlmConversation.of(messages);
+		return microCompactor == null ? LlmConversation.of(messages) : microCompactor.update(LlmConversation.of(messages));
 	}
 
 	private LlmConversation followUpBase(PlannerContextSnapshot snapshot) {
