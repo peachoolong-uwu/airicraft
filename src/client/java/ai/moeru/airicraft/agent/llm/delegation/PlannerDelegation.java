@@ -88,7 +88,19 @@ public final class PlannerDelegation {
 
 	public void recordToolExchange(PlannerToolCall call, String result, boolean imageAttached) {
 		if (!active()) return;
-		append(Map.of("kind", "tool_exchange", "tool", call.name(), "arguments", call.arguments(),
+		if (ai.moeru.airicraft.agent.llm.PlannerFindingToolProvider.NAME.equals(call.name()) && !result.startsWith("TOOL_ERROR:")) {
+			String source = call.arguments().get("sourceToolCallId").getAsString();
+			var iterator = work().evidence.iterator();
+			while (iterator.hasNext()) {
+				String encoded = iterator.next();
+				var entry = com.google.gson.JsonParser.parseString(encoded).getAsJsonObject();
+				if (entry.has("toolCallId") && source.equals(entry.get("toolCallId").getAsString())) {
+					iterator.remove();
+					work().evidenceChars -= encoded.length();
+				}
+			}
+		}
+		append(Map.of("kind", "tool_exchange", "toolCallId", call.id(), "tool", call.name(), "arguments", call.arguments(),
 			"result", clip(result, 12_000), "imageAttached", imageAttached));
 	}
 

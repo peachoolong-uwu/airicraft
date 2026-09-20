@@ -19,6 +19,22 @@ import java.util.function.IntFunction;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PlannerDelegationTest {
+	@Test void acceptedFindingReplacesRawQueryInReturnedEvidence() {
+		var handoff = new PlannerDelegation();
+		var future = handoff.delegate("Repair wall", "Solid wall", "Context");
+		handoff.start(Map.of(), 0);
+		var query = call("query_world", "{}");
+		handoff.recordToolExchange(query, "RAW_LARGE_BLOCK_LIST", false);
+		var args = new com.google.gson.JsonObject();
+		args.addProperty("sourceToolCallId", query.id()); args.add("result", com.google.gson.JsonNull.INSTANCE);
+		args.addProperty("memory", "West checked: no hole; inspect east next.");
+		handoff.recordToolExchange(new PlannerToolCall("finding", "record_finding", args, null, null), "Finding accepted", false);
+		handoff.requestReturn(handoff.id(), "success", "Search complete", true);
+		handoff.finish(Map.of());
+		assertFalse(future.join().contains("RAW_LARGE_BLOCK_LIST"));
+		assertTrue(future.join().contains("West checked: no hole; inspect east next."));
+	}
+
 	@Test void handoffPreservesAllBoundedObjectiveDecisions(@org.junit.jupiter.api.io.TempDir java.nio.file.Path world) throws Exception {
 		var goal = new ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore(() -> world);
 		var objective = goal.set("Repair shelter", "Preserve equipment", "Supported approach");

@@ -24,13 +24,13 @@ public final class PlannerFindingToolProvider implements PlannerToolProvider {
 			"Replace the pending raw observation with its task-specific answer in conversation context only. No persistent memory.",
 			propertiesForProvider(
 				propForProvider("sourceToolCallId", stringForProvider("Exact pending observation tool call ID.")),
-				propForProvider("result", Map.of("type", List.of("string", "null"), "description", "Answer to the question motivating the query; null if not found. Do not invent certainty.", "maxLength", 1024)),
+				propForProvider("result", Map.of("type", List.of("string", "null"), "description", "Answer locating the requested target; MUST be null when that target was not found, even if the query successfully established negative evidence. Put negative evidence in memory.", "maxLength", 1024)),
 				propForProvider("memory", Map.of("type", "string", "description", "Concise evidence needed for the task: exact coordinates, materials, coverage, uncertainties. For null, retain what was checked, ruled out or failed, and what remains unchecked.", "maxLength", 4096))
 			), List.of("sourceToolCallId", "result", "memory")));
 	}
 	@Override public String promptInstructions() {
 		return "Experimental short-term findings: call tools sequentially. After inspect_world, query_world, inspect_nearby_entities, find_world_features or custom_ queries, you MUST call record_finding alone before any other tool or final reply. "
-			+ "Answer the original task-specific question, not a general description of surroundings. Preserve exact actionable coordinates/materials and uncertainty. Use result:null for an unsuccessful query and explain its checked area, failure or negative evidence in memory. "
+			+ "Answer the original task-specific question, not a general description of surroundings. Preserve exact actionable coordinates/materials and uncertainty. Use result:null whenever the requested target was not found, even if the query ran successfully. For example, searching for a wall hole and finding an intact wall requires result:null, with the intact checked section and remaining search area in memory. "
 			+ "Only your finding and the original query remain in context; raw results are removed after acceptance. Findings are observations at query time, not eternal facts.";
 	}
 	@Override public void validateArguments(String name, JsonObject args) {
