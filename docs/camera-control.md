@@ -22,7 +22,12 @@ alignment. Combat and item delivery submit direct aim only when they own steerin
 Combat waypoint steering converts world directions to keys using the current
 player yaw, rather than assuming that the requested aim has already been reached.
 
-Block interactions and breaking wait for alignment before interacting. Entity
+Block placement retains precise alignment. Mining starts as soon as a fresh
+raycast along the current view hits the requested block's outline within reach,
+using the actual hit face. It does not wait for spring convergence. Block-breaking
+aim points use outline-shape centers, including thin leaf litter. Baritone left
+click likewise requires its current and requested rays to hit the same block;
+right click retains its precise alignment gate. Entity
 interactions wait until the current viewing ray intersects the target's bounds.
 Targeted vision waits for the spring to settle before scheduling a screenshot;
 competing targeted captures fail as busy. World leave, reload, player replacement,
@@ -49,3 +54,24 @@ This is limited navigation/capture proof. The copied survival world later died
 to a spider while idle; combat, parkour, elytra, water navigation, and all
 interaction types are not established by that smoke. Final ownership and aim
 bounds changes require their own live coverage in those conditions.
+
+### Mining regression, 2026-09-20
+
+Commit `b0f0e0ad` also makes `BlockBreakTaskExecutor` yield when a target has not
+advanced. Previously, waiting for camera aim could repeat the same target inside
+one client tick indefinitely, preventing the camera itself from ticking.
+
+A disposable copy of the failed Nether playtest checkpoint reproduced the bridge
+timeout before the fix. A fresh patched copy completed the same four-target
+`break_blocks` request at X=-229, Z=-2, Y=70 through 67 (leaf litter, grass block,
+and two dirt blocks). Work `JOB:job-be993d3d-6e9b-400f-b385-3b0aaddea20d` reached
+`SUCCEEDED` at tick 391; subsequent inspection found all four cells air and the
+bridge remained responsive. Local evidence is under
+`run/camera-mining-regression/{before,retry}/`. An intervening attempt under
+`after/` was interrupted by combat deaths and is not a completed regression.
+
+The full Gradle build passed. Camera tests cover off-center hits, rejection of
+misses/other blocks, thin outlines, and a spring trajectory that intersects the
+target before settling. The live replay validates explicit block breaking;
+acquisition, crop harvesting, underwater harvesting, and Baritone left-click
+timing have not each received a separate live speed comparison.
