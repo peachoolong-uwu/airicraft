@@ -68,6 +68,7 @@ public final class SurvivalReflexRuntime {
 	}
 	private List<ResolvedThreat> progressThreats;
 	private MinecraftCombatPositioning combatPositioning;
+	private String escapingCreeper;
 	private String reportedCombatFocus;
 	private CombatRecovery combatRecovery;
 	private ReflexPolicy policyOverride;
@@ -131,6 +132,7 @@ public final class SurvivalReflexRuntime {
 		evidence.put("combatStalemate", combatStalemate);
 		evidence.put("combatProgress", combatProgress);
 		evidence.put("tacticalWindow", tacticalWindow);
+		evidence.put("escapingCreeper", escapingCreeper);
 		evidence.put("combatPositioning", combatPositioning == null ? null : combatPositioning.evidence());
 		evidence.put("shieldUseOwned", shieldUseOwned);
 		evidence.put("combatRecovery", combatRecovery == null ? CombatRecovery.READY : combatRecovery);
@@ -525,6 +527,7 @@ public final class SurvivalReflexRuntime {
 			changeAction(SurvivalReflexCause.MOB_ATTACK, SurvivalReflexAction.DEFEND, tick);
 		}
 		boolean usePositioning = shouldReposition(threats.size()) && baritone != null && baritone.isLoaded();
+		updateCreeperEscape(threats);
 		equipBestCombatItem(client, player);
 		if (blockShieldThreat(client, player, threats, tick)) {
 			if (usePositioning) reposition(client, threats, tick, true);
@@ -673,6 +676,11 @@ public final class SurvivalReflexRuntime {
 		return cooldown < .92F || fuseProgress >= .2F;
 	}
 
+	static boolean creeperEscapeActive(boolean previous, double distance, int fuseSpeed, float fuseProgress, boolean charged) {
+		return fuseSpeed > 0 || fuseProgress >= .2F
+			|| previous && (fuseProgress > 0 || distance < (charged ? 14 : 8));
+	}
+
 	static boolean shouldBlockCreeper(double distance, int fuseSpeed, float fuseProgress, boolean charged) {
 		// Last resort: preserve time for shield activation, but let early fuse movement escape.
 		return fuseSpeed > 0 && fuseProgress >= 0.7F && distance <= (charged ? 12 : 6);
@@ -738,6 +746,14 @@ public final class SurvivalReflexRuntime {
 
 	static boolean shouldReposition(int threatCount) { return threatCount >= 1; }
 
+	private void updateCreeperEscape(List<ResolvedThreat> threats) {
+		// Keep tracking the live pursuer, not the position where it first ignited.
+		escapingCreeper = threats.stream().filter(t -> t.entity() instanceof net.minecraft.entity.mob.CreeperEntity c
+			&& creeperEscapeActive(t.observed().uuid().equals(escapingCreeper), t.distance(), c.getFuseSpeed(), c.getLerpedFuseTime(1), c.isCharged()))
+			.min(java.util.Comparator.comparingDouble(ResolvedThreat::distance))
+			.map(t -> t.observed().uuid()).orElse(null);
+	}
+
 	private void reposition(MinecraftClient client, List<ResolvedThreat> threats, long tick, boolean shielding) {
 		if (baritone == null || !baritone.isLoaded()) {
 			stopCombatNavigation();
@@ -749,11 +765,12 @@ public final class SurvivalReflexRuntime {
 			combatPositioning = new MinecraftCombatPositioning();
 		}
 		var focus = threats.stream().filter(t -> t.entity() instanceof net.minecraft.entity.mob.CreeperEntity c
-			&& t.distance() < 7 && c.getFuseSpeed() > 0).min(java.util.Comparator.comparingDouble(ResolvedThreat::distance))
+			&& t.observed().uuid().equals(escapingCreeper)).min(java.util.Comparator.comparingDouble(ResolvedThreat::distance))
 			.orElseGet(() -> focusedThreat(threats));
+		boolean escaping = focus.observed().uuid().equals(escapingCreeper);
 		boolean kiting = focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity c
 			&& creeperShouldKite(client.player.getAttackCooldownProgress(0), c.getLerpedFuseTime(1));
-		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), focus.entity(), tick, shielding, kiting ? 5 : 2.6);
+		var decision = combatPositioning.plan(client, threats.stream().map(ResolvedThreat::entity).toList(), focus.entity(), tick, shielding, escaping ? (((net.minecraft.entity.mob.CreeperEntity) focus.entity()).isCharged() ? 14 : 8) : kiting ? 5 : 2.6);
 		var step = decision.nextStep();
 		if (step == null) step = new CombatPositioning.Cell(client.player.getBlockX(), client.player.getBlockY(), client.player.getBlockZ());
 		if (!combatPositioning.canStepTo(step)) {
@@ -763,7 +780,9 @@ public final class SurvivalReflexRuntime {
 			return;
 		}
 		GoalPosition target = new GoalPosition(step.x(), step.y(), step.z(), true);
-		Vec3d facing = focus.entity().getBoundingBox().getCenter();
+		Vec3d facing = escaping && !shielding
+			? new Vec3d(step.x() + .5, client.player.getEyeY(), step.z() + .5)
+			: focus.entity().getBoundingBox().getCenter();
 		// A raised shield keeps its selected shooter/blast heading; movement is relative to that heading.
 		if (shielding && shieldGuard != null) facing = shieldGuard.facing();
 		cameraController.lookAt(client, facing);
@@ -771,7 +790,7 @@ public final class SurvivalReflexRuntime {
 		Vec3d actualFacing = client.player.getPos().add(Vec3d.fromPolar(0.0F, client.player.getYaw()));
 		var control = combatPositioning.control(client, step, actualFacing, focus.entity().getPos(), tick);
 		var steering = control.steering();
-		boolean sprint = !shielding && !kiting && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
+		boolean sprint = !shielding && (!kiting || escaping) && steering.forward() && !steering.back() && focus.entity() instanceof net.minecraft.entity.mob.CreeperEntity
 			&& !control.sneak() && client.player.getHungerManager().getFoodLevel() > 6;
 		if (!shielding && !control.jump() && !control.sneak() && focus.entity() instanceof net.minecraft.entity.mob.WitchEntity) {
 			var strafe = combatPositioning.witchSprint(client, step, focus.entity().getPos());
@@ -789,7 +808,7 @@ public final class SurvivalReflexRuntime {
 			control.jump(), control.sneak(), tick);
 		if (!target.equals(combatTarget)) pendingEvents.add(new SurvivalReflexEvent("reflex.combat_reposition", Map.of(
 			"target", target, "threatCount", threats.size(), "risk", decision.risk(), "standingRisk", decision.standingRisk(),
-			"route", decision.route(), "shielding", shielding, "facing", facing, "steering", steering, "tick", tick)));
+			"route", decision.route(), "shielding", shielding, "facing", facing, "steering", steering, "escapingCreeper", escaping, "tick", tick)));
 		combatTarget = target;
 		combatRouteTick = tick;
 	}
@@ -872,7 +891,7 @@ public final class SurvivalReflexRuntime {
 		List<ResolvedThreat> threats,
 		long tick
 	) {
-		if (client.interactionManager == null || threats == null || threats.isEmpty()) {
+		if (escapingCreeper != null || client.interactionManager == null || threats == null || threats.isEmpty()) {
 			return;
 		}
 		ResolvedThreat threat = focusedThreat(threats);
@@ -1203,6 +1222,7 @@ public final class SurvivalReflexRuntime {
 	}
 
 	private void resetSecurityProgress() {
+		escapingCreeper = null;
 		reportedCombatFocus = null;
 		combatPositioning = null;
 		secureEscapeTicks = 0;
