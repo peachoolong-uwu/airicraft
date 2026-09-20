@@ -17,10 +17,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(ChunkRendererRegion.class)
 public abstract class ChunkRendererRegionMixin {
-	@Inject(method = "getBlockState", at = @At("HEAD"), cancellable = true)
+	@Inject(method = "getBlockState", at = @At("RETURN"), cancellable = true)
 	private void airicraft$fadeOccluders(BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
 		WorldCameraService service = AiricraftClient.runtimeController().worldCameraService();
-		if (service != null && service.isFaded(pos)) {
+		if (service != null && service.isFaded(pos, cir.getReturnValue())) {
 			cir.setReturnValue(Blocks.AIR.getDefaultState());
 		}
 	}

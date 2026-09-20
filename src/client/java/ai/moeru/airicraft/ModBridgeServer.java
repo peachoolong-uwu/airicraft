@@ -182,6 +182,7 @@ public final class ModBridgeServer {
 			httpServer.createContext("/v1/focus", exchange -> handleJson(exchange, this::createFocusResponse));
 			httpServer.createContext("/v1/camera/screenshot", this::handleCameraScreenshot);
 			httpServer.createContext("/v1/camera/tactical", this::handleCameraTactical);
+			httpServer.createContext("/v1/camera/inspect-region", this::handleCameraInspectRegion);
 			httpServer.createContext("/v1/world-snapshot", exchange -> handleJson(exchange, () -> createWorldSnapshotResponse(exchange)));
 			httpServer.createContext("/v1/vision/describe", this::handleVisionDescribe);
 			httpServer.createContext("/v1/map/status", exchange -> handleJson(exchange, this::createMapStatusResponse));
@@ -439,8 +440,9 @@ public final class ModBridgeServer {
 				boolean keepPose = request != null && Boolean.TRUE.equals(request.keepPose());
 				boolean fadeOccluders = request != null && Boolean.TRUE.equals(request.fadeOccluders());
 				Integer hideAboveY = request != null ? request.hideAboveY() : null;
+				boolean fadeLeaves = request == null || !Boolean.FALSE.equals(request.fadeLeaves());
 				boolean autoFade = "auto".equals(mode) && !framing.focusClear();
-				if (fadeOccluders || hideAboveY != null || autoFade) {
+				if (fadeOccluders || hideAboveY != null || autoFade || fadeLeaves) {
 					Vec3d focus = request != null && request.x() != null && request.y() != null && request.z() != null
 						? new Vec3d(request.x(), request.y(), request.z())
 						: client.player.getPos();
@@ -457,7 +459,7 @@ public final class ModBridgeServer {
 						occluders = new java.util.HashSet<>(occluders);
 						occluders.addAll(focusOccluders);
 					}
-					service.setFade(client, new WorldCameraService.FadeFilter(occluders, hideAboveY),
+					service.setFade(client, new WorldCameraService.FadeFilter(occluders, hideAboveY, fadeLeaves),
 						BlockPos.ofFloored(focus).add(-(int) Math.ceil(radius) - 2, -16, -(int) Math.ceil(radius) - 2),
 						BlockPos.ofFloored(focus).add((int) Math.ceil(radius) + 2, 16, (int) Math.ceil(radius) + 2));
 					framing = new WorldCameraService.FrameResult(
@@ -482,7 +484,22 @@ public final class ModBridgeServer {
 				payload.put("framing", framingPayload);
 			}
 			if (result.screenshot() != null) {
-				payload.putAll(cameraScreenshotPayload(result.screenshot()));
+				FirstPersonScreenshotService.CapturedScreenshot shot = result.screenshot();
+				if (request != null && request.queryBox() != null && request.queryBox().size() == 6) {
+					var qb = request.queryBox();
+					shot = WorldCameraService.withQueryOverlay(
+						shot,
+						result.framing() != null ? result.framing().pose() : null,
+						getClient().options.getFov().getValue(),
+						getClient().getWindow().getFramebufferWidth()
+							/ (double) Math.max(1, getClient().getWindow().getFramebufferHeight()),
+						new BlockPos(qb.get(0).intValue(), qb.get(1).intValue(), qb.get(2).intValue()),
+						new BlockPos(qb.get(3).intValue(), qb.get(4).intValue(), qb.get(5).intValue()));
+				}
+				payload.putAll(cameraScreenshotPayload(shot));
+				if (result.viewId() != null) {
+					payload.put("viewId", result.viewId());
+				}
 			}
 			else {
 				payload.put("cleared", true);
@@ -490,6 +507,32 @@ public final class ModBridgeServer {
 			return payload;
 		});
 	}
+
+	private void handleCameraInspectRegion(HttpExchange exchange) throws IOException {
+		handleJsonBody(exchange, "POST", InspectRegionRequest.class, request -> {
+			if (request == null || request.viewId() == null || request.box() == null || request.box().size() != 4) {
+				throw new BridgeUnavailableException("invalid_request", "viewId and box [x1,y1,x2,y2] are required");
+			}
+			return onClientThread(() -> {
+				var client = getClient();
+				ensureWorldLoaded(client);
+				WorldCameraService service = worldCameraService();
+				if (service == null) {
+					throw new BridgeUnavailableException("minecraft_unavailable", "World camera service is not available");
+				}
+				WorldCameraService.ViewRecord view = service.view(request.viewId());
+				if (view == null) {
+					throw new BridgeUnavailableException("invalid_request", "Unknown viewId: " + request.viewId());
+				}
+				var b = request.box();
+				String expand = request.expand() != null ? request.expand() : "visible";
+				return service.inspectRegion(client, view,
+					b.get(0), b.get(1), b.get(2), b.get(3), expand);
+			});
+		});
+	}
+
+
 
 	private WorldCameraService.TacticalResult awaitTacticalCapture(
 		CompletableFuture<WorldCameraService.TacticalResult> captureFuture
@@ -2653,7 +2696,16 @@ public final class ModBridgeServer {
 		Integer settleFrames,
 		Boolean keepPose,
 		Boolean fadeOccluders,
-		Integer hideAboveY
+		Integer hideAboveY,
+		java.util.List<Double> queryBox,
+		Boolean fadeLeaves
+	) {
+	}
+
+	private record InspectRegionRequest(
+		String viewId,
+		java.util.List<Double> box,
+		String expand
 	) {
 	}
 

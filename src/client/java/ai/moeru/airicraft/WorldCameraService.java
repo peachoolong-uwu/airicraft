@@ -1,5 +1,6 @@
 package ai.moeru.airicraft;
 
+import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.hit.BlockHitResult;
@@ -57,12 +58,33 @@ public final class WorldCameraService {
 			this(pose, candidates, samples, visibleSamples, score, fadedBlocks, true);
 		}
 	}
-
 	public record TacticalResult(
 		FrameResult framing,
-		FirstPersonScreenshotService.CapturedScreenshot screenshot
+		FirstPersonScreenshotService.CapturedScreenshot screenshot,
+		String viewId
+	) {
+		public TacticalResult(FrameResult framing, FirstPersonScreenshotService.CapturedScreenshot screenshot) {
+			this(framing, screenshot, null);
+		}
+	}
+
+	/**
+	 * A captured view: camera pose + intrinsics retained so later tools can
+	 * back-project image selections into world coordinates.
+	 */
+	public record ViewRecord(
+		String id,
+		CameraPose pose,
+		double fovY,
+		double aspect,
+		int width,
+		int height,
+		long capturedAtMs
 	) {
 	}
+
+	private final java.util.Map<String, ViewRecord> views = new java.util.LinkedHashMap<>();
+	private int viewSeq;
 
 	private volatile boolean shoulderActive;
 	private volatile boolean playerTranslucent;
@@ -277,8 +299,13 @@ public final class WorldCameraService {
 	/**
 	 * Blocks the renderer should treat as air. Read from chunk-mesh worker
 	 * threads via {@link #isFaded}; must be an immutable snapshot.
+	 * {@code fadeLeaves} additionally hides all leaf blocks — they are
+	 * visually noisy and rarely task-relevant.
 	 */
-	public record FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY) {
+	public record FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY, boolean fadeLeaves) {
+		public FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY) {
+			this(blocks, hideAboveY, false);
+		}
 	}
 
 	private volatile FadeFilter fadeFilter;
@@ -289,10 +316,13 @@ public final class WorldCameraService {
 		return fadeFilter;
 	}
 
-	public boolean isFaded(BlockPos pos) {
+	public boolean isFaded(BlockPos pos, BlockState state) {
 		FadeFilter filter = fadeFilter;
 		if (filter == null) {
 			return false;
+		}
+		if (filter.fadeLeaves() && state.getBlock() instanceof net.minecraft.block.LeavesBlock) {
+			return true;
 		}
 		if (filter.hideAboveY() != null && pos.getY() >= filter.hideAboveY()) {
 			return true;
@@ -436,7 +466,8 @@ public final class WorldCameraService {
 				if (!keepPose) {
 					clear();
 				}
-				return new TacticalResult(framing, withCompass(screenshot, lastRenderedPose));
+				return new TacticalResult(framing, withCompass(screenshot, lastRenderedPose),
+					registerView(client, lastRenderedPose, screenshot));
 			});
 		}
 	}
@@ -464,7 +495,8 @@ public final class WorldCameraService {
 				if (!keepPose) {
 					clear();
 				}
-				return new TacticalResult(null, withCompass(screenshot, lastRenderedPose));
+				return new TacticalResult(null, withCompass(screenshot, lastRenderedPose),
+					registerView(client, lastRenderedPose, screenshot));
 			});
 		}
 	}
@@ -605,6 +637,217 @@ public final class WorldCameraService {
 		}
 		return samples;
 	}
+	/**
+	 * Register a captured view for later back-projection. Returns its id.
+	 */
+	public synchronized String registerView(MinecraftClient client, CameraPose pose, FirstPersonScreenshotService.CapturedScreenshot screenshot) {
+		String id = "view_" + (++viewSeq);
+		double fovY = client.options.getFov().getValue();
+		double aspect = client.getWindow().getFramebufferWidth()
+			/ (double) Math.max(1, client.getWindow().getFramebufferHeight());
+		views.put(id, new ViewRecord(
+			id, pose, fovY, aspect,
+			screenshot.width(), screenshot.height(), screenshot.capturedAtMs()));
+		// Bounded history: keep the last 32 views.
+		while (views.size() > 32) {
+			views.remove(views.keySet().iterator().next());
+		}
+		return id;
+	}
+
+	public synchronized ViewRecord view(String id) {
+		return views.get(id);
+	}
+
+	/**
+	 * Camera basis vectors for a pose: forward, right, up.
+	 */
+	private static Vec3d[] cameraBasis(CameraPose cam) {
+		double yawRad = Math.toRadians(cam.yaw());
+		double pitchRad = Math.toRadians(cam.pitch());
+		Vec3d forward = new Vec3d(
+			-Math.sin(yawRad) * Math.cos(pitchRad),
+			-Math.sin(pitchRad),
+			Math.cos(yawRad) * Math.cos(pitchRad));
+		Vec3d right = new Vec3d(-forward.z, 0.0, forward.x).normalize();
+		Vec3d up = right.crossProduct(forward);
+		return new Vec3d[] {forward, right, up};
+	}
+
+	/**
+	 * Back-project a normalized image box into world blocks by raycasting a
+	 * grid of pixels through the stored camera. {@code expand} controls how
+	 * the visible hits become a query volume: "visible" (exact hits),
+	 * "volume" (bounding box + 1), "connected" (flood-fill non-natural
+	 * blocks from the hits).
+	 */
+	public java.util.Map<String, Object> inspectRegion(
+		MinecraftClient client,
+		ViewRecord view,
+		double x1, double y1, double x2, double y2,
+		String expand
+	) {
+		Vec3d eye = new Vec3d(view.pose().x(), view.pose().y(), view.pose().z());
+		Vec3d[] basis = cameraBasis(view.pose());
+		double tanHalfFovY = Math.tan(Math.toRadians(view.fovY()) / 2.0);
+
+		java.util.Set<BlockPos> hits = new java.util.HashSet<>();
+		int grid = 24;
+		for (int gy = 0; gy <= grid; gy++) {
+			for (int gx = 0; gx <= grid; gx++) {
+				double nx = x1 + (x2 - x1) * gx / grid;
+				double ny = y1 + (y2 - y1) * gy / grid;
+				Vec3d dir = basis[0]
+					.add(basis[1].multiply(nx * tanHalfFovY * view.aspect()))
+					.add(basis[2].multiply(ny * tanHalfFovY))
+					.normalize();
+				BlockHitResult hit = client.world.raycast(new RaycastContext(
+					eye, eye.add(dir.multiply(96.0)),
+					RaycastContext.ShapeType.VISUAL, RaycastContext.FluidHandling.NONE,
+					net.minecraft.block.ShapeContext.absent()));
+				if (hit.getType() == HitResult.Type.BLOCK) {
+					hits.add(hit.getBlockPos());
+				}
+			}
+		}
+
+		java.util.Set<BlockPos> result = hits;
+		if ("volume".equals(expand) && !hits.isEmpty()) {
+			int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+			int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+			for (BlockPos p : hits) {
+				minX = Math.min(minX, p.getX()); maxX = Math.max(maxX, p.getX());
+				minY = Math.min(minY, p.getY()); maxY = Math.max(maxY, p.getY());
+				minZ = Math.min(minZ, p.getZ()); maxZ = Math.max(maxZ, p.getZ());
+			}
+			result = new java.util.HashSet<>();
+			for (BlockPos p : BlockPos.iterate(
+				new BlockPos(minX - 1, minY - 1, minZ - 1),
+				new BlockPos(maxX + 1, maxY + 1, maxZ + 1))) {
+				result.add(p.toImmutable());
+			}
+		}
+		else if ("connected".equals(expand) && !hits.isEmpty()) {
+			result = new java.util.HashSet<>();
+			java.util.ArrayDeque<BlockPos> queue = new java.util.ArrayDeque<>(hits);
+			while (!queue.isEmpty() && result.size() < 4096) {
+				BlockPos p = queue.poll();
+				if (!result.add(p)) {
+					continue;
+				}
+				for (var dir : net.minecraft.util.math.Direction.values()) {
+					BlockPos next = p.offset(dir);
+					var state = client.world.getBlockState(next);
+					if (!state.isAir() && !result.contains(next)) {
+						queue.add(next);
+					}
+				}
+			}
+		}
+
+		java.util.Map<String, Integer> histogram = new java.util.TreeMap<>();
+		for (BlockPos p : result) {
+			String name = net.minecraft.registry.Registries.BLOCK.getId(client.world.getBlockState(p).getBlock()).toString();
+			histogram.merge(name, 1, Integer::sum);
+		}
+		java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+		out.put("viewId", view.id());
+		out.put("expand", expand);
+		out.put("hitBlocks", hits.size());
+		out.put("blocks", result.size());
+		out.put("histogram", histogram);
+		if (!result.isEmpty()) {
+			int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+			int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+			for (BlockPos p : result) {
+				minX = Math.min(minX, p.getX()); maxX = Math.max(maxX, p.getX());
+				minY = Math.min(minY, p.getY()); maxY = Math.max(maxY, p.getY());
+				minZ = Math.min(minZ, p.getZ()); maxZ = Math.max(maxZ, p.getZ());
+			}
+			out.put("bounds", java.util.Map.of(
+				"min", java.util.List.of(minX, minY, minZ),
+				"max", java.util.List.of(maxX, maxY, maxZ)));
+		}
+		return out;
+	}
+
+	/**
+	 * Draw a query box overlay on a captured frame: project the 3D box's 12
+	 * edges into screen space and draw them as a wireframe.
+	 */
+	public static FirstPersonScreenshotService.CapturedScreenshot withQueryOverlay(
+		FirstPersonScreenshotService.CapturedScreenshot screenshot,
+		CameraPose cam,
+		double fovY,
+		double aspect,
+		BlockPos min,
+		BlockPos max
+	) {
+		if (screenshot == null || cam == null || min == null || max == null) {
+			return screenshot;
+		}
+		try {
+			java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
+				new java.io.ByteArrayInputStream(screenshot.imageBytes()));
+			java.awt.Graphics2D g = image.createGraphics();
+			try {
+				g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+				double tanHalfFovY = Math.tan(Math.toRadians(fovY) / 2.0);
+				double w = image.getWidth(), h = image.getHeight();
+				Vec3d[] basis = cameraBasis(cam);
+				Vec3d eye = new Vec3d(cam.x(), cam.y(), cam.z());
+
+				// 8 corners, 12 edges.
+				double[][] c = new double[8][];
+				for (int i = 0; i < 8; i++) {
+					c[i] = new double[] {
+						(i & 1) == 0 ? min.getX() : max.getX() + 1,
+						(i & 2) == 0 ? min.getY() : max.getY() + 1,
+						(i & 4) == 0 ? min.getZ() : max.getZ() + 1};
+				}
+				int[][] edges = {
+					{0,1},{1,3},{3,2},{2,0},
+					{4,5},{5,7},{7,6},{6,4},
+					{0,4},{1,5},{2,6},{3,7}};
+				g.setColor(new java.awt.Color(80, 160, 255, 220));
+				g.setStroke(new java.awt.BasicStroke(2.0f));
+				for (int[] e : edges) {
+					double[] a = projectToScreen(c[e[0]], eye, basis, tanHalfFovY, aspect, w, h);
+					double[] b = projectToScreen(c[e[1]], eye, basis, tanHalfFovY, aspect, w, h);
+					if (a != null && b != null) {
+						g.drawLine((int) a[0], (int) a[1], (int) b[0], (int) b[1]);
+					}
+				}
+			}
+			finally {
+				g.dispose();
+			}
+			java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+			javax.imageio.ImageIO.write(image, "png", out);
+			return new FirstPersonScreenshotService.CapturedScreenshot(
+				screenshot.format(), screenshot.width(), screenshot.height(),
+				screenshot.sourceWidth(), screenshot.sourceHeight(),
+				screenshot.capturedAtMs(), out.toByteArray());
+		}
+		catch (Exception exception) {
+			Airicraft.LOGGER.warn("Failed to draw query overlay", exception);
+			return screenshot;
+		}
+	}
+
+	private static double[] projectToScreen(
+		double[] point, Vec3d eye, Vec3d[] basis, double tanHalfFovY, double aspect, double w, double h
+	) {
+		Vec3d d = new Vec3d(point[0], point[1], point[2]).subtract(eye);
+		double cz = d.dotProduct(basis[0]);
+		if (cz < 0.05) {
+			return null;
+		}
+		double nx = d.dotProduct(basis[1]) / cz / (tanHalfFovY * aspect);
+		double ny = d.dotProduct(basis[2]) / cz / tanHalfFovY;
+		return new double[] {(nx + 1.0) / 2.0 * w, (1.0 - ny) / 2.0 * h};
+	}
+
 
 	/**
 	 * Air cells inside the focus volume, aimed back at the focus. Covers
