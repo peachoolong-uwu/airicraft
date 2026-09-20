@@ -76,6 +76,59 @@ public final class DialogueRuntime {
 		this.maxRecentTurns = Math.max(1, maxRecentTurns);
 	}
 
+	public void configurePolicyContinuation(ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner planner,
+		java.util.function.Predicate<JsonObject> blockMatches, ai.moeru.airicraft.agent.llm.PlannerActionToolExecutor execute) {
+		policyContinuation = planner;
+		continuationBlockMatches = blockMatches;
+		continuationExecutor = execute;
+	}
+
+	private ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner policyContinuation;
+	private java.util.function.Predicate<JsonObject> continuationBlockMatches;
+	private ai.moeru.airicraft.agent.llm.PlannerActionToolExecutor continuationExecutor;
+	private ai.moeru.airicraft.agent.work.WorkSnapshot continuationParent;
+	private CompletableFuture<String> continuationAdmission;
+	private ai.moeru.airicraft.agent.llm.PlannerToolCall admittedContinuation;
+
+	private boolean pollPolicyContinuation(long tick, SemanticEventBuffer events) {
+		if (policyContinuation == null || decisionContextSource == null) return false;
+		boolean handled = false;
+		if (continuationAdmission != null) {
+			if (!continuationAdmission.isDone()) return true;
+			String receipt;
+			try { receipt = continuationAdmission.join(); }
+			catch (RuntimeException error) { receipt = "TOOL_ERROR: continuation admission failed"; }
+			boolean accepted = !receipt.startsWith("TOOL_ERROR:") && !receipt.startsWith("TOOL_UNAVAILABLE:");
+			events.append(tick, "policy.continuation." + (accepted ? "accepted" : "rejected"),
+				Map.of("source", admittedContinuation.arguments().get("source").getAsString(),
+					"input", admittedContinuation.arguments().get("input"), "receipt", receipt));
+			continuationAdmission = null;
+			admittedContinuation = null;
+			handled = true;
+		}
+		boolean available = !externalDriverActive && plannerEnabled() && llmAvailable() && !isDegraded()
+			&& !reflexActive && safetyHoldId == null && (delegation == null || !delegation.active())
+			&& !plannerOrchestrator.hasInFlight() && (plannerGoal == null || plannerGoal.active());
+		if (!available) policyContinuation.discard("planner_unavailable");
+		else if (continuationParent != null) {
+			var context = decisionContextSource.get();
+			if (!continuationParent.state().terminal()) policyContinuation.start(continuationParent, context,
+				plannerOrchestrator.delegationContext(), userGuidanceRevision, safetyEpoch);
+			var candidate = policyContinuation.poll(context, continuationParent, userGuidanceRevision, safetyEpoch, continuationBlockMatches);
+			if (candidate != null) {
+				// Resolve and admit on the same client thread as the fresh guard checks.
+				// The regular action executor still enforces policy, task and safety ownership.
+				continuationParent = null;
+				pendingTaskWakeups.clear();
+				admittedContinuation = candidate;
+				continuationAdmission = continuationExecutor.execute(candidate);
+				handled = true;
+			}
+		}
+		for (var event : policyContinuation.drainEvents()) events.append(tick, "policy.continuation." + event.get("state"), event);
+		return handled;
+	}
+
 	public void configureDelegation(PlannerOrchestrator thinker, ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation handoff) {
 		thinkingOrchestrator = Objects.requireNonNull(thinker);
 		delegation = Objects.requireNonNull(handoff);
@@ -122,9 +175,12 @@ public final class DialogueRuntime {
 
 	public void waitForWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
 		waitingForWork = work.state().terminal() ? null : work;
+		if (work.label().equals("run_policy") && work.parentWorkId().isBlank()) continuationParent = work;
 	}
 
 	public void observeWork(List<ai.moeru.airicraft.agent.work.WorkSnapshot> work) {
+		if (continuationParent != null) continuationParent = work.stream()
+			.filter(current -> current.handle().equals(continuationParent.handle())).findFirst().orElse(null);
 		if (waitingForWork == null) return;
 		for (var current : work) {
 			if (current.handle().equals(waitingForWork.handle())
@@ -147,6 +203,10 @@ public final class DialogueRuntime {
 	}
 
 	private void resetPlanners(String reason) {
+		if (policyContinuation != null) policyContinuation.discard(reason);
+		continuationParent = null;
+		continuationAdmission = null;
+		admittedContinuation = null;
 		lastSupervisedHold = null;
 		waitingForWork = null;
 		if (delegation != null) delegation.reset(reason);
@@ -528,6 +588,8 @@ public final class DialogueRuntime {
 			}
 		}
 
+		if (pollPolicyContinuation(tick, eventBuffer)) return null;
+
 		if (queuedTimeoutInjections > 0 && !activePlanner().hasInFlight()) {
 			queuedTimeoutInjections--;
 			applyTransition(DialogueCore.onPlannerFailure(state, LlmFailureType.TIMEOUT, "Injected LLM timeout", pendingTimeoutVisibleReply, tick), tick, eventBuffer);
@@ -635,6 +697,7 @@ public final class DialogueRuntime {
 	}
 
 	public void shutdown() {
+		if (policyContinuation != null) policyContinuation.close();
 		state = DialogueCore.initialState();
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
@@ -700,6 +763,7 @@ public final class DialogueRuntime {
 		TaskSnapshot activeTask, MissionExecutionSnapshot missionExecution
 	) {
 		if (externalDriverActive || pendingTaskWakeups.isEmpty() || activePlanner().hasInFlight()) return false;
+		if (waitingForWork != null && waitingForWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive) return false;
 		if ((state.degraded() && activePlanner().isEnabled()) || !activePlanner().isConfigured()) {
 			pendingTaskWakeups.clear();
 			return false;
@@ -740,6 +804,8 @@ public final class DialogueRuntime {
 	}
 
 	private void supersedePendingInternalTaskUpdates(String reason, long tick, SemanticEventBuffer eventBuffer) {
+		if (policyContinuation != null) policyContinuation.discard(reason);
+		continuationParent = null;
 		waitingForWork = null;
 		userGuidanceRevision++;
 		while (!pendingTaskWakeups.isEmpty()) {

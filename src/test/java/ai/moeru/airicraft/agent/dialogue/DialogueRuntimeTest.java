@@ -83,6 +83,62 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DialogueRuntimeTest {
 	@Test
+	void continuationRunsDuringPolicyAndDispatchesOnceWithoutNormalPlannerCall() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(64);
+		var response = new CompletableFuture<PlannerResponse>();
+		var requests = new java.util.ArrayList<LlmConversation>();
+		var executed = new java.util.ArrayList<PlannerToolCall>();
+		runtime.configurePolicyContinuation(new ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner(c -> {
+			requests.add(c); return response;
+		}, () -> {}), b -> true, call -> {
+			executed.add(call); return CompletableFuture.completedFuture("Tool result for run_policy: accepted");
+		});
+		runtime.configureDecisionContext(() -> new ai.moeru.airicraft.agent.llm.PlannerDecisionContext(
+			"world", 10, 10, "controller", executed.isEmpty() ? "idle" : "policy",
+			java.util.Map.of("objective", "craft", "inventory", java.util.Map.of(), "vitals", java.util.Map.of("health", 20)), events.query(null)));
+		var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "parent");
+		var parent = new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "",
+			ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
+		runtime.waitForWork(parent);
+		runtime.poll(10, events);
+		assertEquals(1, requests.size());
+		response.complete(new PlannerResponse("", new PlannerToolCall("next", "run_policy", com.google.gson.JsonParser.parseString("""
+			{"source":"function* main(p) { return {crafted:true}; }", "input":{},
+			 "guard":{"parentResult":{"gathered":true},"inventoryMin":{},"blocks":[]}}
+			""").getAsJsonObject(), null, null), null));
+		runtime.poll(11, events);
+		assertTrue(executed.isEmpty());
+		assertFalse(runtime.plannerConversationDebugSnapshot().messages().stream().anyMatch(m -> m.text().contains("crafted:true")));
+		runtime.observeWork(List.of(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "",
+			ai.moeru.airicraft.agent.work.WorkSnapshot.State.SUCCEEDED, "run_policy", "FINISHED", false, 12,
+			java.util.Map.of("result", java.util.Map.of("gathered", true)))));
+		runtime.queueTaskWakeup(null, 12, events.append(12, "work.changed", java.util.Map.of("workId", "parent")).seqNo());
+		runtime.poll(12, events);
+		runtime.poll(13, events);
+		assertEquals(1, executed.size());
+		assertEquals(0, backend.conversationCount());
+		assertTrue(events.containsType("policy.continuation.accepted"));
+		runtime.shutdown();
+	}
+
+	@Test
+	void childCompletionDoesNotWakeNormalPlannerWhilePolicyOwnsWork() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var policy = new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
+		runtime.waitForWork(policy);
+		runtime.queueTaskWakeup(null, 11, events.append(11, "work.changed", java.util.Map.of("workId", "child")).seqNo());
+		runtime.poll(12, events);
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		runtime.shutdown();
+	}
+
+	@Test
 	void plainReplyDoesNotContinueUnfinishedWorkWithoutAnotherTrigger() {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend);
