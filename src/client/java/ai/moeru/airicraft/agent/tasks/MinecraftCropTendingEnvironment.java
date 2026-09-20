@@ -100,8 +100,9 @@ final class MinecraftCropTendingEnvironment implements CropTendingTaskExecutor.E
 			|| !client.player.currentScreenHandler.getCursorStack().isEmpty()) return false;
 		BlockPos pos = block(crop);
 		camera.lookAt(client, cropAim(pos));
-		if (!camera.isLookingAt(client, cropAim(pos))) return false;
-		client.interactionManager.attackBlock(pos, Direction.UP);
+		var cursorHit = camera.blockHit(client, pos);
+		if (cursorHit.isEmpty()) return false;
+		client.interactionManager.attackBlock(pos, cursorHit.get().getSide());
 		client.player.swingHand(Hand.MAIN_HAND);
 		return state(crop, args) == Cell.EMPTY_FARMLAND;
 	}

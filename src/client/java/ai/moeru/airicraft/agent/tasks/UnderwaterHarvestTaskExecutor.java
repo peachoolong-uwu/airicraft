@@ -234,10 +234,11 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 		movement.stop(client);
-		camera.lookAt(client, targetCenter);
-		if (!camera.isLookingAt(client, targetCenter)) return Optional.empty();
+		camera.lookAtBlock(client, target.pos());
+		var cursorHit = camera.blockHit(client, target.pos());
+		if (cursorHit.isEmpty()) return Optional.empty();
 		if (breakingTarget == null) {
-			if (!client.interactionManager.attackBlock(target.pos(), Direction.UP)) {
+			if (!client.interactionManager.attackBlock(target.pos(), cursorHit.get().getSide())) {
 				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "break_start_failed targetPos=" + compactPos(target.pos())));
 			}
 			breakingTarget = target.pos();
@@ -247,7 +248,7 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 		if (tick - breakStartedTick > BREAK_TIMEOUT_TICKS) {
 			return fail(request, TaskFailure.of(TaskFailureCode.TRANSIENT, "break_timeout targetPos=" + compactPos(target.pos())));
 		}
-		client.interactionManager.updateBlockBreakingProgress(target.pos(), Direction.UP);
+		client.interactionManager.updateBlockBreakingProgress(target.pos(), cursorHit.get().getSide());
 		player.swingHand(Hand.MAIN_HAND);
 		if (!spec.blockIds().contains(blockId(client.world.getBlockState(target.pos())))) {
 			harvestedBlocks++;

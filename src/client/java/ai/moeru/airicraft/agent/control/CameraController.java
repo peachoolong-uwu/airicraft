@@ -3,6 +3,11 @@ package ai.moeru.airicraft.agent.control;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.world.RaycastContext;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Objects;
@@ -27,7 +32,7 @@ public final class CameraController {
 	public void updateDefaultLerpTicks(int ticks) { defaultLerpTicks = Math.max(0, ticks); }
 	public int defaultLerpTicks() { return defaultLerpTicks; }
 
-	/** Submit an aim target; callers requiring a hit must wait for isLookingAt. */
+	/** Submit an aim target. Exact interactions use isLookingAt; mining uses blockHit. */
 	public Optional<Rotation> lookAt(MinecraftClient client, Vec3d target) {
 		return startLookAt(client, target, defaultLerpTicks, "action");
 	}
@@ -89,6 +94,36 @@ public final class CameraController {
 			eye.add(client.player.getRotationVec(1.0F).multiply(6.0D))).isPresent();
 	}
 
+	/** Aim inside the selection shape, including thin blocks such as leaf litter and crops. */
+	public Optional<Rotation> lookAtBlock(MinecraftClient client, BlockPos pos) {
+		if (client == null || client.player == null || client.world == null) return Optional.empty();
+		return blockAim(pos, client.world.getBlockState(pos).getOutlineShape(client.world, pos), client.player.getEyePos())
+			.flatMap(aim -> lookAt(client, aim));
+	}
+
+	static Optional<Vec3d> blockAim(BlockPos pos, VoxelShape shape, Vec3d eye) {
+		return shape.getBoundingBoxes().stream()
+			.map(box -> box.getCenter().add(pos.getX(), pos.getY(), pos.getZ()))
+			.min(java.util.Comparator.comparingDouble(eye::squaredDistanceTo));
+	}
+
+	/** Fresh player-direction raycast: render-frame crosshairTarget can lag camera ticks. */
+	public Optional<BlockHitResult> blockHit(MinecraftClient client, BlockPos target) {
+		if (client == null || client.player == null || client.world == null) return Optional.empty();
+		return blockHit(raycast(client.player, client.player.getRotationVec(1.0F)), target);
+	}
+
+	static Optional<BlockHitResult> blockHit(HitResult hit, BlockPos target) {
+		return hit instanceof BlockHitResult block && hit.getType() == HitResult.Type.BLOCK && block.getBlockPos().equals(target)
+			? Optional.of(block) : Optional.empty();
+	}
+
+	private static BlockHitResult raycast(ClientPlayerEntity player, Vec3d direction) {
+		Vec3d eye = player.getEyePos();
+		return player.getWorld().raycast(new RaycastContext(eye, eye.add(direction.multiply(player.getBlockInteractionRange())),
+			RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, player));
+	}
+
 	public boolean capturePending() { return alignment != null; }
 
 	/** Hold path input while turning on the ground; preserve airborne/swimming control. */
@@ -96,7 +131,12 @@ public final class CameraController {
 		if (activeMotion == null || input == baritone.api.utils.input.Input.SNEAK) return true;
 		if (!"baritone".equals(activeMotion.reason())) return false;
 		return switch (input) {
-			case CLICK_LEFT, CLICK_RIGHT -> aligned(new Rotation(player.getYaw(), player.getPitch()), activeMotion.target(), 0.5F);
+			case CLICK_LEFT -> {
+				var intended = raycast(player, Vec3d.fromPolar(activeMotion.target().pitch(), activeMotion.target().yaw()));
+				yield intended.getType() == HitResult.Type.BLOCK
+					&& blockHit(raycast(player, player.getRotationVec(1.0F)), intended.getBlockPos()).isPresent();
+			}
+			case CLICK_RIGHT -> aligned(new Rotation(player.getYaw(), player.getPitch()), activeMotion.target(), 0.5F);
 			case MOVE_FORWARD, MOVE_BACK, MOVE_LEFT, MOVE_RIGHT, JUMP, SPRINT ->
 				!player.isOnGround() || player.isTouchingWater()
 					|| Math.abs(MathHelper.wrapDegrees(activeMotion.target().yaw() - player.getYaw())) < 10.0F;
