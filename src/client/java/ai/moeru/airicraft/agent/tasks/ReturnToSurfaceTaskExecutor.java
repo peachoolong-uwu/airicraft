@@ -599,9 +599,50 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 	}
 
 	private static boolean isSurfaceReached(MinecraftClient client, ClientPlayerEntity player) {
-		return player != null
-			&& player.isOnGround()
-			&& SurfaceMemory.isSurfaceStandingPosition(client, player.getBlockPos());
+		if (player == null || !player.isOnGround()) {
+			return false;
+		}
+		BlockPos feetPos = player.getBlockPos();
+		// On a tower pillar, escape directions may be limited; sky visibility + safe standing is enough
+		// only when the player is not enclosed in a 1x1 shaft.
+		if (SurfaceMemory.isSkyVisible(client, feetPos) && isSafeStandingPosition(client, feetPos)
+			&& !isEnclosedShaft(client, feetPos)) {
+			return true;
+		}
+		return SurfaceMemory.isSurfaceStandingPosition(client, feetPos);
+	}
+
+	private static boolean isSafeStandingPosition(MinecraftClient client, BlockPos feetPos) {
+		if (client == null || client.world == null || feetPos == null) {
+			return false;
+		}
+		if (!client.world.isChunkLoaded(feetPos) || !client.world.isChunkLoaded(feetPos.down())) {
+			return false;
+		}
+		BlockState feet = client.world.getBlockState(feetPos);
+		BlockState head = client.world.getBlockState(feetPos.up());
+		BlockState support = client.world.getBlockState(feetPos.down());
+		return (feet.isAir() || feet.isReplaceable())
+			&& (head.isAir() || head.isReplaceable())
+			&& support.isSideSolidFullSquare(client.world, feetPos.down(), Direction.UP);
+	}
+
+	private static boolean isEnclosedShaft(MinecraftClient client, BlockPos feetPos) {
+		if (client == null || client.world == null || feetPos == null) {
+			return false;
+		}
+		int openDirections = 0;
+		for (Direction direction : Direction.Type.HORIZONTAL) {
+			BlockPos adjacent = feetPos.offset(direction);
+			if (!client.world.isChunkLoaded(adjacent)) {
+				continue;
+			}
+			BlockState state = client.world.getBlockState(adjacent);
+			if (state.isAir() || state.isReplaceable()) {
+				openDirections++;
+			}
+		}
+		return openDirections < 2;
 	}
 
 	static SurfaceTargetOutcome surfaceTargetOutcome(
