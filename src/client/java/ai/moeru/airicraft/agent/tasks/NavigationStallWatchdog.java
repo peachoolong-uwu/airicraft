@@ -7,25 +7,26 @@ final class NavigationStallWatchdog {
 	private long anchorTick = -1;
 	private double anchorX, anchorY, anchorZ;
 	private double supportedY = Double.NaN;
-	private String breakingTarget;
-	private float bestBreakingProgress;
+	private final java.util.Map<String, Float> breakingProgressByTarget = new java.util.HashMap<>();
 
 	boolean observe(long tick, ai.moeru.airicraft.agent.baritone.BaritoneFacade.NavigationProgress sample) {
 		if (Double.isNaN(supportedY) || sample.supported()) supportedY = sample.y();
-		if (!java.util.Objects.equals(breakingTarget, sample.breakingTarget())) {
-			breakingTarget = sample.breakingTarget();
-			bestBreakingProgress = 0;
-		}
-		if (breakingTarget != null && sample.breakingProgress() > bestBreakingProgress) {
-			bestBreakingProgress = sample.breakingProgress();
+		boolean stalled = observe(tick, sample.x(), supportedY, sample.z());
+		// Brief interruptions and target switching must not count the same partial
+		// break twice. Keep high-water marks until the player actually moves.
+		if (sample.breakingTarget() != null
+			&& sample.breakingProgress() > breakingProgressByTarget.getOrDefault(sample.breakingTarget(), 0f)) {
+			breakingProgressByTarget.put(sample.breakingTarget(), sample.breakingProgress());
 			anchorTick = tick;
+			return false;
 		}
-		return observe(tick, sample.x(), supportedY, sample.z());
+		return stalled;
 	}
 
 	boolean observe(long tick, double x, double y, double z) {
 		double dx = x - anchorX, dy = y - anchorY, dz = z - anchorZ;
 		if (anchorTick < 0 || tick < anchorTick || dx * dx + dy * dy + dz * dz >= MIN_MOVEMENT_SQUARED) {
+			breakingProgressByTarget.clear();
 			anchorTick = tick;
 			anchorX = x;
 			anchorY = y;
@@ -34,5 +35,5 @@ final class NavigationStallWatchdog {
 		return tick - anchorTick >= STALL_TICKS;
 	}
 
-	void clear() { anchorTick = -1; supportedY = Double.NaN; breakingTarget = null; bestBreakingProgress = 0; }
+	void clear() { anchorTick = -1; supportedY = Double.NaN; breakingProgressByTarget.clear(); }
 }

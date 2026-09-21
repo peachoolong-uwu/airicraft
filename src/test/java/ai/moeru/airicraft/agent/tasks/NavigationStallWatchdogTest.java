@@ -5,6 +5,24 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NavigationStallWatchdogTest {
+	@Test void interruptedBreakingOfSameBlockStillTimesOut() {
+		var watchdog = new NavigationStallWatchdog();
+		for (int tick = 0; tick < 100; tick++) {
+			assertFalse(watchdog.observe(tick, new NavigationProgress(0, 64, 0, true,
+				tick % 2 == 0 ? "stone" : null, tick % 2 == 0 ? 0.1f : 0)));
+		}
+		assertTrue(watchdog.observe(100, new NavigationProgress(0, 64, 0, true, "stone", 0.1f)));
+	}
+
+	@Test void alternatingUnfinishedBlocksStillTimesOut() {
+		var watchdog = new NavigationStallWatchdog();
+		for (int tick = 0; tick < 101; tick++) {
+			assertFalse(watchdog.observe(tick, new NavigationProgress(0, 64, 0, true,
+				tick % 2 == 0 ? "left" : "right", 0.1f)));
+		}
+		assertTrue(watchdog.observe(101, new NavigationProgress(0, 64, 0, true, "right", 0.1f)));
+	}
+
 	@Test void jumpsReturningToSameFloorDoNotResetStallBudget() {
 		var watchdog = new NavigationStallWatchdog();
 		for (int tick=0; tick<100; tick++)
