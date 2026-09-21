@@ -179,6 +179,7 @@ public final class FlightRecordingObservability implements AgentObservability {
 		return switch (spanName) {
 			case PLANNER_REQUEST_SPAN_NAME -> "planner";
 			case PLANNER_COMPACTION_SPAN_NAME -> "compaction";
+			case "planner.micro_compaction" -> "micro_compaction";
 			case FOLLOW_UP_SPAN_NAME -> "follow_up";
 			case VISION_DESCRIBE_SPAN_NAME -> "vision";
 			default -> "";

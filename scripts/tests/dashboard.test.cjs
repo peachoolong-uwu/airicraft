@@ -1,0 +1,86 @@
+// Run with node --test; requires playwright on NODE_PATH and its Chromium browser.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const { chromium } = require('playwright');
+const root = 'src/main/resources/assets/airicraft/dashboard/';
+async function dashboard(t) {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(fs.readFileSync(root + 'index.html', 'utf8').replace(/<script[^>]*>.*?<\/script>/s, ''));
+  const source = fs.readFileSync(root + 'app.js', 'utf8');
+  await page.addScriptTag({ content: source.slice(0, source.lastIndexOf('loadInitial().catch')) });
+  return page;
+}
+test('visual frames stay recorded without flooding causal timeline', async t => {
+  const page = await dashboard(t);
+  const result = await page.evaluate(() => {
+    state.view = 'timeline';
+    addObservations([{sequence:1,type:'semantic_event',capturedAtMs:1000,payload:{summary:'task finished'}},
+      {sequence:2,type:'visual_frame',capturedAtMs:1001,payload:{}}]);
+    return {text:el('content').textContent, retained:state.bySequence.has(2)};
+  });
+  assert.match(result.text, /task finished/);
+  assert.doesNotMatch(result.text, /visual frame/);
+  assert.equal(result.retained, true);
+});
+test('live batches preserve an open request envelope and its DOM node', async t => {
+  const page = await dashboard(t);
+  assert.equal(await page.evaluate(() => {
+    state.view = 'transcript';
+    addObservations([{sequence:1,type:'llm_call',capturedAtMs:1000,payload:{sequenceId:1,status:'COMPLETED',requestBody:'{"messages":[]}'}}]);
+    const detail = document.querySelector('details'); detail.open = true;
+    addObservations([{sequence:2,type:'visual_frame',capturedAtMs:1001,payload:{}}]);
+    return detail === document.querySelector('details') && detail.open;
+  }), true);
+});
+test('compaction viewer separates micro and full calls, showing inputs and outputs', async t => {
+  const page = await dashboard(t);
+  const result = await page.evaluate(() => {
+    state.view = 'compactions';
+    addObservations(['micro_compaction','compaction','planner'].map((kind,i) => ({sequence:i+1,type:'llm_call',capturedAtMs:1000,payload:{sequenceId:i+1,requestKind:kind,status:'COMPLETED',requestBody:JSON.stringify({messages:[{role:'user',content:kind+' input'}]}),rawResponseBody:kind+' output'}})));
+    return el('content').textContent;
+  });
+  assert.match(result, /Microcompaction/); assert.match(result, /Full compaction/);
+  assert.match(result, /micro_compaction input/); assert.match(result, /compaction output/);
+  assert.doesNotMatch(result, /planner input/);
+});
+test('overview retains the displayed image while the next frame loads', async t => {
+  const page = await dashboard(t);
+  assert.equal(await page.evaluate(() => {
+    loadRecordedFrame = async () => {};
+    addObservations([{sequence:1,type:'runtime_snapshot',capturedAtMs:1000,payload:{}}, {sequence:2,type:'visual_frame',capturedAtMs:1000,payload:{}}]);
+    const image = document.querySelector('.visual-frame'); image.src = 'data:image/png;base64,old';
+    addObservations([{sequence:3,type:'visual_frame',capturedAtMs:1001,payload:{}}]);
+    return image === document.querySelector('.visual-frame') && image.getAttribute('src') === 'data:image/png;base64,old';
+  }), true);
+});
+test('late frame responses cannot replace or revoke the newest frame', async t => {
+  const page = await dashboard(t);
+  assert.equal(await page.evaluate(async () => {
+    const pending = [];
+    api = () => new Promise(resolve => pending.push(resolve));
+    el('content').innerHTML = '<img data-recorded-frame="2">';
+    const older = loadRecordedFrame({sessionId:'s',sequence:1});
+    const newer = loadRecordedFrame({sessionId:'s',sequence:2});
+    const response = {blob:async () => new Blob(['image'])};
+    pending[1](response); await newer;
+    const displayed = document.querySelector('img').src;
+    pending[0](response); await older;
+    return state.frameCache.key === 's:2' && state.frameCache.url === displayed;
+  }), true);
+});
+test('new calls and lifecycle updates keep the inspected call expanded', async t => {
+  const page = await dashboard(t);
+  assert.equal(await page.evaluate(() => {
+    state.view = 'transcript';
+    const call = (sequence, id, status) => ({sequence,type:'llm_call',capturedAtMs:1000,payload:{sequenceId:id,status,requestBody:'{"messages":[]}'}});
+    addObservations([call(1,1,'REQUESTED')]);
+    const article = document.querySelector('article');
+    const detail = article.querySelector('details'); detail.open = true;
+    addObservations([call(2,1,'COMPLETED'), call(3,2,'REQUESTED')]);
+    article.querySelector('.selectable').click();
+    return article.isConnected && detail.open && article.textContent.includes('COMPLETED') && state.selectedObservation.sequence === 2;
+  }), true);
+});
