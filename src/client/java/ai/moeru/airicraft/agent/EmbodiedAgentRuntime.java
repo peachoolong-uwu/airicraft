@@ -544,6 +544,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			drainEventPipeline();
 		}
 		debugRecorder.recordDialogueState(dialogueRuntime.snapshot());
+		behaviorTreeRuntime.tickChat(client, sessionSnapshot, dialogueRuntime, chatService, debugRecorder, tickCount);
 		if (survivalReflexRuntime.snapshot().holdsNormalTasks()) {
 			tickActionGraph(worldEvidence, false);
 			pauseNormalWorkForReflex(client);
