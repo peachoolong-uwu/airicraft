@@ -13,8 +13,10 @@ public final class PlannerInputText {
 	/** The canonical history stays intact for cursors, replay and recorder dispatch metadata. */
 	public static String message(String role, String content) {
 		// Round only planner-facing evidence; canonical state and protocol identities stay exact.
+		// Quote alternatives are disjoint: possessive repetition avoids recursive backtracking
+		// (and stack overflow) on long quoted inspection evidence.
 		var numbers = java.util.regex.Pattern.compile(
-		"\"(?:\\\\.|[^\"\\\\])*\"|(?<![\\p{L}\\p{N}_./@+-])[-+]?(?:[0-9]+\\.[0-9]+|\\.[0-9]+|[0-9]+[eE][+-]?[0-9]+)(?:[eE][+-]?[0-9]+)?(?![\\p{L}\\p{N}_./@])").matcher(content);
+		"\"(?:\\\\.|[^\"\\\\])*+\"|(?<![\\p{L}\\p{N}_./@+-])[-+]?(?:[0-9]+\\.[0-9]+|\\.[0-9]+|[0-9]+[eE][+-]?[0-9]+)(?:[eE][+-]?[0-9]+)?(?![\\p{L}\\p{N}_./@])").matcher(content);
 		var rounded = new StringBuilder();
 		while (numbers.find()) {
 			String value = numbers.group();

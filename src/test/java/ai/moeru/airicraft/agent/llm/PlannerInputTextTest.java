@@ -7,6 +7,16 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PlannerInputTextTest {
+	@Test void longQuotedInspectionEvidenceDoesNotOverflowOrRoundQuotedNumbers() {
+		String quoted = new Gson().toJson("block x=12.345; quote=\"; slash=\\; ".repeat(10000));
+		String input = "before=1.234 evidence=" + quoted + " after=-2.345";
+		String expected = "before=1.2 evidence=" + quoted + " after=-2.3";
+		assertEquals(expected, PlannerInputText.message("user", input));
+		var wire = new PlannerReferences().presentMessages(java.util.List.of(
+			Map.<String, Object>of("role", "user", "content", input)));
+		assertEquals(expected, wire.get(0).getAsJsonObject().get("content").getAsString());
+	}
+
 	@Test void realRecordedFollowupsAreShorterWithoutDroppingTemporalIdentityOrFailures() throws Exception {
 		var input = getClass().getResourceAsStream("/planner/semantic-followups.json");
 		var samples = JsonParser.parseString(new String(input.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonArray();
