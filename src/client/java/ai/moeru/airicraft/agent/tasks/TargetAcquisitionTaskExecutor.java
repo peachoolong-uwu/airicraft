@@ -115,6 +115,10 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 			// A collected/despawned item cannot produce another drop to settle.
 			enter(target.kind() == Kind.DROP ? Phase.SELECT : Phase.SETTLE);
 		}
+		else if (target != null && target.kind() == Kind.DROP && !environment.canCollectDrop(target)) {
+			return finish(false, "inventory_full cannot_pick_up target=" + target.id()
+				+ " itemCount=" + count + "; free storage space before retrying", TaskFailureCode.BUSY);
+		}
 		else if (phase == Phase.APPROACH) {
 			boolean reached = environment.canInteract(target);
 			if (reached) {
@@ -231,6 +235,7 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 		List<Candidate> candidates(GoalMineSpec spec, AcquisitionConstraints constraints, Set<String> rejected, Set<GoalPosition> observedSources);
 		boolean targetPresent(Candidate target);
 		boolean dropsAvailable(GoalMineSpec spec, AcquisitionConstraints constraints);
+		boolean canCollectDrop(Candidate target);
 		boolean canInteract(Candidate target);
 		BreakResult breakTarget(Candidate target, GoalMineSpec spec);
 		void cancelBreaking();
