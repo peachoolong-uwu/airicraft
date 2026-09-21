@@ -252,6 +252,72 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void loneSlowCallRequestsPlanningAheadOnlyOnce() throws Exception {
+		var backend = new RecordingBackend();
+		var started = new java.util.concurrent.atomic.AtomicBoolean();
+		var future = new CompletableFuture<String>();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "slow_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { started.set(true); return future; }
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("Plan retained")));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(new PlannerToolCall("slow", "mine_blocks", new JsonObject(), null, null)), null));
+			long deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertTrue(started.get());
+			assertEquals(1, backend.callCount(), "Give quick calls time to finish");
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertFalse(future.isDone(), "Plan ahead while execution continues");
+			assertTrue(conversationText(backend.conversation(1)).contains("Assuming the running task succeeds"));
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("skip", "continue", new JsonObject(), null, null)), null));
+			deadline = System.nanoTime() + Duration.ofMillis(1200).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(2, backend.callCount(), "Do not repeatedly request planning for the same running call");
+			future.complete("finished mining");
+			awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(2));
+			assertTrue(conversationText(backend.conversation(2)).contains("finished mining"));
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void quickLoneCallOnlyRequestsItsResultReview() throws Exception {
+		var backend = new RecordingBackend();
+		var started = new java.util.concurrent.atomic.AtomicBoolean();
+		var future = new CompletableFuture<String>();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "slow_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { started.set(true); return future; }
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("Plan retained")));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(new PlannerToolCall("slow", "mine_blocks", new JsonObject(), null, null)), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (!started.get() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertTrue(started.get());
+			future.complete("quick result");
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertTrue(conversationText(backend.conversation(1)).contains("quick result"));
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("skip", "continue", new JsonObject(), null, null)), null));
+			deadline = System.nanoTime() + Duration.ofMillis(1200).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(2, backend.callCount(), "Quick completion must not produce a separate refill turn");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
 	void clearQueueAbortsActiveCallAndWaitsForAbortBeforeReplacement() throws Exception {
 		var backend = new RecordingBackend();
 		var executed = new ArrayList<String>();

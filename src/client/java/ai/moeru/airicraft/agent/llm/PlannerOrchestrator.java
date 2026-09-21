@@ -827,6 +827,9 @@ public final class PlannerOrchestrator {
 		long observationTick;
 		long firstResultMs;
 		long lastResultMs;
+		PlannerToolCall loneCall;
+		PlannerToolCall reviewedLoneCall;
+		long loneSinceMs;
 	}
 	private final QueueState toolQueue = new QueueState();
 	private boolean queueReflexActive;
@@ -914,15 +917,25 @@ public final class PlannerOrchestrator {
 			if (!outcome.toolResultText().startsWith("TOOL_ERROR:") && !outcome.toolResultText().startsWith("TOOL_UNAVAILABLE:"))
 				toolRegistry.afterResultCommitted(completion.call().name());
 		}
-		// A quiet interval gathers quick chains; a hard bound prevents slow calls starving reports.
-		if (toolQueue.reports.isEmpty() || toolQueue.seed == null || sessionCoordinator.hasInFlight()
-			|| pendingToolExecution != null || awaitingAcceptedReplyRecord || compactionService.hasInFlight()) return;
 		long now = clock.millis();
-		boolean nextReadRunning = toolQueue.tools.active() != null && toolRegistry.isReadTool(toolQueue.tools.active().name());
-		if ((now - toolQueue.lastResultMs < 250 || nextReadRunning) && now - toolQueue.firstResultMs < 1000) return;
+		var active = toolQueue.tools.active();
+		var lone = toolQueue.tools.pending().isEmpty() ? active : null;
+		if (lone != toolQueue.loneCall) {
+			toolQueue.loneCall = lone;
+			toolQueue.loneSinceMs = now;
+		}
+		boolean refill = lone != null && lone != toolQueue.reviewedLoneCall
+			&& !toolRegistry.endsTurn(lone.name()) && now - toolQueue.loneSinceMs >= 1000;
+		if ((!refill && toolQueue.reports.isEmpty()) || toolQueue.seed == null || sessionCoordinator.hasInFlight()
+			|| pendingToolExecution != null || awaitingAcceptedReplyRecord || compactionService.hasInFlight()
+			|| coalescePending) return;
+		// Coalesce fast results even when a refill is due, but do not starve reports behind slow reads.
+		boolean nextReadRunning = active != null && toolRegistry.isReadTool(active.name());
+		if (!toolQueue.reports.isEmpty()
+			&& (now - toolQueue.lastResultMs < 250 || nextReadRunning) && now - toolQueue.firstResultMs < 1000) return;
 		PlannerRequest seed = toolQueue.seed;
 		submit(PlannerRequest.ofTrigger(toolQueue.observationTick, now, seed.sessionMode(), seed.primaryInteractionPlayer(), seed.activeGoal(),
-			PlannerTriggerType.SYSTEM, "tool_queue", "Queued tools produced results. Review the results and current TOOL QUEUE; execution continues independently.", null)
+			PlannerTriggerType.SYSTEM, "tool_queue", "Review any completed results and the current TOOL QUEUE. Assuming the running task succeeds, what should you do next? Queue as much reasonable follow-up work as current evidence supports; execution continues independently. Running work is not yet confirmed successful, and unknown results must not be invented.", null)
 			.withSafetyContext(minimumSafetyEpoch, currentSafetyHoldId));
 	}
 
@@ -984,6 +997,7 @@ public final class PlannerOrchestrator {
 		state.put("workId", toolQueue.tools.activeWorkId());
 		state.put("pending", toolQueue.tools.pending().stream().map(PlannerOrchestrator::queuedCallView).toList());
 		state.put("aborting", toolQueue.abort != null);
+		if (toolQueue.tools.pending().isEmpty()) toolQueue.reviewedLoneCall = toolQueue.tools.active();
 		messages.add(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(state)
 			+ "\nExecution continues while you think. continue retains the plan and resumes resolved safety holds; clear_queue aborts active work and discards pending calls.", LlmMessageKind.NOTICE));
 		return LlmConversation.of(messages);
@@ -1710,6 +1724,8 @@ public final class PlannerOrchestrator {
 
 	private void cancelPendingTool() {
 		toolQueue.tools.clear((call, workId) -> {});
+		toolQueue.loneCall = null;
+		toolQueue.reviewedLoneCall = null;
 		toolQueue.reports.clear(); toolQueue.images.clear();
 		if (toolQueue.abort != null) toolQueue.abort.cancel(true);
 		toolQueue.abort = null;
