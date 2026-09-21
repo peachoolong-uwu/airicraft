@@ -89,6 +89,15 @@ idleInitialDelaySeconds: 30
 # Set to 0 to disable automatic idle thoughts.
 idleCooldownSeconds: 90
 
+# Autonomous idle behavior: gather resources when the agent has nothing to do.
+# Does not require a planner backend.
+autonomousIdle:
+  enabled: true
+  # Seconds of idleness before the first autonomous task.
+  idleDelaySeconds: 10
+  # Minimum seconds between autonomous tasks.
+  taskCooldownSeconds: 5
+
 # Image detail hint passed to compatible multimodal providers: low | high | auto
 visionImageDetail: "low"
 

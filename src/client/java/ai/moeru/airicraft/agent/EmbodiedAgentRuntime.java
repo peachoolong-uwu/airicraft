@@ -81,6 +81,7 @@ import ai.moeru.airicraft.agent.goals.GoalSnapshot;
 import ai.moeru.airicraft.agent.goals.GoalType;
 import ai.moeru.airicraft.agent.idle.IdleIdeaScheduler;
 import ai.moeru.airicraft.agent.idle.IdleIdeasConfig;
+import ai.moeru.airicraft.agent.idle.AutonomousIdleRuntime;
 import ai.moeru.airicraft.agent.job.ActiveJob;
 import ai.moeru.airicraft.agent.job.ActiveJobProposal;
 import ai.moeru.airicraft.agent.job.ActiveJobStatus;
@@ -245,6 +246,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final NearbyPlayerTracker nearbyPlayerTracker;
 	private final PrimaryInteractionResolver primaryInteractionResolver = new PrimaryInteractionResolver(200L);
 	private final IdleIdeaScheduler idleIdeaScheduler;
+	private final AutonomousIdleRuntime autonomousIdleRuntime;
+
 	private final FollowCapability followCapability = new FollowCapability();
 	private final BehaviorTreeRuntime behaviorTreeRuntime;
 	private final ChatService chatService = new ChatService();
@@ -329,6 +332,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		this.behaviorTreeRuntime = new BehaviorTreeRuntime(effectiveCameraController);
 		this.nearbyPlayerTracker = new NearbyPlayerTracker(resolveNearbyPlayerTrackingRadius(airicraftConfig));
 		this.idleIdeaScheduler = new IdleIdeaScheduler(effectiveIdleIdeasConfig(IdleIdeasConfig.defaults()));
+		this.autonomousIdleRuntime = new AutonomousIdleRuntime(config.autonomousIdle());
 		this.plannerActionToolExecutor = new EmbodiedPlannerActionToolExecutor(
 			this::plannerActionToolExecutionState,
 			this::executeCraftRecipePlannerTool,
@@ -580,6 +584,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		Optional<GoalSnapshot> activeGoal = activeGoal();
 		Optional<WorldTaskRequest> activeTaskRequest = activeJobRuntime.activeTaskRequest();
 		maybeFireIdleIdeaTrigger(activeGoal);
+		maybeRunAutonomousIdleTask(client, worldEvidence);
 
 		followState = followCapability.tick(
 			client,
@@ -4346,6 +4351,36 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 
 	static boolean isIdleForIdleIdeaScheduling(ActiveJob activeJob) {
 		return activeJob == null || activeJob.isIdle() || activeJob.status().terminal();
+	}
+
+	private void maybeRunAutonomousIdleTask(MinecraftClient client, WorldEvidence worldEvidence) {
+		if (!config.autonomousIdle().enabled()) {
+			autonomousIdleRuntime.reset();
+			return;
+		}
+		TaskSpec spec = autonomousIdleRuntime.tick(
+			client,
+			sessionSnapshot,
+			activeJobRuntime.current(),
+			survivalReflexRuntime.snapshot(),
+			worldEvidence,
+			tickCount
+		);
+		if (spec == null) {
+			return;
+		}
+		activeJobRuntime.submitTask(
+			spec,
+			currentTaskResourceCount(client, spec),
+			"autonomous_idle",
+			tickCount
+		);
+		taskSnapshot = activeJobRuntime.taskSnapshot();
+		missionExecutionSnapshot = activeJobRuntime.missionExecutionSnapshot();
+		eventBuffer.append(tickCount, "autonomous_idle.task_submitted", Map.of(
+			"resourceKind", spec.resourceKind().name(),
+			"quantity", spec.quantity()
+		));
 	}
 
 	private IdleIdeasConfig effectiveIdleIdeasConfig(IdleIdeasConfig idleIdeasConfig) {

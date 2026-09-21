@@ -148,7 +148,14 @@ public final class AgentConfigLoader {
 			readBoolean(observabilityRoot, "captureOutputs", defaults.observability().captureOutputs(), strict),
 			readBoolean(observabilityRoot, "captureImages", defaults.observability().captureImages(), strict)
 		);
-		return new AgentConfig(defaults.verificationEnabled(), defaults.verificationAutoRunAll(), llm, idle, reflex, observability);
+		warnIfMalformedObject(root, "autonomousIdle", strict);
+		Map<String, Object> autonomousIdleRoot = readObjectMap(root, "autonomousIdle", strict);
+		AgentConfig.AutonomousIdleConfig autonomousIdle = new AgentConfig.AutonomousIdleConfig(
+			readBoolean(autonomousIdleRoot, "enabled", defaults.autonomousIdle().enabled(), strict),
+			readInt(autonomousIdleRoot, "idleDelaySeconds", defaults.autonomousIdle().idleDelaySeconds()),
+			readInt(autonomousIdleRoot, "taskCooldownSeconds", defaults.autonomousIdle().taskCooldownSeconds())
+		);
+		return new AgentConfig(defaults.verificationEnabled(), defaults.verificationAutoRunAll(), llm, idle, reflex, observability, autonomousIdle);
 	}
 
 	private static void ensureFile(Path path) throws IOException {

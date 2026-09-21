@@ -6,14 +6,17 @@ public record AgentConfig(
 	LlmConfig llm,
 	IdleConfig idle,
 	ReflexConfig reflex,
-	ObservabilityConfig observability
+	ObservabilityConfig observability,
+	AutonomousIdleConfig autonomousIdle
 ) {
 	public AgentConfig {
 		llm = llm == null ? LlmConfig.defaults() : llm;
 		idle = idle == null ? IdleConfig.defaults() : idle;
 		reflex = reflex == null ? ReflexConfig.defaults() : reflex;
 		observability = observability == null ? ObservabilityConfig.defaults() : observability;
+		autonomousIdle = autonomousIdle == null ? AutonomousIdleConfig.defaults() : autonomousIdle;
 	}
+
 
 	public AgentConfig(
 		boolean verificationEnabled,
@@ -28,10 +31,10 @@ public record AgentConfig(
 			llm,
 			idle,
 			ReflexConfig.defaults(),
-			observability
+			observability,
+			AutonomousIdleConfig.defaults()
 		);
 	}
-
 	public static AgentConfig defaults() {
 		return new AgentConfig(
 			false,
@@ -39,7 +42,8 @@ public record AgentConfig(
 			LlmConfig.defaults(),
 			IdleConfig.defaults(),
 			ReflexConfig.defaults(),
-			ObservabilityConfig.defaults()
+			ObservabilityConfig.defaults(),
+			AutonomousIdleConfig.defaults()
 		);
 	}
 
@@ -603,6 +607,21 @@ public record AgentConfig(
 				false,
 				false
 			);
+		}
+	}
+
+	public record AutonomousIdleConfig(
+		boolean enabled,
+		int idleDelaySeconds,
+		int taskCooldownSeconds
+	) {
+		public AutonomousIdleConfig {
+			idleDelaySeconds = Math.max(0, idleDelaySeconds);
+			taskCooldownSeconds = Math.max(0, taskCooldownSeconds);
+		}
+
+		public static AutonomousIdleConfig defaults() {
+			return new AutonomousIdleConfig(true, 10, 5);
 		}
 	}
 
