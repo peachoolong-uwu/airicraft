@@ -6,6 +6,22 @@ final class NavigationStallWatchdog {
 	private static final double MIN_MOVEMENT_SQUARED = 0.75 * 0.75;
 	private long anchorTick = -1;
 	private double anchorX, anchorY, anchorZ;
+	private double supportedY = Double.NaN;
+	private String breakingTarget;
+	private float bestBreakingProgress;
+
+	boolean observe(long tick, ai.moeru.airicraft.agent.baritone.BaritoneFacade.NavigationProgress sample) {
+		if (Double.isNaN(supportedY) || sample.supported()) supportedY = sample.y();
+		if (!java.util.Objects.equals(breakingTarget, sample.breakingTarget())) {
+			breakingTarget = sample.breakingTarget();
+			bestBreakingProgress = 0;
+		}
+		if (breakingTarget != null && sample.breakingProgress() > bestBreakingProgress) {
+			bestBreakingProgress = sample.breakingProgress();
+			anchorTick = tick;
+		}
+		return observe(tick, sample.x(), supportedY, sample.z());
+	}
 
 	boolean observe(long tick, double x, double y, double z) {
 		double dx = x - anchorX, dy = y - anchorY, dz = z - anchorZ;
@@ -18,5 +34,5 @@ final class NavigationStallWatchdog {
 		return tick - anchorTick >= STALL_TICKS;
 	}
 
-	void clear() { anchorTick = -1; }
+	void clear() { anchorTick = -1; supportedY = Double.NaN; breakingTarget = null; bestBreakingProgress = 0; }
 }

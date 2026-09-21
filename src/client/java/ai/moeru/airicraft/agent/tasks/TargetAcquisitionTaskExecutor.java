@@ -120,6 +120,9 @@ public final class TargetAcquisitionTaskExecutor implements WorldTaskExecutor {
 				+ " itemCount=" + count + "; free storage space before retrying", TaskFailureCode.BUSY);
 		}
 		else if (phase == Phase.APPROACH) {
+			// The shared navigation watchdog measures break progress. Do not let
+			// this position-only retry timer interrupt ongoing route excavation.
+			if (navigation.navigationProgress().map(progress -> progress.breakingProgress() > 0).orElse(false)) progressTicks = 0;
 			boolean reached = environment.canInteract(target);
 			if (reached) {
 				release();
