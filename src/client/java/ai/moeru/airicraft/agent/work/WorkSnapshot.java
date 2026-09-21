@@ -21,8 +21,8 @@ public record WorkSnapshot(WorkHandle handle, String parentWorkId, State state, 
 	public Map<String, Object> payload() {
 		return Map.of("workId", handle.id(), "parentWorkId", parentWorkId, "state", state, "label", label,
 			"phase", phase, "foreground", foreground, "updatedTick", updatedTick, "details", details,
-			"controls", state.terminal() ? List.of("inspect") : !parentWorkId.isBlank() ? List.of("inspect", "wait") : state == State.PAUSED
-				? List.of("inspect", "cancel", "resume", "wait") : List.of("inspect", "cancel", "wait"));
+			"controls", state.terminal() ? List.of("inspect") : !parentWorkId.isBlank() ? List.of("inspect") : state == State.PAUSED
+				? List.of("inspect", "cancel", "resume") : List.of("inspect", "cancel"));
 	}
 
 	/** Small planner projection; inspect_work retains the complete request and evidence. */

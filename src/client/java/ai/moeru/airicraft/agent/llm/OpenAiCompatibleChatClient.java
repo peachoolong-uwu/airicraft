@@ -262,7 +262,7 @@ public final class OpenAiCompatibleChatClient {
 			// Bound the entire serialized history, including raw replay content. Work on a copy:
 			// the live transcript and tool-call/result pairs must survive compaction failure intact.
 			var bounded = GSON.toJsonTree(messages).getAsJsonArray();
-			int remainingImages = 8;
+			int remainingImages = config.plannerMaxImages();
 			for (int m = bounded.size() - 1; m >= 0; m--) {
 				var content = bounded.get(m).getAsJsonObject().get("content");
 				if (content == null || !content.isJsonArray()) continue;

@@ -399,7 +399,8 @@ public final class CurrentWorldQueryService implements CurrentWorldQueryTool {
 		var text = new StringBuilder("\nPlacement targets are block cells.");
 		if (allAir) text.append(" All listed targets are air.");
 		if (allBelow) text.append(" Each support is directly below its target.");
-		if (allReach) text.append(" All are within interaction range.");
+		if (allReach) text.append(" All are within interaction range by distance only.");
+		text.append(" Standing cells are geometrically standable; routes and support-face visibility are not verified.");
 		if (noRequired) text.append(" No nearby required-block match reported.");
 		for (var site : sites) {
 			text.append("\n- ").append(compactPos(site.targetPos())).append(": ");

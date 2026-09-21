@@ -6,9 +6,86 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CameraControllerTest {
+	@Test void externalCorrectionIsObservedEvenWithoutAnotherTargetRequest() {
+		var camera = new CameraController();
+		camera.startMotion(new CameraController.Rotation(0, 0), new CameraController.Rotation(90, 0), 0, "vision");
+		camera.tickMotion();
+		var waiting = camera.whenAligned();
+		var next = camera.tickMotion(new CameraController.Rotation(100, 0)).orElseThrow();
+		assertTrue(next.yaw() > 90 && next.yaw() < 100);
+		assertFalse(waiting.isCompletedExceptionally());
+	}
+
+	@Test void unchangedViewPreservesMomentumAndWrappedYawDoesNotJumpFullCircle() {
+		var camera = new CameraController();
+		var reference = new CameraController();
+		var start = new CameraController.Rotation(350, 0);
+		var target = new CameraController.Rotation(80, 0);
+		camera.startMotion(start, target, 0, "baritone");
+		reference.startMotion(start, target, 0, "baritone");
+		var actual = camera.tickMotion().orElseThrow();
+		reference.tickMotion();
+		var wrapped = new CameraController.Rotation(actual.yaw() - 360, actual.pitch());
+		camera.startMotion(wrapped, target, 0, "baritone");
+		var next = camera.tickMotion(wrapped).orElseThrow();
+		var expected = reference.tickMotion().orElseThrow();
+		assertEquals(expected.yaw() - 360, next.yaw(), .001);
+		assertTrue(Math.abs(next.yaw() - wrapped.yaw()) < 90);
+	}
+
+	@Test void retargetAfterExternalRotationStartsFromActualView() {
+		var camera = new CameraController();
+		camera.startMotion(new CameraController.Rotation(0, 0), new CameraController.Rotation(90, 30), 0, "baritone");
+		camera.tickMotion();
+		var actual = new CameraController.Rotation(90, -20);
+		var target = new CameraController.Rotation(100, -10);
+		camera.startMotion(actual, target, 0, "baritone");
+		var next = camera.tickMotion().orElseThrow();
+		assertTrue(next.yaw() > 90 && next.yaw() < 100, "Must not jump back to the old spring yaw");
+		assertTrue(next.pitch() > -20 && next.pitch() < -10);
+	}
+
+	@Test void blockHitAllowsOffCenterAimButRejectsMissOrOccluder() {
+		var pos = new net.minecraft.util.math.BlockPos(0, 0, 3);
+		var eye = new Vec3d(0.5, 0.5, 0);
+		var offCenter = net.minecraft.util.shape.VoxelShapes.fullCube().raycast(eye, new Vec3d(0.85, 0.8, 4), pos);
+		assertTrue(CameraController.blockHit(offCenter, pos).isPresent(), "Cursor already intersects target before center alignment");
+		assertTrue(CameraController.blockHit(offCenter, pos.east()).isEmpty(), "Another block is not the intended target");
+		var miss = net.minecraft.util.hit.BlockHitResult.createMissed(new Vec3d(0.5, 0.5, 3.5), net.minecraft.util.math.Direction.NORTH, pos);
+		assertTrue(CameraController.blockHit(miss, pos).isEmpty(), "A MISS can carry the same block coordinates");
+	}
+
+	@Test void thinBlockAimFallsInsideOutlineRatherThanBlockCenter() {
+		var pos = new net.minecraft.util.math.BlockPos(-229, 70, -2);
+		var shape = net.minecraft.util.shape.VoxelShapes.cuboid(0, 0, 0, 0.5, 0.0625, 1);
+		var eye = new Vec3d(-228, 71.62, -1.5);
+		var aim = CameraController.blockAim(pos, shape, eye).orElseThrow();
+		assertTrue(shape.raycast(eye, aim, pos) != null);
+		assertTrue(aim.y < 70.0625);
+	}
+
+	@Test void springCrossesBlockOutlineBeforeItSettles() {
+		var controller = new CameraController();
+		var eye = new Vec3d(0.5, 0.5, 0);
+		var pos = new net.minecraft.util.math.BlockPos(0, 0, 3);
+		controller.startMotion(new CameraController.Rotation(-70, 0), new CameraController.Rotation(0, 0), 0, "baritone");
+		boolean hitBeforeSettled = false;
+		for (int i = 0; i < 30 && controller.activeReason().isPresent(); i++) {
+			var rotation = controller.tickMotion().orElseThrow();
+			var end = eye.add(Vec3d.fromPolar(rotation.pitch(), rotation.yaw()).multiply(4.5));
+			var hit = net.minecraft.util.shape.VoxelShapes.fullCube().raycast(eye, end, pos);
+			if (hit != null && CameraController.blockHit(hit, pos).isPresent()) {
+				hitBeforeSettled = controller.activeReason().isPresent() && Math.abs(rotation.yaw()) > 0.5;
+				break;
+			}
+		}
+		assertTrue(hitBeforeSettled, "Mining should not wait for the old 0.5-degree gate or spring completion");
+	}
+
 	@Test
 	void lookRotationComputesYawAndClampsPitch() {
 		CameraController.Rotation east = CameraController.lookRotation(Vec3d.ZERO, new Vec3d(1.0D, 0.0D, 0.0D)).orElseThrow();
@@ -21,46 +98,59 @@ class CameraControllerTest {
 	}
 
 	@Test
-	void applyRotationUpdatesAllPlayerRotationFields() {
-		MutableRotationTarget target = new MutableRotationTarget();
-
-		CameraController.applyRotation(target, new CameraController.Rotation(45.0F, 120.0F));
-
-		assertEquals(45.0F, target.anglesYaw, 0.001F);
-		assertEquals(90.0F, target.anglesPitch, 0.001F);
-		assertEquals(45.0F, target.yaw, 0.001F);
-		assertEquals(90.0F, target.pitch, 0.001F);
-		assertEquals(45.0F, target.headYaw, 0.001F);
-		assertEquals(45.0F, target.bodyYaw, 0.001F);
-		assertEquals(45.0F, target.lastYaw, 0.001F);
-		assertEquals(90.0F, target.lastPitch, 0.001F);
-		assertEquals(45.0F, target.renderYaw, 0.001F);
-		assertEquals(45.0F, target.lastRenderYaw, 0.001F);
-		assertEquals(90.0F, target.renderPitch, 0.001F);
-		assertEquals(90.0F, target.lastRenderPitch, 0.001F);
+	void springAdvancesAcrossYawSeamAndReleasesAtTarget() {
+		CameraController controller = new CameraController();
+		controller.startMotion(new CameraController.Rotation(170, 0),
+			new CameraController.Rotation(-170, 40), 0, "test");
+		var first = controller.tickMotion().orElseThrow();
+		assertTrue(first.yaw() > 170 && first.yaw() < 190);
+		assertTrue(first.pitch() > 0 && first.pitch() < 40);
+		assertTrue(controller.activeReason().isPresent());
+		CameraController.Rotation last = first;
+		for (int i = 0; i < 40 && controller.activeReason().isPresent(); i++) {
+			last = controller.tickMotion().orElseThrow();
+		}
+		assertEquals(190, last.yaw(), 0.1);
+		assertEquals(40, last.pitch(), 0.1);
+		assertTrue(controller.activeReason().isEmpty());
 	}
 
 	@Test
-	void lerpAdvancesAndFinishesAtTargetRotation() {
+	void repeatedTargetsDoNotRestartTheSpring() {
 		CameraController controller = new CameraController();
-		controller.startMotion(
-			new CameraController.Rotation(170.0F, 0.0F),
-			new CameraController.Rotation(-170.0F, 40.0F),
-			4,
-			"test"
-		);
+		var current = new CameraController.Rotation(0, 0);
+		var target = new CameraController.Rotation(90, 0);
+		for (int i = 0; i < 20; i++) {
+			controller.startMotion(current, target, 0, "tracking");
+			current = controller.tickMotion().orElseThrow();
+		}
+		assertEquals(90, current.yaw(), 0.1);
+	}
 
-		CameraController.Rotation first = controller.tickMotion().orElseThrow();
-		assertEquals(175.0F, first.yaw(), 0.001F);
-		assertEquals(10.0F, first.pitch(), 0.001F);
-		assertTrue(controller.activeReason().isPresent());
+	@Test
+	void directLookOwnsCameraUntilSettledButBaritoneCanRetargetItsOwnMotion() {
+		CameraController controller = new CameraController();
+		var start = new CameraController.Rotation(0, 0);
+		var target = new CameraController.Rotation(90, 0);
+		controller.startMotion(start, target, 0, "baritone");
+		assertTrue(controller.acceptsBaritoneTarget());
+		controller.startMotion(start, target, 0, "player_look_at");
+		assertTrue(!controller.acceptsBaritoneTarget());
+		for (int i = 0; i < 40; i++) controller.tickMotion();
+		assertTrue(controller.acceptsBaritoneTarget());
+	}
 
-		controller.tickMotion();
-		controller.tickMotion();
-		CameraController.Rotation finalRotation = controller.tickMotion().orElseThrow();
-		assertEquals(-170.0F, finalRotation.yaw(), 0.001F);
-		assertEquals(40.0F, finalRotation.pitch(), 0.001F);
-		assertTrue(controller.activeReason().isEmpty());
+	@Test
+	void clearingCancelsCaptureWaitAndReleasesOwnership() {
+		CameraController controller = new CameraController();
+		controller.startMotion(new CameraController.Rotation(0, 0),
+			new CameraController.Rotation(90, 0), 0, "vision");
+		var pending = controller.whenAligned();
+		assertTrue(controller.capturePending());
+		controller.clear();
+		assertTrue(pending.isCompletedExceptionally());
+		assertTrue(!controller.capturePending());
+		assertTrue(controller.acceptsBaritoneTarget());
 	}
 
 	@Test
@@ -79,74 +169,4 @@ class CameraControllerTest {
 		assertEquals(Optional.empty(), controller.tickMotion());
 	}
 
-	private static final class MutableRotationTarget implements CameraController.MutableRotation {
-		private float anglesYaw;
-		private float anglesPitch;
-		private float yaw;
-		private float pitch;
-		private float headYaw;
-		private float bodyYaw;
-		private float lastYaw;
-		private float lastPitch;
-		private float renderYaw;
-		private float lastRenderYaw;
-		private float renderPitch;
-		private float lastRenderPitch;
-
-		@Override
-		public void setAngles(float yaw, float pitch) {
-			this.anglesYaw = yaw;
-			this.anglesPitch = pitch;
-		}
-
-		@Override
-		public void setYaw(float yaw) {
-			this.yaw = yaw;
-		}
-
-		@Override
-		public void setPitch(float pitch) {
-			this.pitch = pitch;
-		}
-
-		@Override
-		public void setHeadYaw(float yaw) {
-			this.headYaw = yaw;
-		}
-
-		@Override
-		public void setBodyYaw(float yaw) {
-			this.bodyYaw = yaw;
-		}
-
-		@Override
-		public void setLastYaw(float yaw) {
-			this.lastYaw = yaw;
-		}
-
-		@Override
-		public void setLastPitch(float pitch) {
-			this.lastPitch = pitch;
-		}
-
-		@Override
-		public void setRenderYaw(float yaw) {
-			this.renderYaw = yaw;
-		}
-
-		@Override
-		public void setLastRenderYaw(float yaw) {
-			this.lastRenderYaw = yaw;
-		}
-
-		@Override
-		public void setRenderPitch(float pitch) {
-			this.renderPitch = pitch;
-		}
-
-		@Override
-		public void setLastRenderPitch(float pitch) {
-			this.lastRenderPitch = pitch;
-		}
-	}
 }

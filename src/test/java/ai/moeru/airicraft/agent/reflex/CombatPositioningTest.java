@@ -252,6 +252,19 @@ class CombatPositioningTest {
 		}
 		return graph;
 	}
+	@Test void creeperEscapeKeepsOpeningGapAfterInitialBackstep() {
+		for (double separation : new double[]{3, 5, 6, 7}) {
+			var creeper = new Threat(.5 + separation, 64, .5, .25, 2.4, false, -.2, 0, 8);
+			var decision = choose(ORIGIN, grid(8, Set.of()), List.of(creeper), null, ORIGIN, true, creeper);
+			assertNotNull(decision.nextStep(), "Do not stop at " + separation);
+			var step = decision.nextStep();
+			assertTrue(Math.hypot(step.x() + .5 - creeper.x(), step.z() + .5 - creeper.z()) > separation);
+			var keys = steering(.5, .5, step.x() + .5, step.z() + .5, step.x() + .5, step.z() + .5);
+			assertTrue(keys.forward());
+			assertFalse(keys.back());
+		}
+	}
+
 	@Test void creeperKiteRouteOpensDistanceInsteadOfHoldingMeleeRange() {
 		var creeper = new Threat(3.1, 64, .5, .25, 2.4, false, 0, 0, 5);
 		var result = choose(ORIGIN, grid(8, Set.of()), List.of(creeper), null, ORIGIN, false, creeper);

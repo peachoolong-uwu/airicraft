@@ -5,6 +5,8 @@
 	"client": [
 		"BaritoneBlockBreakMixin",
 		"BaritoneCalculationContextMixin",
+		"BaritoneLookBehaviorMixin",
+		"BaritoneCameraInputMixin",
 		"BaritoneTravelBoundsMixin",
 		"BaritoneTravelExecutionMixin",
 		"BaritoneDoorInteractionMixin",

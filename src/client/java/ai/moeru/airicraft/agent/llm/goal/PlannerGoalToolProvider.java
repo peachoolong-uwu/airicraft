@@ -60,7 +60,7 @@ public final class PlannerGoalToolProvider implements PlannerToolProvider {
 	@Override public String promptInstructions() {
 		if (!controller) return "Only the controller owns the overall objective. Inspect its constraints; finish your assignment with return_control. Never create, change, block, resume or finish the overall objective.";
 		return "For autonomous work set an objective with separate constraints and completion criteria. Plaintext, failed work and tool-budget checkpoints yield; they do not end the objective. "
-			+ "Use wait_for_work while an attempt runs. Block an objective only when no useful attempt can progress, recording evidence and the change needed. Blocked objectives do not retry on idle ticks. "
+			+ "Ongoing attempts automatically yield until a meaningful event. Block an objective only when no useful attempt can progress, recording evidence and the change needed. Blocked objectives do not retry on idle ticks. "
 			+ "Only finish with observed success or an explicit decision to give up. User stop means cancel work and finish give_up. Never silently reactivate a finished objective. "
 			+ "record_decision stores strategy, not facts about current supplies or geometry. Those require fresh observations.";
 	}

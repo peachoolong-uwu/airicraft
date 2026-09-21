@@ -106,6 +106,7 @@ public final class BaritoneSettingsProfile {
 		settings.chatControl(false);
 		settings.chatControlAnyway(false);
 		settings.prefixControl(false);
+		// Breaking owners prepare tools through MiningToolPreparation; no background reshuffling.
 		settings.allowInventory(false);
 		settings.allowPlace(true);
 		settings.allowParkour(true);

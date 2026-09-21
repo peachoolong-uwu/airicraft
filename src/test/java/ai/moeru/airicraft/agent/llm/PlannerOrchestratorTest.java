@@ -52,6 +52,285 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerOrchestratorTest {
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+	void microCompactionDoesNotBlockPlanningAndReplacesFutureContext(boolean noFinding) {
+		var conversations = new ArrayList<LlmConversation>();
+		var args = JsonParser.parseString("{\"sourceToolCallId\":\"wall-query\",\"result\":null,\"memory\":\"Checked x=100..106; no hole. Search east next.\"}").getAsJsonObject();
+		if (!noFinding) { args.addProperty("result", "L-shaped hole"); args.addProperty("memory", "Place stone bricks at (109,65,50), (109,66,50), (110,65,50)."); }
+		var provider = new PlannerToolProvider() {
+			public String id() { return "finding_fixture"; }
+			public boolean handles(String name) { return "query_world".equals(name); }
+			public List<Map<String, Object>> openAiTools() { return List.of(
+				PlannerToolCatalog.toolForProvider("query_world", "Query blocks", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture(
+				call.name().equals("query_world") ? "RAW_WALL_BLOCK_LIST_12345" : "Finding accepted"); }
+		};
+		LlmBackend backend = new LlmBackend() {
+			public LlmCallResult<PlannerResponse> generate(LlmConversation conversation) {
+				conversations.add(conversation);
+				return LlmCallResult.of(switch (conversations.size()) {
+					case 1 -> new PlannerResponse("", new PlannerToolCall("wall-query", "query_world", new JsonObject(), null, null), null);
+					case 2 -> noActionResponse();
+					default -> noActionResponse();
+				}, null);
+			}
+			public void injectMockResponse(PlannerResponse r) {} public void injectTimeout() {} public boolean isConfigured() { return true; }
+		};
+		var registry = PlannerToolRegistry.of(provider);
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var micro = new CompletableFuture<String>();
+		orchestrator.configureMicroCompaction(new PlannerMicroCompactor(c -> micro));
+		assertFalse(registry.isKnownTool("record_finding"));
+		try {
+			orchestrator.submit(request("Fix the hole in the stone-brick wall", 1));
+			assertTrue(awaitResult(orchestrator).succeeded());
+			assertTrue(conversations.get(1).messages().stream().anyMatch(m -> m.content().contains("RAW_WALL_BLOCK_LIST_12345")));
+			assertFalse(micro.isDone(), "Normal planner responded while micro-compaction remained pending");
+			assertFalse(orchestrator.startDebugCompaction(), "Full compaction must wait for pending micro-compaction");
+			micro.complete("{\"findings\":[" + args + "]}");
+			orchestrator.onAcceptedReplyRecorded();
+			orchestrator.submit(request("Continue the repair", 2));
+			assertTrue(awaitResult(orchestrator).succeeded());
+			for (var conversation : conversations.subList(2, conversations.size())) {
+				assertFalse(conversation.messages().stream().anyMatch(m -> m.content().contains("RAW_WALL_BLOCK_LIST_12345")), "Raw result must leave future context");
+				assertTrue(conversation.messages().stream().anyMatch(m -> m.content().contains(args.get("memory").getAsString())));
+				assertEquals(1, conversation.messages().stream().filter(m -> "wall-query".equals(m.toolCallId())).count());
+			}
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(ints = {1, 8})
+	void nativeImagesStopAtLimitWithoutChangingPrefixAndResetAndCompactionRestoreBudget(int maxImages) throws Exception {
+		try (var server = CompactionTestServer.start()) {
+			int callsPerRun = maxImages + 3;
+			var conversations = new ArrayList<LlmConversation>();
+			var interpretations = new ArrayList<LlmConversation>();
+			LlmBackend backend = new LlmBackend() {
+				public LlmCallResult<PlannerResponse> generate(LlmConversation conversation) {
+					conversations.add(conversation);
+					int index = (conversations.size() - 1) % callsPerRun;
+					return LlmCallResult.of(index == maxImages ? new PlannerResponse("", new PlannerToolCall("map_" + conversations.size(), "take_map_look", new JsonObject(), null, null), null)
+						: index < maxImages + 2
+						? new PlannerResponse("", new PlannerIntent("none", null, null), new PlannerToolRequest("take_a_look", "Find a safe path"))
+						: new PlannerResponse("done", new PlannerIntent("reply_only", null, null)), LlmUsageSnapshot.unknown());
+				}
+				public boolean isConfigured() { return true; }
+				public void injectMockResponse(PlannerResponse response) { throw new UnsupportedOperationException(); }
+				public void injectTimeout() { throw new UnsupportedOperationException(); }
+			};
+			var config = new AgentConfig.LlmConfig("http://127.0.0.1:" + server.port(), "test-key", "test-model",
+				"https://api.openai.com/v1", "", "", 15_000, 10_000, 8, 65_536, "low", true);
+			var tools = PlannerToolRegistry.of(new ImagePlannerToolProvider());
+			tools.activateAllForTesting();
+			Clock clock = Clock.systemDefaultZone();
+			var vision = new StubVisionTool(false, CompletableFuture.completedFuture(capturedScreenshot()),
+				CompletableFuture.failedFuture(new AssertionError("Must use planner model")));
+			var fallback = new PlannerVisionService(conversation -> {
+				interpretations.add(conversation);
+				if (interpretations.size() % 2 == 0) throw new IllegalStateException("provider failure");
+				return "Safe path on the left.";
+			});
+			var orchestrator = new PlannerOrchestrator(new PlannerExecutor(backend),
+				new PlannerCompactionService(new OpenAiCompatibleChatClient(config, tools)),
+				new PlannerContextAggregator(clock, config.plannerCompactionTriggerTokens(), config.plannerPendingSemanticEventCap(), PlannerVisionMode.NATIVE_TOOL_IMAGE, tools),
+				vision, CurrentInventoryTool.disabled(), PlannerVisionMode.NATIVE_TOOL_IMAGE, "low", 1, 0, 0, 0,
+				clock, NoopObservability.INSTANCE, PlannerLifecycleListener.NO_OP, new AgentDebugRecorder(),
+				PlannerActionToolExecutor.DISABLED, PlannerToolNarrationSink.NO_OP, tools, PlannerToolExecutionObserver.NO_OP, maxImages, fallback);
+			try {
+				for (int run = 0; run < 3; run++) {
+					tools.activateAllForTesting();
+					tools.freezeToolPrefix();
+					orchestrator.submit(baseRequest(null));
+					assertTrue(awaitResult(orchestrator).succeeded());
+					orchestrator.onAcceptedReplyRecorded();
+					for (int i = 0; i < callsPerRun; i++) {
+						var conversation = conversations.get(run * callsPerRun + i);
+						assertEquals(Math.min(i, maxImages), PlannerVisionService.imageCount(conversation));
+						if (i > 0) {
+							var before = conversations.get(run * callsPerRun + i - 1).messages();
+							assertEquals(before, conversation.messages().subList(0, before.size()), "Existing prefix must stay intact");
+						}
+					}
+					assertTrue(conversations.get(run * callsPerRun + maxImages + 1).messages().stream().anyMatch(m -> m.content().contains("Safe path on the left.")));
+					assertTrue(conversations.get(run * callsPerRun + maxImages + 2).messages().stream().anyMatch(m -> m.content().contains("VISION_UNAVAILABLE")));
+					if (run == 0) orchestrator.reset();
+					if (run == 1) {
+						assertTrue(orchestrator.startDebugCompaction());
+						awaitDebugCompaction(orchestrator);
+						assertTrue(orchestrator.debugSnapshot().lastCompactionResult().succeeded());
+					}
+				}
+				assertEquals(6, interpretations.size());
+				assertTrue(interpretations.stream().allMatch(c -> c.messages().size() == 2 && PlannerVisionService.imageCount(c) == 1
+					&& (c.messages().getLast().content().contains("Find a safe path") || c.messages().getLast().content().contains("Minecraft map image"))));
+				assertEquals(0, vision.descriptionRequestCount());
+			} finally { orchestrator.shutdown(); }
+	}
+	}
+
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+	void acceptedWorkYieldsUntilAnEventAndDeliversLatestOutcome(boolean failed) throws Exception {
+		var backend = new RecordingBackend();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "work_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return CompletableFuture.completedFuture(
+				"Tool result for mine_blocks: {\"accepted\":true,\"workId\":\"JOB:iron\",\"state\":\"RUNNING\"}"); }
+		};
+		var registry = PlannerToolRegistry.of(provider);
+		registry.activateAllForTesting();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var current = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>(Map.of());
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10, "controller", "work", current.get(), events.query(null)));
+		try {
+			orchestrator.submit(baseRequest(null));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, new PlannerResponse("", new PlannerToolCall("mine-1", "mine_blocks", new JsonObject(), null, null), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (orchestrator.hasInFlight() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertFalse(orchestrator.hasInFlight());
+			assertEquals(1, backend.callCount(), "Acceptance must not request another model turn");
+			if (failed) current.set(Map.of("work", List.of(Map.of("workId", "JOB:iron", "state", "FAILED", "details", Map.of("failure", "unreachable")))));
+			orchestrator.submit(requestAt(20L, 2000L, "Alice", "What happened?"));
+			backend.awaitCalls(2, Duration.ofSeconds(1));
+			var receipt = backend.conversation(1).messages().stream().filter(m -> "mine-1".equals(m.toolCallId())).findFirst().orElseThrow();
+			assertEquals(!failed, receipt.content().contains("accepted"));
+			assertTrue(receipt.content().contains(failed ? "unreachable" : "RUNNING"));
+			assertTrue(backend.conversation(1).messages().stream().anyMatch(m -> m.toolCalls().stream().anyMatch(c -> c.id().equals("mine-1"))));
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void fifoAdvancesAndCoalescesWhilePlannerIsStillThinking() throws Exception {
+		var backend = new RecordingBackend();
+		var executed = new ArrayList<String>();
+		var futures = new java.util.HashMap<String, CompletableFuture<String>>();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "fifo_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				executed.add(call.id()); return futures.computeIfAbsent(call.id(), id -> new CompletableFuture<>());
+			}
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("aborted")));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			var calls = List.of("A", "B", "C", "D").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList();
+			backend.succeed(0, new PlannerResponse("", null, null, null, calls.getFirst(), calls, List.of(), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (executed.isEmpty() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(List.of("A"), executed);
+			futures.get("A").complete("A done"); orchestrator.poll();
+			assertEquals(List.of("A", "B"), executed);
+			futures.get("B").complete("B done"); orchestrator.poll();
+			futures.get("C").complete("C done"); orchestrator.poll();
+			assertEquals(List.of("A", "B", "C", "D"), executed);
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			String review = conversationText(backend.conversation(1));
+			assertTrue(review.contains("B done")); assertTrue(review.contains("C done"));
+			assertTrue(review.contains("TOOL QUEUE")); assertTrue(review.contains("D"));
+			for (String id : List.of("A", "B", "C", "D")) {
+				assertEquals(1, backend.conversation(1).messages().stream().filter(m -> id.equals(m.toolCallId())).count());
+				assertEquals(1, backend.conversation(1).messages().stream().flatMap(m -> m.toolCalls().stream()).filter(c -> id.equals(c.id())).count());
+			}
+			assertEquals(2, backend.callCount(), "Fast consecutive results share one review");
+			futures.get("D").complete("D done"); orchestrator.poll();
+			assertEquals(2, backend.callCount(), "Do not interrupt the review already running");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void clearQueueAbortsActiveCallAndWaitsForAbortBeforeReplacement() throws Exception {
+		var backend = new RecordingBackend();
+		var executed = new ArrayList<String>();
+		var futures = new java.util.HashMap<String, CompletableFuture<String>>();
+		var abort = new CompletableFuture<String>();
+		var aborted = new java.util.concurrent.atomic.AtomicInteger();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "fifo_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				executed.add(call.id()); return futures.computeIfAbsent(call.id(), id -> new CompletableFuture<>());
+			}
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> { aborted.incrementAndGet(); return abort; }));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of("A", "B", "C").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList(), null));
+			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (executed.isEmpty() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			futures.get("A").complete("done");
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertEquals(List.of("A", "B"), executed);
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("clear", "clear_queue", new JsonObject(), null, null),
+				new PlannerToolCall("E", "mine_blocks", new JsonObject(), null, null)), null));
+			deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+			while (aborted.get() == 0 && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(1, aborted.get());
+			orchestrator.poll();
+			assertEquals(List.of("A", "B"), executed, "Replacement cannot race physical abort");
+			futures.get("B").complete("late B completion");
+			abort.complete("aborted"); orchestrator.poll();
+			assertEquals(List.of("A", "B", "E"), executed, "C must never run");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void queueWaitsForActualWorkOutcomeAndContinueDoesNotPoll() throws Exception {
+		var backend = new RecordingBackend();
+		var executed = new ArrayList<String>();
+		var workState = new java.util.concurrent.atomic.AtomicReference<>("RUNNING");
+		var provider = new PlannerToolProvider() {
+			public String id() { return "fifo_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) {
+				executed.add(call.id()); return CompletableFuture.completedFuture("Tool result for mine_blocks: {\"accepted\":true,\"workId\":\"JOB:" + call.id() + "\",\"state\":\"RUNNING\"}");
+			}
+		};
+		var registry = PlannerToolRegistry.of(provider, new PlannerQueueToolProvider(call -> { executed.add(call.name()); return CompletableFuture.completedFuture("Plan retained"); }));
+		registry.activateAllForTesting(); registry.freezeToolPrefix();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world",10,10,"controller","work",
+			Map.of("work", List.of(Map.of("workId", "JOB:A", "state", workState.get()))), events.query(null)));
+		try {
+			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of("A", "B").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList(), null));
+			long deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(List.of("A"), executed); assertEquals(1, backend.callCount());
+			workState.set("FAILED");
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertEquals(List.of("A", "B"), executed);
+			assertTrue(conversationText(backend.conversation(1)).contains("FAILED"));
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("skip", "continue", new JsonObject(), null, null)), null));
+			deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
+			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(2, backend.callCount(), "continue must not generate a follow-up loop");
+			assertEquals(List.of("A", "B", "continue"), executed, "continue must reach runtime while B owns the FIFO");
+		} finally { orchestrator.shutdown(); }
+	}
+
+
 	@Test
 	void bugReportCommitsTheReceiptBeforePausingAndDoesNotRequestAnotherModelTurn() throws Exception {
 		RecordingBackend backend = new RecordingBackend();

@@ -6,6 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DashboardFrameCaptureTest {
+	@Test void permitsCaptureEveryServerTick() {
+		org.junit.jupiter.api.Assertions.assertEquals(1,
+			new DebugDashboardConfig(true, 8765, 100, 1048576, true, 1).visualCaptureIntervalTicks());
+	}
+
 	@Test
 	void unchangedPixelsAreSkippedButOneChangedPixelAndNewSessionsAreRetained() {
 		var filter = new DashboardFrameCapture.UnchangedFrameFilter();

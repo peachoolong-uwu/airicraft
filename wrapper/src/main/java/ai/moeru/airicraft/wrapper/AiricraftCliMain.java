@@ -1550,7 +1550,7 @@ public final class AiricraftCliMain {
 		@Option(names = "--z", required = true)
 		private double z;
 
-		@Option(names = "--duration-ticks", description = "Smooth camera movement duration in client ticks. Omit to use airicraft.yml cameraLerpDefaultTicks; use 0 for instant.")
+		@Option(names = "--duration-ticks", description = "Spring response time in client ticks (approximate). Omit to use airicraft.yml cameraLerpDefaultTicks; 0 uses the default spring.")
 		private Integer durationTicks;
 
 		private PlayerLookAtCommand(CliContext context) {

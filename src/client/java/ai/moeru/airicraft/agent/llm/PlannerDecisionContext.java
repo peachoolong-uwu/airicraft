@@ -47,6 +47,7 @@ public record PlannerDecisionContext(
 		payload.put("decisionOwner", decisionOwner);
 		payload.put("actuatorOwner", actuatorOwner);
 		payload.put("current", facts);
+		if (refresh || gap) payload.put("stateBaseline", true);
 		payload.put("afterEventSequence", sinceSequence);
 		payload.put("throughEventSequence", observations.latestSeqNo());
 		if (gap) payload.put("missingEventRange", Map.of("from", sinceSequence + 1, "to", observations.oldestSeqNo() - 1));

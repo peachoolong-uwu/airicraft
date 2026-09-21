@@ -24,6 +24,7 @@ public final class PlannerReferences {
 	}
 
 	public synchronized String present(String text) {
+		text = PlannerInputText.message("presentation", text);
 		return NATIVE_ID.matcher(text).replaceAll(match -> {
 			String nativeId = match.group();
 			String reference = references.get(nativeId);
@@ -43,14 +44,15 @@ public final class PlannerReferences {
 	/** Transform text/arguments only, never image bytes, cache keys or protocol tool-call IDs. */
 	public JsonArray presentMessages(List<Map<String, Object>> messages) {
 		JsonArray result = GSON.toJsonTree(messages).getAsJsonArray();
+		var snapshots = new PlannerSnapshotPresentation();
 		for (JsonElement entry : result) {
 			JsonObject message = entry.getAsJsonObject();
 			JsonElement content = message.get("content");
-			if (content != null && content.isJsonPrimitive()) message.addProperty("content", present(PlannerInputText.message(message.get("role").getAsString(), content.getAsString())));
+			if (content != null && content.isJsonPrimitive()) message.addProperty("content", present(PlannerInputText.message(message.get("role").getAsString(), snapshots.message(message.get("role").getAsString(), content.getAsString()))));
 			else if (content != null && content.isJsonArray()) {
 				for (JsonElement block : content.getAsJsonArray()) {
 					JsonObject value = block.getAsJsonObject();
-					if (value.has("text")) value.addProperty("text", present(PlannerInputText.message(message.get("role").getAsString(), value.get("text").getAsString())));
+					if (value.has("text")) value.addProperty("text", present(PlannerInputText.message(message.get("role").getAsString(), snapshots.message(message.get("role").getAsString(), value.get("text").getAsString()))));
 				}
 			}
 			if (message.has("tool_calls")) for (JsonElement call : message.getAsJsonArray("tool_calls")) {
@@ -93,7 +95,7 @@ public final class PlannerReferences {
 			return nativeId;
 		}
 		// Persist native references in planning notes and transfer canonical evidence on handoff.
-		if (List.of("objective", "constraints", "completionCriteria", "reason", "evidence", "decision", "outcome", "assignment", "summary").contains(key)) {
+		if (List.of("objective", "constraints", "completionCriteria", "reason", "evidence", "decision", "outcome", "assignment", "summary", "memory", "result").contains(key)) {
 			return REFERENCE.matcher(text).replaceAll(match -> java.util.regex.Matcher.quoteReplacement(identities.getOrDefault(match.group(), match.group())));
 		}
 		return text;

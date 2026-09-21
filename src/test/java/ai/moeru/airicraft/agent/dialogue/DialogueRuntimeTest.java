@@ -82,6 +82,119 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DialogueRuntimeTest {
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(strings = {"run_policy", "mine_blocks"})
+	void routineProgressDoesNotWakeAcceptedWorkButDamageStillDoes(String label) {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		runtime.observeAcceptedWork(new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, label, "POLICY", true, 10, java.util.Map.of()));
+		for (var type : List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK)) {
+			runtime.onPlannerTrigger(PlannerTrigger.autonomous(type, "self", "progress", 11, 11, "progress"),
+				SessionSnapshot.initial(), null, Optional.empty(), null, null, events);
+			assertFalse(runtime.plannerDebugSnapshot().inFlight(), type.name());
+		}
+		runtime.onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.DAMAGE, "self", "hurt", 12, 12, "damage"),
+			SessionSnapshot.initial(), null, Optional.empty(), null, null, events);
+		assertTrue(runtime.plannerDebugSnapshot().inFlight());
+		runtime.shutdown();
+	}
+
+	@Test
+	void continuationRunsDuringPolicyAndDispatchesOnceWithoutNormalPlannerCall() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(64);
+		var response = new CompletableFuture<PlannerResponse>();
+		var requests = new java.util.ArrayList<LlmConversation>();
+		var executed = new java.util.ArrayList<PlannerToolCall>();
+		runtime.configurePolicyContinuation(new ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner(c -> {
+			requests.add(c); return response;
+		}, () -> {}), b -> true, call -> {
+			executed.add(call); return CompletableFuture.completedFuture("Tool result for run_policy: accepted");
+		});
+		runtime.configureDecisionContext(() -> new ai.moeru.airicraft.agent.llm.PlannerDecisionContext(
+			"world", 10, 10, "controller", executed.isEmpty() ? "idle" : "policy",
+			java.util.Map.of("objective", "craft", "inventory", java.util.Map.of(), "vitals", java.util.Map.of("health", 20)), events.query(null)));
+		var handle = ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "parent");
+		var parent = new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "",
+			ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
+		runtime.observeAcceptedWork(parent);
+		runtime.poll(10, events);
+		assertEquals(1, requests.size());
+		response.complete(new PlannerResponse("", new PlannerToolCall("next", "run_policy", com.google.gson.JsonParser.parseString("""
+			{"source":"function* main(p) { return {crafted:true}; }", "input":{},
+			 "guard":{"parentResult":{"gathered":true},"inventoryMin":{},"blocks":[]}}
+			""").getAsJsonObject(), null, null), null));
+		runtime.poll(11, events);
+		assertTrue(executed.isEmpty());
+		assertFalse(runtime.plannerConversationDebugSnapshot().messages().stream().anyMatch(m -> m.text().contains("crafted:true")));
+		runtime.observeWork(List.of(new ai.moeru.airicraft.agent.work.WorkSnapshot(handle, "",
+			ai.moeru.airicraft.agent.work.WorkSnapshot.State.SUCCEEDED, "run_policy", "FINISHED", false, 12,
+			java.util.Map.of("result", java.util.Map.of("gathered", true)))));
+		runtime.queueTaskWakeup(null, 12, events.append(12, "work.changed", java.util.Map.of("workId", "parent")).seqNo());
+		runtime.poll(12, events);
+		runtime.poll(13, events);
+		assertEquals(1, executed.size());
+		assertEquals(0, backend.conversationCount());
+		assertTrue(events.containsType("policy.continuation.accepted"));
+		runtime.shutdown();
+	}
+
+	@Test
+	void childCompletionDoesNotWakeNormalPlannerWhilePolicyOwnsWork() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var policy = new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
+		runtime.observeAcceptedWork(policy);
+		runtime.queueTaskWakeup(null, 11, events.append(11, "work.changed", java.util.Map.of("workId", "child")).seqNo());
+		runtime.poll(12, events);
+		assertFalse(runtime.plannerDebugSnapshot().inFlight());
+		runtime.shutdown();
+	}
+
+	@Test
+	void slowMiningNoticeWakesPlannerDuringPolicy() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var policy = new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.OPERATION, "policy"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "run_policy", "POLICY", true, 10, java.util.Map.of());
+		runtime.observeAcceptedWork(policy);
+		runtime.queueTaskWakeup(null, 11, events.append(11, "work.changed", java.util.Map.of("workId", "child")).seqNo());
+		runtime.queueTaskAttention(12, events.append(12, "task.notice", java.util.Map.of("reason", "slow_mining", "message", "Slow mining stone with furnace")).seqNo());
+		runtime.poll(12, events);
+		assertTrue(runtime.plannerDebugSnapshot().inFlight());
+		runtime.shutdown();
+	}
+
+	@Test
+	void attentionWaitsForBusyPlannerWithoutReplacingItsRequest() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var response = backend.enqueueResponse();
+		runtime.onPlayerChat("Alice", "Inspect the cave", 10L,
+			SessionSnapshot.initial(), "Alice", Optional.empty(), events);
+		backend.awaitConversationCount(1);
+		runtime.queueTaskAttention(11, events.append(11, "task.notice",
+			java.util.Map.of("reason", "slow_mining", "message", "Slow mining stone")).seqNo());
+		runtime.poll(12, events);
+		assertEquals(1, backend.conversationCount());
+		response.complete(new PlannerResponse("Inspecting.", new PlannerIntent("none", null, null)));
+		awaitResponse(runtime, events, Duration.ofSeconds(1));
+		for (int tick = 13; tick < 20; tick++) runtime.poll(tick, events);
+		backend.awaitConversationCount(2);
+		assertEquals(2, backend.conversationCount());
+		runtime.shutdown();
+	}
+
 	@Test
 	void plainReplyDoesNotContinueUnfinishedWorkWithoutAnotherTrigger() {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
@@ -143,9 +256,10 @@ class DialogueRuntimeTest {
 				true, true, "minecraft:overworld", true, 25565, 1);
 			var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(new ai.moeru.airicraft.agent.work.WorkHandle("JOB:iron"), "",
 				ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "Mine iron", "BREAK", true, 1, java.util.Map.of());
-			runtime.waitForWork(work);
+			runtime.observeAcceptedWork(work);
 			for (int tick = 1; tick < 500; tick++) {
-				runtime.observeWork(List.of(work));
+				runtime.observeWork(List.of(new ai.moeru.airicraft.agent.work.WorkSnapshot(work.handle(), "",
+					ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "Mine iron", tick % 2 == 0 ? "NAVIGATE" : "BREAK", true, tick, java.util.Map.of())));
 				runtime.continuePlannerGoal(tick, true, session, null, Optional.empty(), null, null, events);
 			}
 			assertEquals(0, backend.conversationCount());

@@ -15,8 +15,8 @@ suppressAutoPauseOnFocusLost: true
 # Use 0 to disable pacing.
 blockInteractionDelayTicks: 2
 
-# Default duration in client ticks for opt-in smooth camera movement.
-# Use 0 to keep camera movement instant unless a tool explicitly requests smoothing.
+# Spring response time in client ticks (approximate settling time, not a deadline).
+# Use 0 for the default spring. All automated turns are smoothed, including Baritone.
 cameraLerpDefaultTicks: 0
 
 # Read-only realtime debug dashboard. Each Airicraft client owns one dashboard.

@@ -13,9 +13,10 @@ import java.util.concurrent.TimeUnit;
 
 /** Encodes sampled framebuffer JPEGs off the client thread, with independently flushed MP4 fragments. */
 final class PlaytestVideoRecorder implements AutoCloseable {
+	private static final int FRAMES_PER_SECOND = 20;
 	private static final Gson GSON = new Gson();
 	private final Path directory;
-	private final ArrayBlockingQueue<JsonObject> frames = new ArrayBlockingQueue<>(16);
+	private final ArrayBlockingQueue<JsonObject> frames = new ArrayBlockingQueue<>(64);
 	private volatile boolean closing;
 	private volatile IOException failure;
 	private Thread worker;
@@ -39,9 +40,9 @@ final class PlaytestVideoRecorder implements AutoCloseable {
 	private void encode() {
 		try {
 			process = new ProcessBuilder("ffmpeg", "-hide_banner", "-loglevel", "warning", "-n",
-				"-probesize", "32", "-analyzeduration", "0", "-f", "image2pipe", "-framerate", "1", "-c:v", "mjpeg", "-i", "pipe:0",
+				"-probesize", "32", "-analyzeduration", "0", "-f", "image2pipe", "-framerate", Integer.toString(FRAMES_PER_SECOND), "-c:v", "mjpeg", "-i", "pipe:0",
 				"-an", "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-crf", "23",
-				"-pix_fmt", "yuv420p", "-g", "2", "-bf", "0",
+				"-pix_fmt", "yuv420p", "-g", Integer.toString(FRAMES_PER_SECOND * 2), "-bf", "0",
 				"-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1",
 				directory.resolve("screen.mp4").toString())
 				.redirectError(directory.resolve("screen-encoder.log").toFile())
@@ -54,11 +55,11 @@ final class PlaytestVideoRecorder implements AutoCloseable {
 				long frameNumber = 0;
 				byte[] previous = null;
 				while (!closing || !frames.isEmpty()) {
-					JsonObject frame = frames.poll(100, TimeUnit.MILLISECONDS);
+					JsonObject frame = frames.poll(50, TimeUnit.MILLISECONDS);
 					if (frame == null) {
 						// Identical images are suppressed by the dashboard. Keep recording their held image,
 						// including quiet periods, so a crash still leaves recently flushed fragments.
-						if (previous != null && frameNumber <= (System.nanoTime() - startedNanos) / 1_000_000_000L) {
+						if (previous != null && frameNumber <= (System.nanoTime() - startedNanos) / (1_000_000_000L / FRAMES_PER_SECOND)) {
 							input.write(previous);
 							input.flush();
 							frameNumber++;
@@ -68,12 +69,12 @@ final class PlaytestVideoRecorder implements AutoCloseable {
 					long capturedAt = frame.get("capturedAtMs").getAsLong();
 					if (firstTime < 0) { firstTime = capturedAt; startedNanos = System.nanoTime(); }
 					// Hold the previous sampled image across gaps, preserving elapsed capture time.
-					long target = Math.max(frameNumber, Math.round((capturedAt - firstTime) / 1000.0));
+					long target = Math.max(frameNumber, Math.round((capturedAt - firstTime) * FRAMES_PER_SECOND / 1000.0));
 					while (previous != null && frameNumber < target) { input.write(previous); frameNumber++; }
 					previous = Base64.getDecoder().decode(frame.getAsJsonObject("payload").get("imageBase64").getAsString());
 					input.write(previous);
 					input.flush();
-					index.write(GSON.toJson(Map.of("videoSeconds", frameNumber,
+					index.write(GSON.toJson(Map.of("videoSeconds", frameNumber / (double) FRAMES_PER_SECOND,
 						"serverTickId", frame.get("serverTickId").getAsLong(), "capturedAtMs", capturedAt)) + "\n");
 					index.flush();
 					frameNumber++;

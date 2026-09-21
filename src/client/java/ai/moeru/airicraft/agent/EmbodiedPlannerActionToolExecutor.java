@@ -76,7 +76,7 @@ record EmbodiedPlannerActionToolExecutor(
 			return ToolPolicy.READ;
 		}
 		return switch (toolName) {
-			case "inspect_work", "list_work", "cancel_work", "wait_for_work" -> ToolPolicy.READ;
+			case "inspect_work", "list_work", "cancel_work" -> ToolPolicy.READ;
 			case "resume_work" -> ToolPolicy.ACTION;
 			case PlannerToolCatalog.CANCEL_ACTION_GOAL, PlannerToolCatalog.CANCEL_SMELTING,
 				PlannerToolCatalog.CONFIGURE_REFLEX -> ToolPolicy.READ;
@@ -84,7 +84,7 @@ record EmbodiedPlannerActionToolExecutor(
 			case PlannerToolCatalog.UPDATE_EVENT_POLICY, PlannerToolCatalog.CONFIGURE_PATHFIND,
 				PlannerToolCatalog.CONFIGURE_LIGHTING -> ToolPolicy.DEAD_SAFE;
 			case PlannerToolCatalog.START_ACTION_GOAL, PlannerToolCatalog.EAT_FOOD -> ToolPolicy.TASK_MUTATION;
-			case PlannerToolCatalog.CLOSE_CONTAINER, PlannerToolCatalog.TRANSFER_CONTAINER, PlannerToolCatalog.FOLLOW_PLAYER, PlannerToolCatalog.NAVIGATE_TO,
+			case "run_policy", PlannerToolCatalog.CLOSE_CONTAINER, PlannerToolCatalog.TRANSFER_CONTAINER, PlannerToolCatalog.FOLLOW_PLAYER, PlannerToolCatalog.NAVIGATE_TO,
 				PlannerToolCatalog.RETURN_TO_SURFACE, PlannerToolCatalog.MINE_BLOCKS,
 				PlannerToolCatalog.ENSURE_BLOCKS_IN_INVENTORY, PlannerToolCatalog.COLLECT_RESOURCE,
 				PlannerToolCatalog.SMELT_ITEMS, PlannerToolCatalog.COLLECT_SMELTED_ITEMS,
@@ -106,7 +106,7 @@ record EmbodiedPlannerActionToolExecutor(
 			+ " activeStepKind=" + (task == null || task.activeStepKind() == null ? "UNKNOWN" : task.activeStepKind().name())
 			+ " taskExecutionState=" + (execution == null || execution.state() == null ? "UNKNOWN" : execution.state().name())
 			+ " taskExecutionProcess=" + (execution == null || execution.processName() == null ? "UNKNOWN" : execution.processName())
-			+ ". Task-changing tools would preempt the active job. Use wait_for_work, or cancel_work with the exact workId if another approach better serves the objective.";
+			+ ". Task-changing tools would preempt the active job. Use clear_queue before replacing the plan.";
 	}
 
 	private static String activeGraphError(String toolName, ActionGraphExecutionSnapshot snapshot) {
@@ -115,7 +115,7 @@ record EmbodiedPlannerActionToolExecutor(
 			+ " graphState=" + graph.state().name()
 			+ " executionId=" + graph.executionId()
 			+ " activeTaskId=" + graph.activeTaskId()
-			+ ". A graph execution owns the mutation boundary. Use inspect_work/list_work to observe progress. Wait for the foreground lane, or cancel_work with the graph workId if another approach better serves the objective.";
+			+ ". A graph execution owns the mutation boundary. Use inspect_work/list_work to observe progress. Wait for the foreground lane, or use clear_queue to replace the plan.";
 	}
 
 	record ExecutionState(

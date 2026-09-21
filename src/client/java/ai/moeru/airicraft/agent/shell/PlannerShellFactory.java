@@ -182,10 +182,15 @@ public final class PlannerShellFactory {
 				: client.getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT);
 		});
 		plannerGoal.refreshWorld();
+		var scriptedQueries = ai.moeru.airicraft.agent.llm.WorldQueryScriptToolProvider.forClient(effectiveServerTickSupplier, effectiveWorldReadObserver);
 		var sharedProviders = new java.util.ArrayList<>(List.<ai.moeru.airicraft.agent.llm.PlannerToolProvider>of(
 			new ai.moeru.airicraft.agent.work.WorkToolProvider(effectiveActionToolExecutor),
+			new ai.moeru.airicraft.agent.llm.PlannerQueueToolProvider(effectiveActionToolExecutor),
 			new ai.moeru.airicraft.agent.spatial.TravelPolicyToolProvider(),
 			new CurrentWorldQueryToolProvider(worldQueryService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
+			scriptedQueries,
+			new ai.moeru.airicraft.agent.llm.SelfToolProvider(scriptedQueries),
+			new ai.moeru.airicraft.agent.llm.PolicyDocsToolProvider(),
 			new WorldFeatureSearchToolProvider(worldFeatureSearchService, result -> effectiveWorldReadObserver.accept(result.observedPositions())),
 			PlaceMemoryToolProvider.forClient(),
 			new ai.moeru.airicraft.agent.memory.InteractionLogbookToolProvider(),
@@ -214,7 +219,7 @@ public final class PlannerShellFactory {
 			ai.moeru.airicraft.agent.llm.delegation.PlannerDelegationToolProvider.Role.CONTROLLER, handoff, clientExecutor,
 			plannerGoal::context, () -> dialogueRef.get().delegationWorkIdle()));
 		PlannerToolRegistry toolRegistry = PlannerToolRegistry.of(controllerProviders.toArray(ai.moeru.airicraft.agent.llm.PlannerToolProvider[]::new));
-		if (dual) toolRegistry.freezeToolPrefix();
+		if (dual || config.llm().plannerSummarizeToolResults()) toolRegistry.freezeToolPrefix();
 		var controllerConfig = dual ? config.llm().forRole(config.llm().model(), "none") : config.llm();
 		String cacheSession = dual ? "airicraft:" + java.util.UUID.randomUUID() : null;
 		PlannerCallJournal plannerCallJournal = new PlannerCallJournal(effectiveClock, effectiveServerTickSupplier,
@@ -226,6 +231,7 @@ public final class PlannerShellFactory {
 		controllerRef.set(orchestrator);
 		DialogueRuntime dialogue = new DialogueRuntime(orchestrator, config.llm().maxRecentConversationTurns(), effectiveClock, plannerGoal);
 		dialogueRef.set(dialogue);
+
 		if (dual) {
 			var thinkingProviders = new java.util.ArrayList<>(sharedProviders);
 			thinkingProviders.add(new ai.moeru.airicraft.agent.llm.goal.PlannerGoalToolProvider(plannerGoal, clientExecutor, false, () -> false));
@@ -239,6 +245,9 @@ public final class PlannerShellFactory {
 			var thinkingConfig = config.llm().forRole(thinkingProfile.model().isBlank() ? config.llm().model() : thinkingProfile.model(), thinkingProfile.reasoningEffort());
 			var thinkingCalls = plannerCallJournal.forkRole("thinking", thinkingConfig.plannerBackend().wireValue(), plannerModelName(thinkingConfig), thinkingRegistry::openAiTools);
 			var handoffEvidence = new ai.moeru.airicraft.agent.llm.PlannerLifecycleListener() {
+				@Override public void onObservationCompacted(ai.moeru.airicraft.agent.llm.PlannerToolCall call, String finding) {
+					handoff.recordObservationFinding(call, finding);
+				}
 				@Override public void onToolExchange(ai.moeru.airicraft.agent.llm.PlannerToolCall call, String result, boolean imageAttached) {
 					handoff.recordToolExchange(call, result, imageAttached);
 				}
@@ -251,7 +260,7 @@ public final class PlannerShellFactory {
 			thinker.shareGenerationSequence(generations);
 			dialogue.configureDelegation(thinker, handoff);
 		}
-		return new PlannerShellComponents(visionService, dialogue, journal, plannerCallJournal);
+		return new PlannerShellComponents(visionService, dialogue, journal, plannerCallJournal, orchestrator);
 	}
 
 	private static PlannerOrchestrator createOrchestrator(AgentConfig.LlmConfig llm, PlannerToolRegistry tools,
@@ -262,14 +271,17 @@ public final class PlannerShellFactory {
 			case OPENAI_COMPATIBLE -> new OpenAiCompatibleLlmBackend(llm, observability, tools, cacheKey);
 			case CODEX_APP_SERVER -> new CodexAppServerLlmBackend(llm, observability, tools);
 		};
-		return new PlannerOrchestrator(new PlannerExecutor(backend, observability),
+		var orchestrator = new PlannerOrchestrator(new PlannerExecutor(backend, observability),
 			new PlannerCompactionService(new OpenAiCompatibleChatClient(llm, observability, tools,
 				cacheKey == null ? null : cacheKey + ":compaction"), observability),
 			new PlannerContextAggregator(clock, llm.plannerCompactionTriggerTokens(), llm.plannerPendingSemanticEventCap(),
 				llm.plannerVisionMode(), tools, llm.backendManagedHistory()), vision, inventory, llm.plannerVisionMode(),
 			llm.visionImageDetail(), 1, llm.plannerSessionCoalesceStepMillis(),
 			llm.plannerSessionCoalesceMinMillis(), llm.plannerSessionCoalesceMaxMillis(), clock, observability,
-			listener, debug, actions, narration, tools, toolObserver);
+			listener, debug, actions, narration, tools, toolObserver, llm.plannerMaxImages(),
+			new ai.moeru.airicraft.agent.llm.PlannerVisionService(llm, observability));
+		if (llm.plannerSummarizeToolResults()) orchestrator.configureMicroCompaction(new ai.moeru.airicraft.agent.llm.PlannerMicroCompactor(llm, observability, tools));
+		return orchestrator;
 	}
 
 	private static String plannerModelName(AgentConfig.LlmConfig config) {

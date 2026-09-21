@@ -9,6 +9,8 @@ import java.util.concurrent.CompletableFuture;
 public interface PlannerToolProvider {
 	String id();
 
+	default boolean dynamicTools() { return false; }
+
 	default boolean available() {
 		return true;
 	}

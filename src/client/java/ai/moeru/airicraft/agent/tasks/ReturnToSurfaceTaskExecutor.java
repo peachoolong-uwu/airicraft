@@ -41,7 +41,7 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 	private final Supplier<MinecraftClient> clientSupplier;
 	private final BaritoneFacade baritoneFacade;
 	private final MovementController movementController = new MovementController();
-	private final CameraController cameraController = new CameraController();
+	private final CameraController cameraController;
 	private final OwnedKeyPress jumpKeyControl = new OwnedKeyPress();
 
 	private WorldTaskRequest appliedTask;
@@ -63,8 +63,17 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 	}
 
 	ReturnToSurfaceTaskExecutor(Supplier<MinecraftClient> clientSupplier, BaritoneFacade baritoneFacade) {
+		this(clientSupplier, baritoneFacade, new CameraController());
+	}
+
+	public ReturnToSurfaceTaskExecutor(BaritoneFacade baritoneFacade, CameraController cameraController) {
+		this(MinecraftClient::getInstance, baritoneFacade, cameraController);
+	}
+
+	private ReturnToSurfaceTaskExecutor(Supplier<MinecraftClient> clientSupplier, BaritoneFacade baritoneFacade, CameraController cameraController) {
 		this.clientSupplier = Objects.requireNonNull(clientSupplier, "clientSupplier");
 		this.baritoneFacade = baritoneFacade;
+		this.cameraController = Objects.requireNonNull(cameraController, "cameraController");
 	}
 
 	@Override
@@ -201,7 +210,7 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 		}
 		UnderwaterRecoveryKeys keys = underwaterRecoveryKeys(recoveryMovement, underwaterStuckTicks);
 		if (recoveryMovement == RecoveryMovement.TOWARD_TARGET || (recoveryMovement == RecoveryMovement.STUCK && args.targetPosition() != null)) {
-			cameraController.lookAtNow(client, targetSwimPoint(args.targetPosition()));
+			cameraController.lookAt(client, targetSwimPoint(args.targetPosition()));
 		}
 		movementController.swimUp(
 			client,

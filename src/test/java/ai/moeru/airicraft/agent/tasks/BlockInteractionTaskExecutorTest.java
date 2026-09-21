@@ -322,7 +322,7 @@ class BlockInteractionTaskExecutorTest {
 	}
 
 	@Test
-	void placementStandCandidatesKeepOneBlockClearOfTarget() {
+	void placementStandCandidatesIncludeAdjacentCellsWithoutTargetOverlap() {
 		BlockPos target = new BlockPos(10, 65, 10);
 		List<BlockPos> candidates = BlockInteractionTaskExecutor.placementStandCandidates(
 			target,
@@ -331,8 +331,24 @@ class BlockInteractionTaskExecutorTest {
 
 		assertTrue(candidates.contains(new BlockPos(10, 65, 8)));
 		assertTrue(candidates.contains(new BlockPos(12, 65, 10)));
-		assertFalse(candidates.contains(target.north()));
-		assertFalse(candidates.contains(target.east()));
+		assertTrue(candidates.contains(target.north()));
+		assertTrue(candidates.contains(target.east()));
+		assertFalse(candidates.contains(target));
+	}
+
+	@Test
+	void caveLedgeAdjacentStanceStillRequiresStandabilityReachAndVisibility() {
+		var target = new BlockPos(-226, 48, -1);
+		var stand = target.south();
+		var current = new BlockPos(-228, 46, -1);
+		assertEquals(List.of(stand), BlockInteractionTaskExecutor.viablePlacementStandCandidates(
+			target, target.down(), current, Set.of(), stand::equals, p -> true, p -> true));
+		assertTrue(BlockInteractionTaskExecutor.viablePlacementStandCandidates(
+			target, target.down(), current, Set.of(), p -> false, p -> true, p -> true).isEmpty());
+		assertTrue(BlockInteractionTaskExecutor.viablePlacementStandCandidates(
+			target, target.down(), current, Set.of(), stand::equals, p -> false, p -> true).isEmpty());
+		assertTrue(BlockInteractionTaskExecutor.viablePlacementStandCandidates(
+			target, target.down(), current, Set.of(), stand::equals, p -> true, p -> false).isEmpty());
 	}
 
 	@Test

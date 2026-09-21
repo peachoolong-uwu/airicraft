@@ -77,7 +77,7 @@ public final class ClientRuntimeController {
 				var dashboard = config.debugDashboard();
 				return ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime.enabled()
 					? new ai.moeru.airicraft.dashboard.DebugDashboardConfig(dashboard.enabled(), dashboard.basePort(), dashboard.portScanLimit(),
-						dashboard.historyByteBudget(), true, 20)
+						dashboard.historyByteBudget(), true, 1)
 					: dashboard;
 			}
 		);
@@ -168,6 +168,8 @@ public final class ClientRuntimeController {
 		cameraController.clear();
 		highlightManager.clear();
 	}
+
+	public CameraController cameraController() { return cameraController; }
 
 	public void onClientTick(MinecraftClient client) {
 		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.tick(client);
@@ -383,10 +385,10 @@ public final class ClientRuntimeController {
 		WorldTaskExecutor worldTaskExecutor = new DispatchingWorldTaskExecutor(new DispatchingWorldTaskExecutor.ExecutorSet(
 			baritoneTaskExecutor,
 			new CraftingTaskExecutor(baritoneFacade, cameraController),
-			new DropItemsTaskExecutor(baritoneFacade),
+			new DropItemsTaskExecutor(baritoneFacade, cameraController),
 			new EntityInteractionTaskExecutor(baritoneFacade, cameraController),
 			new SmeltingTaskExecutor(smeltingProcessManager, baritoneFacade),
-			new ReturnToSurfaceTaskExecutor(baritoneFacade),
+			new ReturnToSurfaceTaskExecutor(baritoneFacade, cameraController),
 			new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade),
 			new BlockBreakTaskExecutor(cameraController),
 			new TargetAcquisitionTaskExecutor(baritoneFacade, cameraController),

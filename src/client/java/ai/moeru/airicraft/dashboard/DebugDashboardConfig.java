@@ -16,7 +16,7 @@ public record DebugDashboardConfig(
 		basePort = Math.max(1, Math.min(65_535, basePort));
 		portScanLimit = Math.max(1, Math.min(1_000, portScanLimit));
 		historyByteBudget = Math.max(1024L * 1024L, historyByteBudget);
-		visualCaptureIntervalTicks = Math.max(20, visualCaptureIntervalTicks);
+		visualCaptureIntervalTicks = Math.max(1, visualCaptureIntervalTicks);
 	}
 
 	public DebugDashboardConfig(boolean enabled, int basePort, int portScanLimit, long historyByteBudget) {

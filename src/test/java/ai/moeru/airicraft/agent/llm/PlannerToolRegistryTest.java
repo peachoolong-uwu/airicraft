@@ -25,7 +25,8 @@ class PlannerToolRegistryTest {
 		String discovery = registry.discoverTools("resume work",8).renderToolResult();
 		registry.setSafetyHoldActive(true);
 		assertEquals(before,new Gson().toJson(registry.openAiTools()));
-		assertTrue(registry.isActiveTool("resume_work"));
+		assertFalse(registry.isActiveTool("resume_work"));
+		assertFalse(registry.isActiveTool("cancel_work"));
 		assertFalse(registry.isActiveTool("resume_task"));
 		assertFalse(registry.isActiveTool("cancel_task"));
 		assertTrue(discovery.contains("does not change"));

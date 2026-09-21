@@ -22,8 +22,6 @@ import java.util.Optional;
 
 public final class BehaviorTreeRuntime {
 	private static final double FOLLOW_STOP_DISTANCE = 4.0D;
-	private static final float LOOK_YAW_STEP = 8.0F;
-	private static final float LOOK_PITCH_STEP = 6.0F;
 
 	private final CameraController cameraController;
 	private final MovementController movementController = new MovementController();
@@ -98,7 +96,7 @@ public final class BehaviorTreeRuntime {
 
 		if (shouldLookAtFollowTarget(activeGoal.get(), followState)) {
 			Vec3d targetPos = new Vec3d(followState.targetX(), followState.targetY() + 1.62D, followState.targetZ());
-			cameraController.lookAtStep(client, targetPos, LOOK_YAW_STEP, LOOK_PITCH_STEP);
+			cameraController.lookAt(client, targetPos);
 		}
 
 		snapshot = new BehaviorTreeSnapshot(

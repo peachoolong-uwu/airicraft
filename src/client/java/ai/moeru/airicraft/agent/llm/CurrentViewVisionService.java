@@ -102,8 +102,13 @@ public final class CurrentViewVisionService implements CurrentViewVisionTool {
 			CompletableFuture<ViewCaptureResult> captureFuture = new CompletableFuture<>();
 			Runnable captureTask = () -> {
 				try {
+					if (request != null && !request.isCurrent() && cameraController.capturePending()) {
+						throw new BridgeUnavailableException("capture_busy", "Camera is aligning for another capture");
+					}
 					List<String> metadataLines = prepareCaptureTarget(client, request);
-					screenshotService.requestCapture(client).whenComplete((capture, throwable) -> {
+					(request == null || request.isCurrent()
+						? CompletableFuture.<Void>completedFuture(null) : cameraController.whenAligned())
+						.thenCompose(ignored -> screenshotService.requestCapture(client)).whenComplete((capture, throwable) -> {
 						if (throwable == null) {
 							captureFuture.complete(new ViewCaptureResult(capture, metadataLines));
 						}
@@ -164,7 +169,7 @@ public final class CurrentViewVisionService implements CurrentViewVisionTool {
 			case BLOCK -> {
 				BlockPos targetPos = new BlockPos(request.x(), request.y(), request.z());
 				Vec3d targetCenter = Vec3d.ofCenter(targetPos);
-				cameraController.lookAtNow(client, targetCenter);
+				cameraController.lookAt(client, targetCenter);
 				List<String> metadata = new ArrayList<>();
 				metadata.add("lookTarget=block x=" + targetPos.getX() + " y=" + targetPos.getY() + " z=" + targetPos.getZ());
 				blockLineOfSightWarning(client, client.player, targetPos, targetCenter).ifPresent(metadata::add);
@@ -172,14 +177,14 @@ public final class CurrentViewVisionService implements CurrentViewVisionTool {
 			}
 			case PLAYER -> {
 				AbstractClientPlayerEntity target = findPlayer(client, request.targetPlayer());
-				cameraController.lookAtNow(client, target.getBoundingBox().getCenter());
+				cameraController.lookAt(client, target.getBoundingBox().getCenter());
 				yield List.of("lookTarget=player targetPlayer=" + target.getName().getString());
 			}
 		};
 	}
 
 	private void faceDirection(ClientPlayerEntity player, String direction) {
-		if (cameraController.faceDirectionNow(player, direction).isEmpty()) {
+		if (cameraController.faceDirection(player, direction).isEmpty()) {
 			throw new BridgeUnavailableException("invalid_request", "Unsupported direction: " + direction);
 		}
 	}

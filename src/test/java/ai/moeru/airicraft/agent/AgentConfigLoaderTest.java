@@ -10,6 +10,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentConfigLoaderTest {
+	@Test void shortTermFindingsDefaultOnAndPreserveExplicitOptOut() {
+		assertTrue(AgentConfig.defaults().llm().plannerSummarizeToolResults());
+		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerSummarizeToolResults", true), AgentConfig.defaults()).llm();
+		assertTrue(config.plannerSummarizeToolResults());
+		assertTrue(config.forRole("thinker", "medium").plannerSummarizeToolResults());
+		var disabled = AgentConfigLoader.fromMapStrict(Map.of("plannerSummarizeToolResults", false), AgentConfig.defaults()).llm();
+		assertFalse(disabled.forRole("thinker", "medium").plannerSummarizeToolResults());
+		assertFalse(AgentConfigLoader.fromMapStrict(Map.of("plannerBackend", "codex-app-server"), AgentConfig.defaults()).llm().plannerSummarizeToolResults());
+	}
+
+	@Test void shortTermFindingsRejectBackendOwnedHistory() {
+		assertThrows(IllegalArgumentException.class, () -> AgentConfigLoader.fromMapStrict(
+			Map.of("plannerSummarizeToolResults", true, "plannerBackend", "codex-app-server"), AgentConfig.defaults()));
+	}
+
+	@Test void readsNativeImageLimitAndPreservesItForPlannerRoles() {
+		assertEquals(8, AgentConfig.defaults().llm().plannerMaxImages());
+		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerMaxImages", 3), AgentConfig.defaults()).llm();
+		assertEquals(3, config.plannerMaxImages());
+		assertEquals(3, config.forRole("thinker", "high").plannerMaxImages());
+		assertEquals(1, AgentConfigLoader.fromMapStrict(Map.of("plannerMaxImages", 0), AgentConfig.defaults()).llm().plannerMaxImages());
+	}
+
 	@Test void readsIndependentThinkingProfile() {
 		var config = AgentConfigLoader.fromMapStrict(Map.of("model", "controller-model", "thinkingPlanner",
 			Map.of("enabled", true, "model", "thinking-model", "reasoningEffort", "medium")), AgentConfig.defaults()).llm();

@@ -86,9 +86,23 @@ public final class PlannerDelegation {
 		state = new Returning(thinking.work(), status, checked(outcome));
 	}
 
+	public void recordObservationFinding(PlannerToolCall call, String finding) {
+		if (!active()) return;
+		var iterator = work().evidence.iterator();
+		boolean found = false;
+		while (iterator.hasNext()) {
+			String encoded = iterator.next();
+			var entry = com.google.gson.JsonParser.parseString(encoded).getAsJsonObject();
+			if (entry.has("toolCallId") && call.id().equals(entry.get("toolCallId").getAsString())) {
+				iterator.remove(); work().evidenceChars -= encoded.length(); found = true;
+			}
+		}
+		if (found) recordToolExchange(call, finding, false);
+	}
+
 	public void recordToolExchange(PlannerToolCall call, String result, boolean imageAttached) {
 		if (!active()) return;
-		append(Map.of("kind", "tool_exchange", "tool", call.name(), "arguments", call.arguments(),
+		append(Map.of("kind", "tool_exchange", "toolCallId", call.id(), "tool", call.name(), "arguments", call.arguments(),
 			"result", clip(result, 12_000), "imageAttached", imageAttached));
 	}
 

@@ -34,6 +34,7 @@ public final class PlannerOrchestrator {
 	/** Lifetime gameplay requests, including tool follow-ups but excluding transport retries. */
 	public long gameplayDecisionCount() { return sessionCoordinator.gameplayDecisionCount(); }
 	private static final Gson GSON = new Gson();
+	private final DeferredWorkReceipts deferredWorkReceipts = new DeferredWorkReceipts();
 	private static final Pattern FAILED_TOOL_ARGUMENTS_PATTERN = Pattern.compile("Invalid ([a-z0-9_]+) tool arguments:");
 	private static final String VISUAL_TOOL_NAME = "take_a_look";
 	private static final String WORLD_TOOL_NAME = "inspect_world";
@@ -91,6 +92,11 @@ public final class PlannerOrchestrator {
 	private boolean safetyLaunchBlocked;
 	private boolean enabled = true;
 
+	private final int plannerMaxImages;
+	private final PlannerVisionService plannerVision;
+	// Backend-managed history is remote; conservatively budget until its session resets.
+	private int backendHistoryImages;
+
 	public PlannerOrchestrator(
 		PlannerExecutor plannerExecutor,
 		PlannerCompactionService compactionService,
@@ -103,15 +109,63 @@ public final class PlannerOrchestrator {
 		int plannerSessionCoalesceStepMillis,
 		int plannerSessionCoalesceMinMillis,
 		int plannerSessionCoalesceMaxMillis,
-			Clock clock,
-			AgentObservability observability,
-			PlannerLifecycleListener lifecycleListener,
-			AgentDebugRecorder debugRecorder,
-			PlannerActionToolExecutor actionToolExecutor,
-			PlannerToolNarrationSink narrationSink,
-			PlannerToolRegistry toolRegistry,
-			PlannerToolExecutionObserver toolExecutionObserver
+		Clock clock,
+		AgentObservability observability,
+		PlannerLifecycleListener lifecycleListener,
+		AgentDebugRecorder debugRecorder,
+		PlannerActionToolExecutor actionToolExecutor,
+		PlannerToolNarrationSink narrationSink,
+		PlannerToolRegistry toolRegistry,
+		PlannerToolExecutionObserver toolExecutionObserver
 	) {
+		this(
+			plannerExecutor,
+			compactionService,
+			contextAggregator,
+			visionTool,
+			inventoryTool,
+			visionMode,
+			imageDetail,
+			plannerSessionMaxConcurrentAttempts,
+			plannerSessionCoalesceStepMillis,
+			plannerSessionCoalesceMinMillis,
+			plannerSessionCoalesceMaxMillis,
+			clock,
+			observability,
+			lifecycleListener,
+			debugRecorder,
+			actionToolExecutor,
+			narrationSink,
+			toolRegistry,
+			toolExecutionObserver, 8,
+			new PlannerVisionService(conversation -> { throw new IllegalStateException("Planner vision fallback not configured"); }));
+	}
+
+	public PlannerOrchestrator(
+		PlannerExecutor plannerExecutor,
+		PlannerCompactionService compactionService,
+		PlannerContextAggregator contextAggregator,
+		CurrentViewVisionTool visionTool,
+		CurrentInventoryTool inventoryTool,
+		PlannerVisionMode visionMode,
+		String imageDetail,
+		int plannerSessionMaxConcurrentAttempts,
+		int plannerSessionCoalesceStepMillis,
+		int plannerSessionCoalesceMinMillis,
+		int plannerSessionCoalesceMaxMillis,
+		Clock clock,
+		AgentObservability observability,
+		PlannerLifecycleListener lifecycleListener,
+		AgentDebugRecorder debugRecorder,
+		PlannerActionToolExecutor actionToolExecutor,
+		PlannerToolNarrationSink narrationSink,
+		PlannerToolRegistry toolRegistry,
+		PlannerToolExecutionObserver toolExecutionObserver,
+		int plannerMaxImages,
+		PlannerVisionService plannerVision
+	) {
+		this.plannerMaxImages = Math.max(1, plannerMaxImages);
+		this.plannerVision = Objects.requireNonNull(plannerVision, "plannerVision");
 		this.plannerExecutor = Objects.requireNonNull(plannerExecutor, "plannerExecutor");
 		this.compactionService = Objects.requireNonNull(compactionService, "compactionService");
 		this.contextAggregator = Objects.requireNonNull(contextAggregator, "contextAggregator");
@@ -255,6 +309,10 @@ public final class PlannerOrchestrator {
 	private java.util.function.Supplier<PlannerDecisionContext> decisionContextSource;
 	private String decisionWorldSessionId;
 	private java.util.function.BooleanSupplier decisionAuthority = () -> true;
+	public void configureMicroCompaction(PlannerMicroCompactor service) {
+		service.onFinding(lifecycleListener::onObservationCompacted);
+		contextAggregator.configureMicroCompaction(service);
+	}
 	public void configureDecisionAuthority(java.util.function.BooleanSupplier authority) { decisionAuthority = authority; }
 	private long incorporatedDecisionEventSequence;
 	private boolean decisionRefreshPending = true;
@@ -262,6 +320,7 @@ public final class PlannerOrchestrator {
 	/** The supplier reads game state synchronously on this orchestrator's owning client thread. */
 	public void configureDecisionContext(java.util.function.Supplier<PlannerDecisionContext> source) {
 		decisionContextSource = Objects.requireNonNull(source);
+		contextAggregator.useDecisionContext();
 		toolRegistry.freezeToolPrefix();
 	}
 
@@ -270,8 +329,13 @@ public final class PlannerOrchestrator {
 	}
 
 	private LlmConversation appendDecisionContext(LlmConversation conversation) {
-		if (decisionContextSource == null) return conversation;
+		conversation = appendQueueContext(conversation);
+		if (decisionContextSource == null) {
+			LlmConversation delivered = deferredWorkReceipts.deliver(conversation, Map.of());
+			return contextAggregator.retainConversation(delivered);
+		}
 		PlannerDecisionContext context = decisionContextSource.get();
+		conversation = deferredWorkReceipts.deliver(conversation, context.current());
 		if (!context.worldSessionId().equals(decisionWorldSessionId)) {
 			decisionWorldSessionId = context.worldSessionId();
 			incorporatedDecisionEventSequence = 0;
@@ -279,7 +343,7 @@ public final class PlannerOrchestrator {
 		LlmConversation updated = conversation.withAppended(context.message(incorporatedDecisionEventSequence, decisionRefreshPending));
 		decisionRefreshPending = false;
 		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
-		contextAggregator.retainConversation(updated);
+		updated = contextAggregator.retainConversation(updated);
 		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
 		return updated;
 	}
@@ -294,6 +358,7 @@ public final class PlannerOrchestrator {
 
 	public void updateSafetyContext(long safetyEpoch, String holdId, boolean activeReflex) {
 		minimumSafetyEpoch = Math.max(minimumSafetyEpoch, Math.max(0L, safetyEpoch));
+		queueReflexActive = activeReflex;
 		currentSafetyHoldId = holdId;
 		// A reflex owns actuators, not reasoning. Executor policies gate physical tools.
 		safetyLaunchBlocked = false;
@@ -352,6 +417,8 @@ public final class PlannerOrchestrator {
 	}
 
 	public PlannerExecutionResult poll() {
+		contextAggregator.refreshMicroCompaction();
+		tickToolQueue();
 		if (plannerExecutor.hasInFlight()) recordConversationSources();
 		if (compactionService.hasInFlight()) {
 			return pollCompaction();
@@ -418,6 +485,7 @@ public final class PlannerOrchestrator {
 	}
 
 	private PlannerExecutionResult finishSuccessfulPlannerResult(PlannerExecutionResult plannerResult) {
+
 		if (plannerResult.phase() == PlannerSessionPhase.TOOL_FOLLOW_UP
 			&& completedToolCallCount(plannerResult.generation()) + effectiveToolCalls(plannerResult.response()).size() > MAX_TOOL_CALLS_PER_TURN) {
 			return yieldToolTurn(plannerResult);
@@ -451,6 +519,8 @@ public final class PlannerOrchestrator {
 			committedSnapshotGenerations.remove(plannerResult.generation());
 			return toolRequestFailure;
 		}
+		if (usesToolQueue())
+			return enqueueTools(plannerResult, toolCalls);
 		return startToolExecution(plannerResult, toolCalls);
 	}
 
@@ -545,7 +615,7 @@ public final class PlannerOrchestrator {
 			}
 		}
 		PlannerToolRegistry.ReadOnlyBatchAuthorization batchAuthorization = toolRegistry.authorizeReadOnlyBatch(toolCalls);
-		if (toolCalls.size() > 1 && !batchAuthorization.authorized()) {
+		if (!usesToolQueue() && toolCalls.size() > 1 && !batchAuthorization.authorized()) {
 			Airicraft.LOGGER.warn(
 				"Planner returned unsupported multi-tool batch names={} reason={} rejectedTool={}",
 				toolCallNames(toolCalls),
@@ -721,9 +791,8 @@ public final class PlannerOrchestrator {
 		String reminder = TOOL_CALL_REPAIR_PREFIX
 			+ " Previous response was rejected: "
 			+ (failureMessage == null || failureMessage.isBlank() ? "parse error" : failureMessage)
-			+ "\nCall exactly one tool in this response unless every tool call is a read-only text tool."
-			+ "\nDo not batch multiple action tool calls such as navigate_to, mine_blocks, collect_resource, craft_recipe, smelt_items, drop_items, give_player, attack_entity, use_entity, place_block, use_block, cancel_task, clear_goal, or update_event_policy."
-			+ "\nIf multiple actions are needed, call only the next single action tool now and wait for the tool result or TASK UPDATE before another action. A single transfer_container call may use items[] for several item types in one open container. A single place_block, use_block, or break_blocks call may use ordered targets[] when all targets were inspected and the schema supports them."
+			+ (usesToolQueue() ? "\nTool calls append to a sequential FIFO. Use continue to yield or clear_queue to abort and replace the plan."
+				: "\nCall exactly one tool unless every call is a read-only text tool. Do not batch action calls.")
 			+ "\nWhen calling a tool, leave assistant content empty and put visible pre-action text in the tool narration argument.";
 		String failedToolSchema = failedToolSchema(failureMessage);
 		if (failedToolSchema == null) {
@@ -747,6 +816,183 @@ public final class PlannerOrchestrator {
 			.orElse(null);
 	}
 
+	/** Each planner owns its plan; a delegated planner runs while its caller awaits the handoff. */
+	private static final class QueueState {
+		final PlannerToolQueue<ToolExecutionOutcome> tools = new PlannerToolQueue<>();
+		final java.util.LinkedHashMap<String, ToolExecutionResult> reports = new java.util.LinkedHashMap<>();
+		final java.util.Map<String, LlmImageAttachment> images = new java.util.HashMap<>();
+		PlannerRequest seed;
+		CompletableFuture<ToolExecutionOutcome> abort;
+		PlannerToolCall abortCall;
+		long observationTick;
+		long firstResultMs;
+		long lastResultMs;
+	}
+	private final QueueState toolQueue = new QueueState();
+	private boolean queueReflexActive;
+	private boolean usesToolQueue() { return toolRegistry.isKnownTool(PlannerQueueToolProvider.CONTINUE); }
+
+	private PlannerExecutionResult enqueueTools(PlannerExecutionResult result, List<PlannerToolCall> calls) {
+		PlannerExecutionResult promotionFailure = promoteBackendCandidate(result);
+		if (promotionFailure != null) return finishFailedPlannerResult(promotionFailure);
+		commitSnapshotIfNeeded(result.generation());
+		var snapshot = sessionCoordinator.contextSnapshotFor(result.generation())
+			.withConversation(sessionCoordinator.conversationFor(result.generation()));
+		var receipts = new ArrayList<String>();
+		// clear_queue is an immediate control, regardless of its position in the response.
+		var clear = calls.stream().filter(c -> PlannerQueueToolProvider.CLEAR.equals(c.name())).findFirst();
+		if (clear.isPresent()) {
+			var cancelled = new ArrayList<>(toolQueue.tools.pending());
+			if (toolQueue.tools.active() != null) cancelled.addFirst(toolQueue.tools.active());
+			toolQueue.tools.clear((call, work) -> {});
+			for (var call : cancelled) queueReport(call, new TextToolExecutionOutcome("Cancelled by clear_queue; completed effects are not undone."));
+			toolQueue.abortCall = clear.get();
+			toolQueue.abort = requestPlannerTools(List.of(clear.get()), snapshot.plannerConversation());
+		}
+		for (var call : calls) {
+			String receipt;
+			if (PlannerQueueToolProvider.CONTINUE.equals(call.name())) {
+				receipt = "Plan retained; continue requested.";
+				if (clear.isEmpty() && toolQueue.abort == null) {
+					toolQueue.abortCall = call;
+					toolQueue.abort = requestPlannerTools(List.of(call), snapshot.plannerConversation());
+				}
+			}
+			else if (PlannerQueueToolProvider.CLEAR.equals(call.name())) receipt = "Queue cleared; aborting active work.";
+			else {
+				toolQueue.tools.append(List.of(call));
+				receipt = "QUEUED: " + call.id() + "; execution result will arrive in a later review.";
+			}
+			receipts.add(receipt);
+			recordToolExchange(result.generation(), snapshot, result.response().rawAssistantContent(), call, receipt, false);
+			lifecycleListener.onToolRequested(result.generation(), call);
+		}
+		var acceptedConversation = contextAggregator.buildPlannerFollowUpConversation(snapshot, calls, receipts);
+		contextAggregator.retainConversation(acceptedConversation);
+		commitRecordedToolExchanges(result.generation());
+		toolQueue.seed = result.request();
+		debugRecorder.recordPlannerCompletion(result);
+		sessionCoordinator.finishGeneration(result.generation(), false);
+		committedSnapshotGenerations.remove(result.generation());
+		endTurnSpan();
+		lifecycleListener.onPlannerExecutionApplied(result);
+		return null;
+	}
+
+	public boolean hasQueuedToolWork() { return !toolQueue.tools.isEmpty() || !toolQueue.reports.isEmpty() || toolQueue.abort != null; }
+
+	public void tickToolQueue() {
+		if (!usesToolQueue() || !enabled || !hasQueuedToolWork() || !decisionAuthority.getAsBoolean()) return;
+		PlannerDecisionContext context = decisionContextSource == null ? null : decisionContextSource.get();
+		toolQueue.observationTick = context == null ? (toolQueue.seed == null ? 0 : toolQueue.seed.tick()) : context.tick();
+		if (context != null && decisionWorldSessionId != null
+			&& !decisionWorldSessionId.equals(context.worldSessionId())) {
+			toolQueue.tools.clear((call, id) -> {});
+			toolQueue.reports.clear(); toolQueue.images.clear();
+			return;
+		}
+		if (toolQueue.abort != null) {
+			if (!toolQueue.abort.isDone()) return;
+			ToolExecutionOutcome outcome;
+			try { outcome = toolQueue.abort.join(); }
+			catch (CompletionException error) { outcome = new TextToolExecutionOutcome(failedToolResultText(toolQueue.abortCall, error)); }
+			if (!PlannerQueueToolProvider.CONTINUE.equals(toolQueue.abortCall.name())
+				|| outcome.toolResultText().startsWith("TOOL_ERROR:")) queueReport(toolQueue.abortCall, outcome);
+			toolQueue.abort = null;
+			if (PlannerQueueToolProvider.CLEAR.equals(toolQueue.abortCall.name()) && outcome.toolResultText().startsWith("TOOL_ERROR:")) toolQueue.tools.clear((call, id) -> {});
+		}
+		var completion = toolQueue.tools.tick(call -> {
+			narrationSink.onToolNarration(call);
+			return requestPlannerTools(List.of(call), contextAggregator.retainedToolContext());
+		}, outcome -> ongoingWorkId(outcome.toolResultText()), id -> terminalQueuedWork(id, context),
+			!queueReflexActive && (toolQueue.tools.active() == null || !toolRegistry.endsTurn(toolQueue.tools.active().name())));
+		if (completion != null) {
+			ToolExecutionOutcome outcome = completion.failure() != null
+				? new TextToolExecutionOutcome(failedToolResultText(completion.call(), completion.failure()))
+				: completion.workOutcome() != null ? new TextToolExecutionOutcome(completion.workOutcome()) : completion.result();
+			queueReport(completion.call(), outcome);
+			if (!outcome.toolResultText().startsWith("TOOL_ERROR:") && !outcome.toolResultText().startsWith("TOOL_UNAVAILABLE:"))
+				toolRegistry.afterResultCommitted(completion.call().name());
+		}
+		// A quiet interval gathers quick chains; a hard bound prevents slow calls starving reports.
+		if (toolQueue.reports.isEmpty() || toolQueue.seed == null || sessionCoordinator.hasInFlight()
+			|| pendingToolExecution != null || awaitingAcceptedReplyRecord || compactionService.hasInFlight()) return;
+		long now = clock.millis();
+		boolean nextReadRunning = toolQueue.tools.active() != null && toolRegistry.isReadTool(toolQueue.tools.active().name());
+		if ((now - toolQueue.lastResultMs < 250 || nextReadRunning) && now - toolQueue.firstResultMs < 1000) return;
+		PlannerRequest seed = toolQueue.seed;
+		submit(PlannerRequest.ofTrigger(toolQueue.observationTick, now, seed.sessionMode(), seed.primaryInteractionPlayer(), seed.activeGoal(),
+			PlannerTriggerType.SYSTEM, "tool_queue", "Queued tools produced results. Review the results and current TOOL QUEUE; execution continues independently.", null)
+			.withSafetyContext(minimumSafetyEpoch, currentSafetyHoldId));
+	}
+
+	private void queueReport(PlannerToolCall call, ToolExecutionOutcome outcome) {
+		if (toolQueue.reports.isEmpty()) toolQueue.firstResultMs = clock.millis();
+		toolQueue.lastResultMs = clock.millis();
+		toolQueue.reports.put(call.id(), new ToolExecutionResult(call, outcome.toolResultText(), outcome.hasImageAttachment()));
+		if (outcome instanceof ImageToolExecutionOutcome image) toolQueue.images.put(call.id(), image.imageAttachment());
+		debugRecorder.recordTerminalTool(toolQueue.observationTick, call, outcome.toolResultText(), outcome.hasImageAttachment());
+		lifecycleListener.onToolExchange(call, outcome.toolResultText(), outcome.hasImageAttachment());
+		lifecycleListener.onToolCompleted(0, outcome.toolResultText(), outcome.hasImageAttachment());
+	}
+
+	private static String ongoingWorkId(String text) {
+		int start = text.indexOf(": ");
+		if (!text.startsWith("Tool result for ") || start < 0) return null;
+		try {
+			var receipt = com.google.gson.JsonParser.parseString(text.substring(start + 2)).getAsJsonObject();
+			return receipt.has("accepted") && receipt.get("accepted").getAsBoolean() && receipt.has("workId") && receipt.has("state")
+				&& List.of("QUEUED", "RUNNING", "WAITING", "PAUSED").contains(receipt.get("state").getAsString())
+				? receipt.get("workId").getAsString() : null;
+		} catch (IllegalStateException | IllegalArgumentException | com.google.gson.JsonParseException error) { return null; }
+	}
+
+	private static String terminalQueuedWork(String workId, PlannerDecisionContext context) {
+		if (context == null) return null;
+		Object entries = context.current().get("work");
+		if (entries instanceof List<?> work) for (Object entry : work) {
+			if (entry instanceof Map<?, ?> value && workId.equals(value.get("workId"))
+				&& List.of("SUCCEEDED", "FAILED", "CANCELLED").contains(String.valueOf(value.get("state"))))
+				return "Work outcome: " + GSON.toJson(ai.moeru.airicraft.agent.work.WorkSnapshot.summarize(value));
+		}
+		return null;
+	}
+
+	private LlmConversation appendQueueContext(LlmConversation conversation) {
+		if (!usesToolQueue()) return conversation;
+		var remaining = new java.util.LinkedHashMap<>(toolQueue.reports);
+		var messages = new ArrayList<LlmChatMessage>();
+		for (var message : conversation.messages()) {
+			// Queue snapshots are current state, not growing historical narration.
+			if (message.content().startsWith("TOOL QUEUE:")) continue;
+			var report = remaining.remove(message.toolCallId());
+			if (report == null) messages.add(message);
+			else messages.add(new LlmChatMessage("tool", report.toolResultText(), LlmMessageKind.TOOL_RESULT,
+				toolQueue.images.get(message.toolCallId()), null, List.of(), message.toolCallId()));
+		}
+		// Provider-managed history and role handoffs may not carry local tool envelopes.
+		for (var report : remaining.values()) {
+			String text = "Execution result for " + report.toolCall().id() + " (" + report.toolCall().name() + "): " + report.toolResultText();
+			var image = toolQueue.images.get(report.toolCall().id());
+			messages.add(image == null ? LlmChatMessage.user(text, LlmMessageKind.TOOL_RESULT)
+				: LlmChatMessage.userWithImage(text, LlmMessageKind.TOOL_RESULT, image));
+		}
+		if (plannerExecutor.managesConversationHistory()) backendHistoryImages += toolQueue.images.size();
+		toolQueue.reports.clear(); toolQueue.images.clear();
+		var state = new java.util.LinkedHashMap<String, Object>();
+		state.put("active", toolQueue.tools.active() == null ? null : queuedCallView(toolQueue.tools.active()));
+		state.put("workId", toolQueue.tools.activeWorkId());
+		state.put("pending", toolQueue.tools.pending().stream().map(PlannerOrchestrator::queuedCallView).toList());
+		state.put("aborting", toolQueue.abort != null);
+		messages.add(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(state)
+			+ "\nExecution continues while you think. continue retains the plan and resumes resolved safety holds; clear_queue aborts active work and discards pending calls.", LlmMessageKind.NOTICE));
+		return LlmConversation.of(messages);
+	}
+
+	private static Map<String, Object> queuedCallView(PlannerToolCall call) {
+		return Map.of("id", call.id(), "name", call.name(), "arguments", call.arguments());
+	}
+
 	private PlannerExecutionResult startToolExecution(PlannerExecutionResult plannerResult, List<PlannerToolCall> toolCalls) {
 		PlannerExecutionResult promotionFailure = promoteBackendCandidate(plannerResult);
 		if (promotionFailure != null) {
@@ -765,7 +1011,7 @@ public final class PlannerOrchestrator {
 		pendingToolExecution = new PendingToolExecution(
 			plannerResult.generation(),
 			toolCallsSummary(toolCalls),
-			requestPlannerTools(toolCalls),
+			requestPlannerTools(toolCalls, sessionCoordinator.conversationFor(plannerResult.generation())),
 			plannerResult.response().rawAssistantContent(),
 			toolCalls
 		);
@@ -822,7 +1068,8 @@ public final class PlannerOrchestrator {
 	}
 
 	public boolean startDebugCompaction() {
-		if (!enabled || !isConfigured() || hasInFlight() || plannerExecutor.managesConversationHistory()) {
+		if (!enabled || !isConfigured() || hasInFlight() || fullCompactionWaitingForMicro()
+			|| plannerExecutor.managesConversationHistory()) {
 			return false;
 		}
 		lastCompactionResult = null;
@@ -854,10 +1101,14 @@ public final class PlannerOrchestrator {
 		cancelPendingTool();
 		sessionCoordinator.shutdown();
 		compactionService.shutdown();
+		plannerVision.close();
+		contextAggregator.closeMicroCompaction();
 		clearRuntimeState("shutdown");
 	}
 
 	private void clearRuntimeState(String reason) {
+		backendHistoryImages = 0;
+		deferredWorkReceipts.clear();
 		contextAggregator.clear();
 		toolRegistry.resetToolSurface();
 		turnJournal.clear(reason);
@@ -956,6 +1207,7 @@ public final class PlannerOrchestrator {
 		if (sessionCoordinator.hasInFlight() || pendingToolExecution != null || compactionService.hasInFlight()) {
 			return true;
 		}
+		if (fullCompactionWaitingForMicro()) return true;
 		// The HTTP adapter prefixes errors with their status. Validation/auth failures cannot
 		// recover by resending this history. Preserve it and the visible failure until explicit
 		// debug compaction or reset; timeouts, rate limits and server errors remain retryable.
@@ -965,6 +1217,10 @@ public final class PlannerOrchestrator {
 			return false;
 		}
 		return compactionService.submit(contextAggregator.buildCompactionConversation());
+	}
+
+	private boolean fullCompactionWaitingForMicro() {
+		return contextAggregator.microCompactionInFlight();
 	}
 
 	private boolean startOverflowFlushIfIdle() {
@@ -1172,10 +1428,14 @@ public final class PlannerOrchestrator {
 			);
 		}
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
-		contextAggregator.retainConversation(completedToolConversation);
+		completedToolConversation = contextAggregator.retainConversation(completedToolConversation);
+		if (plannerExecutor.managesConversationHistory() && toolOutcome.hasImageAttachment()) backendHistoryImages++;
 		// Completed effects remain evidence even when safety invalidates the next decision.
 		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
 			&& !toolOutcome.toolResultText().startsWith("TOOL_ERROR:");
+		for (ToolExecutionResult result : toolResults) {
+			if (deferredWorkReceipts.defer(result.toolCall(), result.toolResultText())) terminalTool = true;
+		}
 		boolean safetyContextChanged = isStaleSafetyRequest(snapshot.request());
 		boolean toolMayReleaseHold = toolExecution.toolCalls().stream().anyMatch(PlannerOrchestrator::isSideEffectTool);
 		boolean sameEpochHoldRelease = safetyContextChanged
@@ -1217,12 +1477,29 @@ public final class PlannerOrchestrator {
 		return null;
 	}
 
-	private CompletableFuture<ToolExecutionOutcome> requestPlannerTools(List<PlannerToolCall> toolCalls) {
+	private CompletableFuture<ToolExecutionOutcome> requestPlannerTools(List<PlannerToolCall> toolCalls, LlmConversation conversation) {
 		if (toolCalls == null || toolCalls.isEmpty()) {
 			return CompletableFuture.completedFuture(new TextToolExecutionOutcome("Tool result: none"));
 		}
 		if (toolCalls.size() == 1) {
-			return requestPlannerTool(toolCalls.getFirst());
+			PlannerToolCall call = toolCalls.getFirst();
+			boolean atImageLimit = Math.max(backendHistoryImages, PlannerVisionService.imageCount(conversation)) + toolQueue.images.size() >= plannerMaxImages;
+			return requestPlannerTool(call).thenCompose(outcome -> {
+				if (!atImageLimit || visionMode != PlannerVisionMode.NATIVE_TOOL_IMAGE
+					|| !(outcome instanceof ImageToolExecutionOutcome image)) {
+					return CompletableFuture.completedFuture(outcome);
+				}
+				String prompt = providerImagePrompt(call, image.toolResultText()) + "\nRequested focus: " + toolPrompt(call);
+				return plannerVision.describe(image.imageAttachment(), prompt).<ToolExecutionOutcome>handle((text, failure) -> {
+					// The metadata remains available, but do not claim an image was attached to this conversation.
+					String metadata = image.toolResultText().replace("current first-person view attached.", "current first-person view captured.");
+					if (failure != null) {
+						Airicraft.LOGGER.warn("Planner image fallback failed tool={}", call.name(), failure);
+						return new TextToolExecutionOutcome(metadata + "\nVISION_UNAVAILABLE: planner_vision_failed (image not attached)");
+					}
+					return new TextToolExecutionOutcome(metadata + "\nVision summary (fresh planner context; image not attached): " + text);
+				});
+			});
 		}
 		List<CompletableFuture<ToolExecutionResult>> futures = toolCalls.stream()
 			.map(toolCall -> requestPlannerTool(toolCall).handle((outcome, throwable) -> {
@@ -1432,6 +1709,10 @@ public final class PlannerOrchestrator {
 	}
 
 	private void cancelPendingTool() {
+		toolQueue.tools.clear((call, workId) -> {});
+		toolQueue.reports.clear(); toolQueue.images.clear();
+		if (toolQueue.abort != null) toolQueue.abort.cancel(true);
+		toolQueue.abort = null;
 		if (pendingToolExecution != null) {
 			pendingToolExecution.future().cancel(true);
 			pendingToolExecution = null;
