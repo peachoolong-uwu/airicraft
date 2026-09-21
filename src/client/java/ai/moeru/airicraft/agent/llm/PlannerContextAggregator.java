@@ -487,6 +487,7 @@ public final class PlannerContextAggregator {
 	public void refreshMicroCompaction() {
 		if (retainedConversation != null && microCompactor != null) retainedConversation = microCompactor.update(retainedConversation);
 	}
+	public boolean microCompactionInFlight() { return microCompactor != null && microCompactor.hasInFlight(); }
 	public void closeMicroCompaction() { if (microCompactor != null) microCompactor.close(); }
 	public LlmConversation retainConversation(LlmConversation conversation) {
 		if (microCompactor != null) conversation = microCompactor.update(conversation);

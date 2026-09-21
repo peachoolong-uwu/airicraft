@@ -1068,7 +1068,8 @@ public final class PlannerOrchestrator {
 	}
 
 	public boolean startDebugCompaction() {
-		if (!enabled || !isConfigured() || hasInFlight() || plannerExecutor.managesConversationHistory()) {
+		if (!enabled || !isConfigured() || hasInFlight() || fullCompactionWaitingForMicro()
+			|| plannerExecutor.managesConversationHistory()) {
 			return false;
 		}
 		lastCompactionResult = null;
@@ -1206,6 +1207,7 @@ public final class PlannerOrchestrator {
 		if (sessionCoordinator.hasInFlight() || pendingToolExecution != null || compactionService.hasInFlight()) {
 			return true;
 		}
+		if (fullCompactionWaitingForMicro()) return true;
 		// The HTTP adapter prefixes errors with their status. Validation/auth failures cannot
 		// recover by resending this history. Preserve it and the visible failure until explicit
 		// debug compaction or reset; timeouts, rate limits and server errors remain retryable.
@@ -1215,6 +1217,10 @@ public final class PlannerOrchestrator {
 			return false;
 		}
 		return compactionService.submit(contextAggregator.buildCompactionConversation());
+	}
+
+	private boolean fullCompactionWaitingForMicro() {
+		return contextAggregator.microCompactionInFlight();
 	}
 
 	private boolean startOverflowFlushIfIdle() {

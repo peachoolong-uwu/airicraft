@@ -6,7 +6,7 @@ Normal planning and FIFO execution continue with raw results while the pass runs
 
 Completed findings replace only their matching source result in future context, preserving the original call/result identity. A request already in flight keeps its immutable snapshot. Replacement records also prevent a later response based on that snapshot from restoring old raw results. Summaries are short-term context, not persistent memory; raw debug/flight recordings remain intact. Delegation evidence is updated separately, without pretending a tool executed.
 
-Full compaction does not wait for micro-compaction. Its input is an immutable snapshot containing whichever representation was available when it started. Successful full compaction starts a new context epoch: pending micro-work is cancelled and its replacement cache is discarded. Late results cannot restore observations absorbed by the checkpoint. If full compaction fails, the original context remains available and micro-compaction may still finish. Reset and world changes clear the same state.
+Full compaction waits for pending micro-compaction to finish, so its immutable input contains the completed finding or the original evidence when micro-compaction failed. Successful full compaction starts a new context epoch and discards the replacement cache. If full compaction fails, the original context remains available. Reset and world changes cancel pending micro-work and clear the same state.
 
 Micro-compaction failures retain raw evidence and do not consume planner repair attempts or degrade the planner. The same failed observation is not retried on every tick; ordinary full compaction can still absorb it. The existing configuration restriction to OpenAI-compatible planner history remains.
 

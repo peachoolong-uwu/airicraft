@@ -56,6 +56,7 @@ public final class PlannerMicroCompactor implements AutoCloseable {
 	PlannerMicroCompactor(Function<LlmConversation, CompletableFuture<String>> completion) {
 		this.completion = completion; this.references = new PlannerReferences();
 	}
+	boolean hasInFlight() { return inFlight != null; }
 
 	public LlmConversation update(LlmConversation conversation) {
 		if (conversation == lastOutput && (inFlight == null || !inFlight.isDone())) return conversation;

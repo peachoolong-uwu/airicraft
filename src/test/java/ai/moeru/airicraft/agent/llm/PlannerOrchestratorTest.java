@@ -89,6 +89,7 @@ class PlannerOrchestratorTest {
 			assertTrue(awaitResult(orchestrator).succeeded());
 			assertTrue(conversations.get(1).messages().stream().anyMatch(m -> m.content().contains("RAW_WALL_BLOCK_LIST_12345")));
 			assertFalse(micro.isDone(), "Normal planner responded while micro-compaction remained pending");
+			assertFalse(orchestrator.startDebugCompaction(), "Full compaction must wait for pending micro-compaction");
 			micro.complete("{\"findings\":[" + args + "]}");
 			orchestrator.onAcceptedReplyRecorded();
 			orchestrator.submit(request("Continue the repair", 2));

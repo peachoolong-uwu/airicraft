@@ -15,9 +15,15 @@ failure; recorder collection time must not be mistaken for request dispatch time
 ## Decision
 
 Game-owned observations and work outcomes exist independently of requests to wake a
-model. Each model role incorporates identified evidence into its own append-only
-conversation before a gameplay decision. Transport retries reuse the request. A new
-job or human instruction may supersede a wakeup, never the effects of earlier work.
+model. Each model role incorporates identified evidence into its own bounded
+conversation before a gameplay decision. Raw exchanges remain immutable in the
+recorder and work history, while the retained request projection may replace one
+identified tool result in place: a queued acknowledgement with its execution result,
+or raw inspection evidence with its validated micro-compaction finding. Replacements
+preserve tool-call identity and pairing. Full compaction waits for pending
+micro-compaction, then establishes a new checkpoint epoch. Transport retries reuse
+their frozen request. A new job or human instruction may supersede a wakeup, never the
+effects of earlier work.
 
 Expose one work lifecycle over existing direct jobs, graph executions and background
 processes. Keep their executors and single foreground actuator boundary. System 2 may
@@ -36,9 +42,13 @@ Target/search constraints select resources. Explicit travel restrictions govern 
 and edits. Report failed predicates and actual positions; use bounded local geometry
 queries for support, clearance and interaction feasibility.
 
-Freeze cleaned-up typed tools independently for each role. Discovery is catalog help,
-not dynamic schema activation. Retain separate prefix-stable histories. Preserve bounded
-recording and explicit overflow gaps; do not introduce unbounded event sourcing.
+Freeze the cleaned-up native typed-tool prefix independently for each role. Discovery
+is catalog help, not dynamic activation of native tools. Session-local self-authored
+read-only query tools are the explicit exception: their schemas form a mutable suffix
+managed by `define_tool`, `inspect_tool`, and `remove_tool`; they cannot replace native
+tools. Retain separate histories with stable system/native-schema prefixes. Preserve
+bounded recording and explicit overflow gaps; do not introduce unbounded event
+sourcing.
 
 ## Ownership and limits
 
@@ -49,7 +59,7 @@ recording and explicit overflow gaps; do not introduce unbounded event sourcing.
 | Controller and objective store | Overall objective, constraints, criteria, blockers and named decisions. |
 | Thinker and delegation | Bounded assignment, private reasoning/history, claimed return outcome and shared evidence references. |
 | Survival reflex | Temporary actuator ownership; does not own or silence System2 decisions. |
-| Per-role orchestrator | Fresh decision boundary, incorporated cursor, frozen transport attempts, stale response rejection and fixed schema prefix. |
+| Per-role orchestrator | Fresh decision boundary, incorporated cursor, frozen transport attempts, stale response rejection, fixed native-schema prefix and session-local read-only self-tool suffix. |
 
 Work history retains128 terminal entries plus unresolved work. Ordinary decisions include concise unresolved work and newly incorporated outcome events; initial context, compaction and event gaps also refresh the latest8 terminal summaries. inspect_work retains full request/evidence detail. Shared semantic evidence is bounded512events, with explicit gaps. Goal notes are bounded16names and replaced goals32entries. The recorder remains a separate12000server-tick/64MiB diagnostic window.
 
@@ -76,8 +86,9 @@ configure_pathfind keeps atomic native validation and all non-Java settings, but
   wakes; observed release and explicit resume through the current work/hold identity.
 - [x] Constraints and spatial queries: search/travel separation; full movement restrictions;
   forced-displacement reporting; failed predicates; bounded support/clearance/reach/LOS queries.
-- [x] Tool surface/prompts: unified lifecycle; free choice of action detail; fixed typed schemas;
-  catalog-only discovery; preserve actual capabilities, evidence checks and user constraints.
+- [x] Tool surface/prompts: unified lifecycle; free choice of action detail; fixed native typed
+  schemas; catalog-only native discovery; bounded session-local read-only self tools; preserve
+  actual capabilities, evidence checks and user constraints.
 - [x] Full build after each integrated subsystem; focused regressions; actual configured planner
   resource gathering, shelter repair, chest/furnace interaction and reflex-interruption trials.
   Measure redundant reads, outcome latency, repeated failures and time to productive action.
