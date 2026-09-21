@@ -15,6 +15,11 @@ public class MinecraftClientTickDebugMixin {
 		value = "INVOKE", target = "Lnet/minecraft/client/MinecraftClient;tick()V"
 	))
 	private boolean airicraft$gateClientTick(MinecraftClient client) {
+		// During world join the interaction manager exists before the player
+		// entity; vanilla skips tick() in that window, so we must too.
+		if (client.player == null) {
+			return false;
+		}
 		return AiricraftClient.runtimeController().clientTickDebugRuntime().beginClientTick();
 	}
 

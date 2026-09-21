@@ -52,6 +52,7 @@ public abstract class SectionBuilderMixin {
 			wrapped = new AlphaVertexConsumer(wrapped, LEAF_ALPHA);
 		}
 		if (service != null && service.tintContains(pos)) {
+			WorldCameraService.TINT_HITS.incrementAndGet();
 			wrapped = new ai.moeru.airicraft.TintedVertexConsumer(wrapped, 0x3080FF, 0.8f);
 		}
 		original.call(manager, state, pos, world, matrices, wrapped, cull, overlayVertices);
