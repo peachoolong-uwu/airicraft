@@ -3,6 +3,7 @@
 	"package": "ai.moeru.airicraft.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"BaritoneBlockBreakMixin",
 		"BaritoneCalculationContextMixin",
 		"BaritoneTravelBoundsMixin",
 		"BaritoneTravelExecutionMixin",

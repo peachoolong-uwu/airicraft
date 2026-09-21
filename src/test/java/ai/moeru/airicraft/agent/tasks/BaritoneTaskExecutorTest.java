@@ -126,17 +126,6 @@ class BaritoneTaskExecutorTest {
 		assertEquals(List.of(12.0D, 3.0D), facade.waterPenaltyChanges);
 	}
 
-	@Test
-	void miningToolPreflightPrefersFasterEligibleToolForOptionalToolBlocks() {
-		assertTrue(BaritoneTaskExecutor.MiningToolPreflight.isBetterMiningTool(
-			new BaritoneTaskExecutor.MiningToolPreflight.ToolScore(true, 4.0F),
-			new BaritoneTaskExecutor.MiningToolPreflight.ToolScore(true, 1.0F)
-		));
-		assertTrue(BaritoneTaskExecutor.MiningToolPreflight.isBetterMiningTool(
-			new BaritoneTaskExecutor.MiningToolPreflight.ToolScore(true, 4.0F),
-			new BaritoneTaskExecutor.MiningToolPreflight.ToolScore(false, 8.0F)
-		));
-	}
 
 	@Test
 	void navigateGoalStartsOnceAndReportsRunning() {

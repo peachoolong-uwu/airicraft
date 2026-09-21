@@ -328,10 +328,15 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 			clearHeadroomBreakState(client);
 			return Optional.of(new HeadroomClearance("towering:headroom_cleared", false, null));
 		}
+		MiningToolPreparation.Result tool = MiningToolPreparation.ensureSelected(client, player, List.of(state));
+		if (!tool.ok()) {
+			clearHeadroomBreakState(client);
+			return Optional.of(new HeadroomClearance("towering:" + tool.message(), true,
+				TaskFailure.of(TaskFailureCode.MISSING_ITEM, tool.message())));
+		}
 		long tick = client.world.getTime();
 		if (headroomBreakTarget == null || !headroomBreakTarget.equals(target)) {
 			clearHeadroomBreakState(client);
-			selectHotbarHeadroomTool(client, player);
 			boolean accepted = client.interactionManager.attackBlock(target, Direction.DOWN);
 			if (!accepted) {
 				return Optional.of(new HeadroomClearance(
@@ -350,7 +355,6 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 			));
 		}
 		jumpKeyControl.release(client.options.jumpKey);
-		selectHotbarHeadroomTool(client, player);
 		client.interactionManager.updateBlockBreakingProgress(target, Direction.DOWN);
 		player.swingHand(Hand.MAIN_HAND);
 		BlockState after = client.world.isChunkLoaded(target) ? client.world.getBlockState(target) : state;
@@ -361,36 +365,8 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 		return Optional.of(new HeadroomClearance("towering:clearing_headroom", false, null));
 	}
 
-	private static boolean selectHotbarHeadroomTool(MinecraftClient client, ClientPlayerEntity player) {
-		return selectHotbarItemSuffix(client, player, "_pickaxe")
-			|| selectHotbarItemSuffix(client, player, "_shovel")
-			|| selectHotbarItemSuffix(client, player, "_axe");
-	}
-
-	static boolean shouldSelectHeadroomTool(String itemId, String suffix) {
-		return itemId != null && suffix != null && itemId.endsWith(suffix);
-	}
-
 	static boolean towerSupportUnavailableTimedOut(int unavailableTicks) {
 		return unavailableTicks >= TOWER_SUPPORT_UNAVAILABLE_TIMEOUT_TICKS;
-	}
-
-	private static boolean selectHotbarItemSuffix(MinecraftClient client, ClientPlayerEntity player, String suffix) {
-		if (client == null || player == null || suffix == null) {
-			return false;
-		}
-		for (int slot = 0; slot < 9; slot++) {
-			ItemStack stack = player.getInventory().getStack(slot);
-			if (stack == null || stack.isEmpty()) {
-				continue;
-			}
-			String itemId = Registries.ITEM.getId(stack.getItem()).toString();
-			if (shouldSelectHeadroomTool(itemId, suffix)) {
-				selectAndSyncHotbarSlot(client, player, slot);
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private void clearHeadroomBreakState(MinecraftClient client) {

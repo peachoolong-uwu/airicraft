@@ -112,8 +112,8 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 		cameraController.lookAtNow(client, Vec3d.ofCenter(pos));
 		long tick = sessionSnapshot == null ? 0L : sessionSnapshot.tickCount();
 		if (!breakingActive) {
-			BaritoneTaskExecutor.MiningToolPreflight.Result toolSelection =
-				BaritoneTaskExecutor.MiningToolPreflight.ensureSelected(client, player, List.of(state));
+			MiningToolPreparation.Result toolSelection =
+				MiningToolPreparation.ensureSelected(client, player, List.of(state));
 			if (!toolSelection.ok()) {
 				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_ITEM, toolSelection.message()));
 			}

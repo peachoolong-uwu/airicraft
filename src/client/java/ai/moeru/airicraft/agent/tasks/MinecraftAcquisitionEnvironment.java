@@ -239,7 +239,7 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		cameraController.lookAtNow(client, hit.getPos());
 		if (!pos.equals(breaking)) {
 			cancelBreaking();
-			var result = BaritoneTaskExecutor.MiningToolPreflight.ensureSelected(client, client.player,
+			var result = MiningToolPreparation.ensureSelected(client, client.player,
 				List.of(client.world.getBlockState(pos)), pos.equals(block(target.position())) ? spec.requiredToolItemIds() : List.of());
 			if (!result.ok()) return new ToolFailure(result.message());
 			if (!client.interactionManager.attackBlock(pos, hit.getSide())) return BreakStatus.FAILED;
