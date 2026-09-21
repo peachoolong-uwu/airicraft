@@ -27,8 +27,13 @@ public abstract class BaritoneBlockBreakMixin {
 		if (ctx.player().isCreative()) return;
 		// This invocation is reached only for a requested attack with a block hit.
 		BlockHitResult hit = (BlockHitResult) ctx.objectMouseOver();
-		var result = MiningToolPreparation.ensureSelected(ctx.minecraft(), ctx.player(),
-			List.of(ctx.world().getBlockState(hit.getBlockPos())));
+		var state = ctx.world().getBlockState(hit.getBlockPos());
+		var mine = BaritoneAPI.getProvider().getBaritoneForPlayer(ctx.player()).getMineProcess();
+		var filter = ((BaritoneMineProcessAccessor) mine).airicraft$miningFilter();
+		boolean harvesting = mine.isActive() && filter != null && filter.has(state);
+		var result = harvesting
+			? MiningToolPreparation.ensureSelected(ctx.minecraft(), ctx.player(), List.of(state))
+			: MiningToolPreparation.ensureSelectedForClearance(ctx.minecraft(), ctx.player(), List.of(state));
 		if (!result.ok()) {
 			stopBreakingBlock();
 			BaritoneAPI.getProvider().getBaritoneForPlayer(ctx.player()).getPathingBehavior().cancelEverything();

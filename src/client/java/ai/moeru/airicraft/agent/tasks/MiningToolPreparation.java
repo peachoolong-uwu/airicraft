@@ -22,6 +22,15 @@ public final class MiningToolPreparation {
 	public static Result ensureSelected(
 		MinecraftClient client, ClientPlayerEntity player, List<BlockState> targets, List<String> requiredToolItemIds
 	) {
+		return ensureSelected(client, player, targets, requiredToolItemIds, true);
+	}
+
+	public static Result ensureSelectedForClearance(MinecraftClient client, ClientPlayerEntity player, List<BlockState> targets) {
+		return ensureSelected(client, player, targets, List.of(), false);
+	}
+
+	private static Result ensureSelected(MinecraftClient client, ClientPlayerEntity player, List<BlockState> targets,
+		List<String> requiredToolItemIds, boolean requireDrops) {
 		if (player.currentScreenHandler != player.playerScreenHandler
 			|| !player.currentScreenHandler.getCursorStack().isEmpty() || player.isUsingItem()) {
 			return Result.failed("inventory_unavailable_for_tool_selection");
@@ -29,8 +38,10 @@ public final class MiningToolPreparation {
 		Set<String> required = requiredToolItemIds == null ? Set.of() : Set.copyOf(requiredToolItemIds);
 		var inventory = player.getInventory();
 		int selectedSlot = inventory.getSelectedSlot();
-		int sourceSlot = MiningToolSelection.preferredSlot(selectedSlot,
-			slot -> score(inventory.getStack(slot), targets, required));
+		java.util.function.IntFunction<MiningToolSelection.Score> scores =
+			slot -> score(inventory.getStack(slot), targets, required);
+		int sourceSlot = requireDrops ? MiningToolSelection.preferredSlot(selectedSlot, scores)
+			: MiningToolSelection.preferredClearanceSlot(selectedSlot, scores);
 		if (sourceSlot < 0) {
 			return Result.failed(required.isEmpty()
 				? "missing_suitable_tool blockIds=" + blockIds(targets)
@@ -51,7 +62,8 @@ public final class MiningToolPreparation {
 			}
 		}
 		MiningToolSelection.Score actual = score(inventory.getSelectedStack(), targets, required);
-		return actual.eligible() && actual.speed() >= expected.speed()
+		return (requireDrops ? actual.eligible() && actual.speed() >= expected.speed()
+			: MiningToolSelection.clearanceSpeed(actual) >= MiningToolSelection.clearanceSpeed(expected))
 			? Result.success() : Result.failed("tool_selection_failed blockIds=" + blockIds(targets));
 	}
 

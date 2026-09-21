@@ -19,5 +19,17 @@ final class MiningToolSelection {
 		return bestSlot;
 	}
 
+	static int preferredClearanceSlot(int selectedSlot, IntFunction<Score> scoreAt) {
+		return preferredSlot(selectedSlot, slot -> {
+			Score score = scoreAt.apply(slot);
+			return new Score(true, clearanceSpeed(score));
+		});
+	}
+
+	static float clearanceSpeed(Score score) {
+		// Vanilla divides break progress by 30 when harvestable, otherwise by 100.
+		return score.speed() * (score.eligible() ? 1.0F : 0.3F);
+	}
+
 	record Score(boolean eligible, float speed) {}
 }

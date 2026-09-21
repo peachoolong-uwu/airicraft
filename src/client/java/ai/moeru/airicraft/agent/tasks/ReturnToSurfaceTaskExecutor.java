@@ -337,7 +337,7 @@ public final class ReturnToSurfaceTaskExecutor implements WorldTaskExecutor {
 			clearHeadroomBreakState(client);
 			return Optional.of(new HeadroomClearance("towering:headroom_cleared", false, null));
 		}
-		MiningToolPreparation.Result tool = MiningToolPreparation.ensureSelected(client, player, List.of(state));
+		MiningToolPreparation.Result tool = MiningToolPreparation.ensureSelectedForClearance(client, player, List.of(state));
 		if (!tool.ok()) {
 			clearHeadroomBreakState(client);
 			return Optional.of(new HeadroomClearance("towering:" + tool.message(), true,
