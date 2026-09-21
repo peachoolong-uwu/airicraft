@@ -18,6 +18,7 @@
 		"ClientPlayerEntityAccessor",
 		"CraftingResultSlotMixin",
 		"GameRendererMixin",
+		"LightmapTextureManagerMixin",
 		"GameRendererPauseMixin",
 		"MessageHandlerMixin",
 		"MinecraftClientTickDebugMixin",
