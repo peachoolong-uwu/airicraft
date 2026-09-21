@@ -189,6 +189,7 @@ public final class ModBridgeServer {
 			httpServer.createContext("/v1/map/waypoints", this::handleMapWaypoints);
 			httpServer.createContext("/v1/map/image", this::handleMapImage);
 			httpServer.createContext("/v1/player/look-at", this::handlePlayerLookAt);
+			httpServer.createContext("/v1/player/command", this::handlePlayerCommand);
 			httpServer.createContext("/v1/player/attack-entity", this::handlePlayerAttackEntity);
 			httpServer.createContext("/v1/player/use-entity", this::handlePlayerUseEntity);
 			httpServer.createContext("/v1/highlights", this::handleHighlights);
@@ -355,6 +356,24 @@ public final class ModBridgeServer {
 			catch (PlayerViewService.PlayerViewException exception) {
 				throw new BridgeUnavailableException(exception.code(), exception.getMessage());
 			}
+		});
+	}
+
+	private void handlePlayerCommand(HttpExchange exchange) throws IOException {
+		handleJsonBody(exchange, "POST", PlayerCommandRequest.class, request -> {
+			if (request == null || request.command() == null || request.command().isBlank()) {
+				throw new BridgeUnavailableException("invalid_request", "Missing command");
+			}
+			return onClientThread(() -> {
+				var client = getClient();
+				ensureWorldLoaded(client);
+				String command = request.command().trim();
+				if (command.startsWith("/")) {
+					command = command.substring(1);
+				}
+				client.player.networkHandler.sendChatCommand(command);
+				return Map.of("sent", true, "command", command);
+			});
 		});
 	}
 
@@ -2692,6 +2711,9 @@ public final class ModBridgeServer {
 	}
 
 	private record LookAtRequest(Double x, Double y, Double z, Integer durationTicks) {
+	}
+
+	private record PlayerCommandRequest(String command) {
 	}
 
 	private record TacticalCameraRequest(
