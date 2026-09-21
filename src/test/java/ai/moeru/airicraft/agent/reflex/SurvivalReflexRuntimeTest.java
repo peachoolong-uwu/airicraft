@@ -360,6 +360,8 @@ class SurvivalReflexRuntimeTest {
 		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(fleeing, 8, -1, 0, false));
 		assertTrue(SurvivalReflexRuntime.creeperEscapeActive(true, 8, -1, .1F, false));
 		assertTrue(SurvivalReflexRuntime.creeperEscapeActive(true, 8, -1, 0, true));
+		assertTrue(SurvivalReflexRuntime.creeperEscapeActive(true, 10, 1, .1F, true));
+		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(true, 10.01, 1, .1F, true));
 		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(true, 14, -1, 0, true));
 		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(false, 2, -1, 0, false));
 	}

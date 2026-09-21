@@ -677,8 +677,9 @@ public final class SurvivalReflexRuntime {
 	}
 
 	static boolean creeperEscapeActive(boolean previous, double distance, int fuseSpeed, float fuseProgress, boolean charged) {
+		if (distance > 10) return false;
 		return fuseSpeed > 0 || fuseProgress >= .2F
-			|| previous && (fuseProgress > 0 || distance < (charged ? 14 : 8));
+			|| previous && (fuseProgress > 0 || distance < (charged ? 10 : 8));
 	}
 
 	static boolean shouldBlockCreeper(double distance, int fuseSpeed, float fuseProgress, boolean charged) {

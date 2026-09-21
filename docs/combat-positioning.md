@@ -27,12 +27,16 @@ observed approach. Mob observations refresh each tick; a half-block displacement
 Ranged enemies do not gain fictional contact damage; navigation closes to melee
 range. Incoming thrown potions add predicted splash-impact avoidance costs.
 
-An igniting creeper within seven blocks temporarily overrides movement focus.
-Cooldown or fuse progress >=20% requests five-block separation; ready approaches
-request sprint when hunger permits. Attacks stop at >=20% fuse. The shield is a
-late fallback at >=70% fuse, not an intentional explosion strategy. Bow guarding
-starts at draw tick 14 of 20, or for incoming collision-course arrows, with a
-six-tick warning hold. These thresholds are heuristics, not guaranteed escapes.
+An igniting creeper at most ten blocks away temporarily overrides movement focus.
+The escape latch opens toward eight-block separation for a normal creeper and
+fourteen for a charged creeper, but always releases beyond ten blocks. After a fuse
+reset it remains active below eight blocks for a normal creeper and below ten for a
+charged one. A non-latched cooldown or fuse progress >=20% requests five-block
+separation; sprint escape turns toward the route when hunger and terrain permit.
+Attacks stop while escape is latched or at >=20% fuse. The shield is a late fallback
+at >=70% fuse, not an intentional explosion strategy. Bow guarding starts at draw
+tick 14 of 20, or for incoming collision-course arrows, with a six-tick warning hold.
+These thresholds are heuristics, not guaranteed escapes.
 
 For a melee target already approaching within 3.5 blocks, next-step spacing uses
 its measured horizontal velocity to anticipate up to four ticks of motion, capped
