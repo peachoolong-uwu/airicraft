@@ -54,10 +54,11 @@ def main():
         path.write_bytes(base64.b64decode(result["imageBase64"]))
         return Image.open(path).convert("RGB")
 
-    leaf_off = capture("leaf-off")
-    leaf_on = capture("leaf-on", fadeLeaves=True)
     box_off = capture("box-off")
     box_on = capture("box-on", queryBox=QUERY_BOX)
+    box_cleared = capture("box-cleared")
+    leaf_off = capture("leaf-off")
+    leaf_on = capture("leaf-on", fadeLeaves=True)
     capture("combined", fadeLeaves=True, queryBox=QUERY_BOX)
 
     leaf_area = (0, 20, 300, 420)
@@ -75,11 +76,18 @@ def main():
         - (box_off.getpixel(point)[2] - box_off.getpixel(point)[0])
         for point in tint_points
     ]
+    residual_blue_gains = [
+        (box_cleared.getpixel(point)[2] - box_cleared.getpixel(point)[0])
+        - (box_off.getpixel(point)[2] - box_off.getpixel(point)[0])
+        for point in tint_points
+    ]
     print(f"leaf changed pixels: {leaf_changes} (need > 5000)")
     print(f"query box blue-vs-red gains at {tint_points}: {tint_blue_gains} (need > 25 each)")
-    if leaf_changes <= 5000 or any(gain <= 25 for gain in tint_blue_gains):
-        raise SystemExit("FAIL: leaf translucency or query-box block tint is missing")
-    print("PASS: leaf translucency and query-box block tint are visible")
+    print(f"query box blue-vs-red residue after clear: {residual_blue_gains} (need < 20 each)")
+    if (leaf_changes <= 5000 or any(gain <= 25 for gain in tint_blue_gains)
+            or any(abs(gain) >= 20 for gain in residual_blue_gains)):
+        raise SystemExit("FAIL: leaf translucency, query-box tint, or tint clearing is broken")
+    print("PASS: leaf translucency and query-box tint are visible and tint clears")
 
 
 if __name__ == "__main__":

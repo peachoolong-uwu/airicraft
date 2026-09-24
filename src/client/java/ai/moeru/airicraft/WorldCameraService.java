@@ -340,6 +340,8 @@ public final class WorldCameraService {
 
 
 	private volatile Box tintBox;
+	private BlockPos tintBoundsMin;
+	private BlockPos tintBoundsMax;
 
 	/**
 	 * Query-region tint: blocks inside this box get their vertex colors
@@ -350,12 +352,13 @@ public final class WorldCameraService {
 	}
 
 	public synchronized void setTintBox(MinecraftClient client, Box box, BlockPos boundsMin, BlockPos boundsMax) {
+		BlockPos previousMin = tintBoundsMin;
+		BlockPos previousMax = tintBoundsMax;
 		tintBox = box;
-		if (boundsMin != null && boundsMax != null) {
-			client.worldRenderer.scheduleBlockRenders(
-				boundsMin.getX() - 1, boundsMin.getY() - 1, boundsMin.getZ() - 1,
-				boundsMax.getX() + 1, boundsMax.getY() + 1, boundsMax.getZ() + 1);
-		}
+		tintBoundsMin = boundsMin;
+		tintBoundsMax = boundsMax;
+		scheduleRegionRemesh(client, previousMin, previousMax);
+		scheduleRegionRemesh(client, boundsMin, boundsMax);
 	}
 
 	public boolean tintContains(BlockPos pos) {
@@ -386,13 +389,17 @@ public final class WorldCameraService {
 	}
 
 	private void scheduleFadeRemesh(MinecraftClient client) {
-		if (fadeBoundsMin == null || fadeBoundsMax == null || client.worldRenderer == null) {
+		scheduleRegionRemesh(client, fadeBoundsMin, fadeBoundsMax);
+	}
+
+	private static void scheduleRegionRemesh(MinecraftClient client, BlockPos boundsMin, BlockPos boundsMax) {
+		if (client == null || client.worldRenderer == null || boundsMin == null || boundsMax == null) {
 			return;
 		}
 		// Expand by one: faces of neighbouring blocks become visible too.
 		client.worldRenderer.scheduleBlockRenders(
-			fadeBoundsMin.getX() - 1, fadeBoundsMin.getY() - 1, fadeBoundsMin.getZ() - 1,
-			fadeBoundsMax.getX() + 1, fadeBoundsMax.getY() + 1, fadeBoundsMax.getZ() + 1);
+			boundsMin.getX() - 1, boundsMin.getY() - 1, boundsMin.getZ() - 1,
+			boundsMax.getX() + 1, boundsMax.getY() + 1, boundsMax.getZ() + 1);
 	}
 
 	public synchronized void clear() {
@@ -409,7 +416,12 @@ public final class WorldCameraService {
 			MinecraftClient client = MinecraftClient.getInstance();
 			if (client != null) {
 				scheduleFadeRemesh(client);
+				scheduleRegionRemesh(client, tintBoundsMin, tintBoundsMax);
 			}
+			fadeBoundsMin = null;
+			fadeBoundsMax = null;
+			tintBoundsMin = null;
+			tintBoundsMax = null;
 		}
 		restoreHud();
 	}
