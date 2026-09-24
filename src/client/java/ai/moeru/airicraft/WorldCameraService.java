@@ -86,7 +86,7 @@ public final class WorldCameraService {
 	private final java.util.Map<String, ViewRecord> views = new java.util.LinkedHashMap<>();
 	private int viewSeq;
 
-	/** Debug counter: blocks tinted by the query box during meshing. */
+	/** Debug counter: query-tint applications during meshing. */
 	public static final java.util.concurrent.atomic.AtomicInteger TINT_HITS = new java.util.concurrent.atomic.AtomicInteger();
 
 	private volatile boolean shoulderActive;

@@ -15,6 +15,7 @@
 		"ClientPlayNetworkHandlerMixin",
 		"ClientPlayerInteractionManagerMixin",
 		"GameRendererMixin",
+		"IndigoTerrainRenderContextMixin",
 		"LivingEntityRendererMixin",
 		"ClientPlayerEntityAccessor",
 		"CraftingResultSlotMixin",
