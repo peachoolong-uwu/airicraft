@@ -7,6 +7,11 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PlannerInputTextTest {
+	@Test void unquotedDelegationUuidDoesNotBecomeMalformedExponent() {
+		assertEquals("delegationId=1e2e3456-0000-4000-8000-000000000000; progress=1.3",
+			PlannerInputText.message("user", "delegationId=1e2e3456-0000-4000-8000-000000000000; progress=1.25"));
+	}
+
 	@Test void inventoryCapacitySurvivesPlannerPresentation() {
 		String text = PlannerInputText.observation(Map.of("current", Map.of("inventoryCapacity",
 			Map.of("freeStorageSlots", 0, "pickupConstraint", "Only compatible non-full stacks can accept pickups"))));
