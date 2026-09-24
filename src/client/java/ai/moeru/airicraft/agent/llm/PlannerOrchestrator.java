@@ -279,6 +279,42 @@ public final class PlannerOrchestrator {
 		return conversationDebugSnapshot();
 	}
 
+	/** Append-only journal log for the debug overlay's chronicle view. */
+	public PlannerConversationDebugSnapshot chronicleConversationDebugSnapshot() {
+		return chronicleConversationDebugSnapshot(true);
+	}
+
+	public PlannerConversationDebugSnapshot chronicleConversationDebugSnapshot(boolean verbose) {
+		var snapshot = conversationProjector.chronicleSnapshot(turnJournal, verbose);
+		return plannerExecutor.streamPreview(sessionCoordinator.activeGeneration()).map(snapshot::withAppended).orElse(snapshot)
+			.presented(toolRegistry.references());
+	}
+
+	/**
+	 * The context the model sees now: the live session conversation (tool exchanges and
+	 * repair retries included) while a generation runs; otherwise the retained context
+	 * the next request would build on — accepted replies and checkpoints applied. Falls
+	 * back to the last submitted envelope when nothing is retained (e.g. provider-managed
+	 * history).
+	 */
+	public PlannerConversationDebugSnapshot contextConversationDebugSnapshot() {
+		PlannerSessionSnapshot active = sessionCoordinator.activeSnapshot();
+		LlmConversation live = active == null ? null : sessionCoordinator.conversationFor(active.generation());
+		PlannerConversationDebugSnapshot snapshot;
+		if (live != null) {
+			snapshot = PlannerConversationDebugSnapshot.fromConversation(active.generation(), active.phase(), active.attemptCount(), live);
+		}
+		else {
+			PlannerConversationDebugSnapshot submitted = conversationProjector.submittedSnapshot(turnJournal);
+			LlmConversation retained = contextAggregator.currentRetainedConversation(clock.millis());
+			snapshot = retained == null
+				? submitted
+				: PlannerConversationDebugSnapshot.fromConversation(submitted.generation(), "IDLE", submitted.attempt(), retained);
+		}
+		return plannerExecutor.streamPreview(active == null ? 0L : active.generation()).map(snapshot::withAppended).orElse(snapshot)
+			.presented(toolRegistry.references());
+	}
+
 	public List<String> contextExcerpt() {
 		return conversationProjector.contextExcerpt(turnJournal);
 	}
