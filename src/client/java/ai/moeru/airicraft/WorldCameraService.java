@@ -305,8 +305,8 @@ public final class WorldCameraService {
 	/**
 	 * Blocks the renderer should treat as air. Read from chunk-mesh worker
 	 * threads via {@link #isFaded}; must be an immutable snapshot.
-	 * {@code fadeLeaves} renders leaf blocks at ~20% opacity (see
-	 * RenderLayersMixin/SectionBuilderMixin) instead of hiding them.
+	 * {@code fadeLeaves} renders leaf blocks at ~40% opacity through the
+	 * terrain renderer mixins instead of hiding them.
 	 */
 	public record FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY, boolean fadeLeaves) {
 		public FadeFilter(java.util.Set<BlockPos> blocks, Integer hideAboveY) {

@@ -32,7 +32,7 @@ public abstract class IndigoTerrainRenderContextMixin {
 			return consumer;
 		}
 		if (blockInfo.blockState.getBlock() instanceof LeavesBlock && service.fadeLeavesActive()) {
-			consumer = new AlphaVertexConsumer(consumer, 0.2f);
+			consumer = new AlphaVertexConsumer(consumer, 0.4f);
 		}
 		if (service.tintContains(blockInfo.blockPos)) {
 			WorldCameraService.TINT_HITS.incrementAndGet();

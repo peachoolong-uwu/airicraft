@@ -58,6 +58,7 @@ def main():
     leaf_on = capture("leaf-on", fadeLeaves=True)
     box_off = capture("box-off")
     box_on = capture("box-on", queryBox=QUERY_BOX)
+    capture("combined", fadeLeaves=True, queryBox=QUERY_BOX)
 
     leaf_area = (0, 20, 300, 420)
     before_leaves = leaf_off.crop(leaf_area).load()

@@ -20,13 +20,13 @@ import java.util.List;
 
 /**
  * World-camera leaf translucency: wraps the chunk-mesh vertex consumer for
- * leaf blocks while {@code fadeLeaves} is active so they render at ~20%
+ * leaf blocks while {@code fadeLeaves} is active so they render at ~40%
  * opacity. Pairs with {@link RenderLayersMixin}, which moves leaves onto
  * the translucent render layer.
  */
 @Mixin(SectionBuilder.class)
 public abstract class SectionBuilderMixin {
-	private static final float LEAF_ALPHA = 0.2f;
+	private static final float LEAF_ALPHA = 0.4f;
 
 	@WrapOperation(
 		method = "build",
