@@ -109,9 +109,25 @@ class EmbodiedAgentRuntimeTest {
 			.filter(event -> expected.entrySet().stream().allMatch(entry -> entry.getValue().equals(String.valueOf(event.payload().get(entry.getKey())))))
 			.toList();
 		assertFalse(matching.isEmpty(), "Expected identified task evidence: " + expected);
-		String context = runtime.currentPlannerDecisionContext().message(0).content();
+		String context = ai.moeru.airicraft.agent.llm.PlannerObservation.render(runtime.currentPlannerDecisionContext().observation(0));
 		assertTrue(context.contains(type), context);
 		for (String value : expected.values()) assertTrue(context.contains(value), context);
+	}
+
+	@Test void combatUsesTheCameraControllerTickedByTheClient() throws Exception {
+		var config = AgentConfig.defaults();
+		var camera = new ai.moeru.airicraft.agent.control.CameraController();
+		var runtime = new EmbodiedAgentRuntime(AiricraftConfig.defaults(), config,
+			new FirstPersonScreenshotService(), new FakeWorldTaskExecutor(),
+			ai.moeru.airicraft.agent.observability.AgentObservability.create(config.observability()),
+			new ai.moeru.airicraft.agent.tasks.SmeltingProcessManager(), camera, null);
+		try {
+			var reflexField = EmbodiedAgentRuntime.class.getDeclaredField("survivalReflexRuntime");
+			reflexField.setAccessible(true);
+			var cameraField = SurvivalReflexRuntime.class.getDeclaredField("cameraController");
+			cameraField.setAccessible(true);
+			org.junit.jupiter.api.Assertions.assertSame(camera, cameraField.get(reflexField.get(runtime)));
+		} finally { runtime.shutdown(); }
 	}
 
 	@Test
@@ -204,6 +220,55 @@ class EmbodiedAgentRuntimeTest {
 			assertTrue(queried.contains("drowningEnabled=true"));
 		}
 		finally { runtime.shutdown(); }
+	}
+
+	@Test
+	void rejectedPolicyDoesNotBecomeATerminalToolReceipt() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var args = JsonParser.parseString("{\"source\":\"function* main() { return {}; }\",\"input\":{}}").getAsJsonObject();
+			String result = runtime.executePlannerAction(new PlannerToolCall("policy-test", "run_policy", args, null, null)).join();
+			assertEquals("TOOL_UNAVAILABLE: run_policy disabled", result);
+			setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.AWAITING_PLANNER, "policy-hold", null, null));
+			String held = runtime.executePlannerAction(new PlannerToolCall("held-policy-test", "run_policy", args, null, null)).join();
+			assertEquals("TOOL_UNAVAILABLE: run_policy disabled", held);
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test
+	void policyChildUsesNormalSchedulerAndRootCancellationStopsIt() throws Exception {
+		var executor = new FakeWorldTaskExecutor();
+		var runtime = EmbodiedAgentRuntime.createForTests(executor);
+		try {
+			runtime.overrideSessionSnapshotForTests(new SessionSnapshot(SessionMode.SINGLEPLAYER_LAN_HOST,
+				true, true, "minecraft:overworld", true, 25565, 0));
+			var root = new ai.moeru.airicraft.agent.work.WorkHandle("OPERATION:test-policy");
+			Field rootField = EmbodiedAgentRuntime.class.getDeclaredField("policyWork"); rootField.setAccessible(true); rootField.set(runtime, root);
+			Method dispatch = EmbodiedAgentRuntime.class.getDeclaredMethod("dispatchPolicyTool", String.class, JsonObject.class); dispatch.setAccessible(true);
+			var arguments = JsonParser.parseString("{\"x\":10,\"y\":64,\"z\":2,\"exactY\":true}").getAsJsonObject();
+			@SuppressWarnings("unchecked")
+			var admitted = (CompletableFuture<ai.moeru.airicraft.agent.llm.ExternalPlannerToolResult>) dispatch.invoke(runtime, "navigate_to", arguments);
+			assertTrue(admitted.join().text().contains("workId"));
+			Method cancel = EmbodiedAgentRuntime.class.getDeclaredMethod("cancelPolicyChildren"); cancel.setAccessible(true);
+			var policy = new ai.moeru.airicraft.policy.PolicyRuntime("function* main(p) { yield p.observeContainer(); }", new JsonObject(),
+				new ai.moeru.airicraft.policy.PolicyRuntime.Host() {
+					public CompletableFuture<com.google.gson.JsonElement> execute(JsonObject effect) { return new CompletableFuture<>(); }
+					public void close() { try { cancel.invoke(runtime); } catch (Exception e) { throw new RuntimeException(e); } }
+				}, ignored -> {});
+			Field policyField = EmbodiedAgentRuntime.class.getDeclaredField("policyRuntime"); policyField.setAccessible(true); policyField.set(runtime, policy);
+			runtime.onClientTick(null);
+			assertTrue(executor.lastActiveTask.isPresent(), "Policy must not suppress its native child tick");
+			assertTrue(policy.active(), "Child admission must not cancel its owner");
+			String childId = executor.lastActiveTask.orElseThrow().taskId();
+			String inspected = runtime.execute(new PlannerToolCall("inspect", "inspect_work",
+				JsonParser.parseString("{\"workId\":\"JOB:" + childId + "\"}").getAsJsonObject(), null, null)).join();
+			assertTrue(inspected.contains("OPERATION:test-policy"), inspected);
+			String competing = runtime.execute(new PlannerToolCall("competing", "navigate_to", arguments, null, null)).join();
+			assertTrue(competing.contains("policy_active"));
+			policy.cancel("test_cancel");
+			assertEquals(ActiveJobStatus.CANCELLED, runtime.activeJob().status());
+			assertTrue(executor.onWorldLeaveCalls > 0, "Root cancellation must stop the native executor");
+		} finally { runtime.shutdown(); }
 	}
 
 	@Test
@@ -313,7 +378,7 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
-	void embeddedActionsCannotReplaceHeldWorkWithoutItsIdentity() throws Exception {
+	void continueResumesHeldWorkWithoutReplacingItsIdentity() throws Exception {
 		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		try {
 			runtime.injectDialogueResponseForTests(new DialogueResponse("", new DialogueIntent(DialogueIntentType.JOB_UPDATE,
@@ -324,11 +389,33 @@ class EmbodiedAgentRuntimeTest {
 			JsonObject args = new JsonObject(); args.addProperty("x",1); args.addProperty("y",64); args.addProperty("z",1);
 			String denied = runtime.executePlannerAction(new PlannerToolCall("replace","navigate_to",args,null,null)).join();
 			assertTrue(denied.contains("work_in_safety_hold")); assertEquals(id,runtime.activeJob().jobId());
-			JsonObject resume = new JsonObject(); resume.addProperty("workId","JOB:"+id);resume.addProperty("holdId","hold-1");
-			String resumed = runtime.executePlannerAction(new PlannerToolCall("resume","resume_work",resume,null,null)).join();
-			assertTrue(resumed.contains("\"accepted\":true"),resumed);
+			String resumed = runtime.executePlannerAction(new PlannerToolCall("resume","continue",new JsonObject(),null,null)).join();
+			assertTrue(resumed.contains("resumed"),resumed);
 			assertEquals(SurvivalReflexState.IDLE,runtime.survivalReflexSnapshot().state());
 			assertEquals(id,runtime.activeJob().jobId());
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test void clearQueueDiscardsEmptySafetyHoldWithoutStoppingActiveReflex() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			for (var state : List.of(SurvivalReflexState.AWAITING_PLANNER, SurvivalReflexState.ACTIVE)) {
+				setReflexSnapshot(runtime, reflexSnapshot(state, "orphan-hold", null, null));
+				runtime.executePlannerAction(new PlannerToolCall("clear", "clear_queue", new JsonObject(), null, null)).join();
+				assertNull(runtime.survivalReflexSnapshot().holdId());
+				assertEquals(state == SurvivalReflexState.ACTIVE ? state : SurvivalReflexState.IDLE,
+					runtime.survivalReflexSnapshot().state());
+			}
+		} finally { runtime.shutdown(); }
+	}
+
+	@Test void continueCannotOverrideAnActiveReflex() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			setReflexSnapshot(runtime, reflexSnapshot(SurvivalReflexState.ACTIVE, "active-hold", null, null));
+			runtime.executePlannerAction(new PlannerToolCall("keep", "continue", new JsonObject(), null, null)).join();
+			assertEquals(SurvivalReflexState.ACTIVE, runtime.survivalReflexSnapshot().state());
+			assertEquals("active-hold", runtime.survivalReflexSnapshot().holdId());
 		} finally { runtime.shutdown(); }
 	}
 
@@ -896,7 +983,7 @@ class EmbodiedAgentRuntimeTest {
 		assertTrue(result.contains("accepted"));
 		assertTrue(result.contains("queued"));
 		assertTrue(result.contains("does not mean completed"));
-		assertTrue(result.contains("TASK UPDATE"));
+		assertTrue(result.contains("terminal result in a later observation"), result);
 		assertEquals(WorldTaskType.DROP_ITEMS, request.type());
 		assertEquals(new WorldTaskRequest.DropItems(new DropItemsStepArgs("minecraft:oak_log", 2, null)), request.task());
 	}
@@ -935,7 +1022,7 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
-	void mineBlocksToolResultWarnsPlannerToWaitForTaskUpdate() {
+	void mineBlocksToolResultWarnsPlannerToWaitForTerminalResult() {
 		FakeWorldTaskExecutor executor = new FakeWorldTaskExecutor();
 		EmbodiedAgentRuntime runtime = EmbodiedAgentRuntime.createForTests(executor);
 		runtime.overrideSessionSnapshotForTests(new SessionSnapshot(
@@ -963,7 +1050,7 @@ class EmbodiedAgentRuntimeTest {
 		assertTrue(result.contains("accepted"));
 		assertTrue(result.contains("queued"));
 		assertTrue(result.contains("does not mean completed"));
-		assertTrue(result.contains("TASK UPDATE"));
+		assertTrue(result.contains("terminal result in a later observation"), result);
 		assertEquals(WorldTaskType.MINE, request.type());
 		assertEquals(new GoalMineSpec(List.of("minecraft:dirt"), 1), request.goal().mineSpec());
 	}
@@ -1139,7 +1226,7 @@ class EmbodiedAgentRuntimeTest {
 		WorldTaskRequest request = executor.lastActiveTask.orElseThrow();
 		assertTrue(result.contains("accepted"));
 		assertTrue(result.contains("queued"));
-		assertTrue(result.contains("TASK UPDATE"));
+		assertTrue(result.contains("terminal result in a later observation"), result);
 		assertEquals(WorldTaskType.MINE, request.type());
 		assertEquals(new GoalMineSpec(List.of("minecraft:dirt"), 3), request.goal().mineSpec());
 	}
@@ -1668,7 +1755,7 @@ class EmbodiedAgentRuntimeTest {
 		assertTrue(result.contains("accepted"));
 		assertTrue(result.contains("queued"));
 		assertTrue(result.contains("does not mean completed"));
-		assertTrue(result.contains("TASK UPDATE"));
+		assertTrue(result.contains("terminal result in a later observation"), result);
 		assertEquals(WorldTaskType.ATTACK_ENTITY, request.type());
 		assertEquals(new EntityInteractionStepArgs(
 			new EntitySelector(null, null, "minecraft:sheep"),
@@ -1740,7 +1827,7 @@ class EmbodiedAgentRuntimeTest {
 		assertTrue(result.contains("accepted"));
 		assertTrue(result.contains("queued"));
 		assertTrue(result.contains("does not mean completed"));
-		assertTrue(result.contains("TASK UPDATE"));
+		assertTrue(result.contains("terminal result in a later observation"), result);
 		assertEquals(WorldTaskType.USE_ENTITY, request.type());
 		assertEquals(new EntityInteractionStepArgs(
 			new EntitySelector(null, "Dinner", null),
@@ -2698,7 +2785,7 @@ class EmbodiedAgentRuntimeTest {
 		assertTrue(result.contains("accepted"));
 		assertTrue(result.contains("queued"));
 		assertTrue(result.contains("does not mean completed"));
-		assertTrue(result.contains("TASK UPDATE"));
+		assertTrue(result.contains("terminal result in a later observation"), result);
 		assertEquals(WorldTaskType.DROP_ITEMS, request.type());
 		assertEquals(new WorldTaskRequest.DropItems(new DropItemsStepArgs("minecraft:oak_log", 2, "Alice")), request.task());
 	}

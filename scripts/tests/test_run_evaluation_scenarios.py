@@ -75,6 +75,19 @@ class RunnerPolicyTest(unittest.TestCase):
         with self.assertRaises(runner.RunnerError):
             runner.selected_scenarios(scenarios, ["missing"])
 
+    def test_scenario_manifest_is_selected_per_worker_and_cleared_for_discovery(self) -> None:
+        source = {runner.EVALUATOR_SCENARIO_MANIFEST_ENVIRONMENT_VARIABLE: "/tmp/other/scenario.yml"}
+        for manifest in (None, Path("/tmp/first/scenario.yml"), Path("/tmp/second/scenario.yml")):
+            environment = runner.client_environment(
+                Path("/tmp/bridge.json"), Path("/tmp/game"), "worker", False,
+                runner.RecorderOptions(False, None), source, scenario_manifest=manifest,
+            )
+            self.assertEqual(
+                None if manifest is None else str(manifest.resolve()),
+                environment.get(runner.EVALUATOR_SCENARIO_MANIFEST_ENVIRONMENT_VARIABLE),
+            )
+        self.assertEqual("/tmp/other/scenario.yml", source[runner.EVALUATOR_SCENARIO_MANIFEST_ENVIRONMENT_VARIABLE])
+
     def test_keeps_only_the_last_client_by_default(self) -> None:
         default_args = argparse.Namespace(stop_client_after_scenario=False)
         stopping_args = argparse.Namespace(stop_client_after_scenario=True)

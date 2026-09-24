@@ -1,5 +1,7 @@
 # Automatic playtest recordings
 
+Automatic playtests sample the screen once per server tick (target 20 Hz at 20 TPS) and encode FPV at 20 fps. Capture remains asynchronous with one readback/encoding job in flight; slow rendering or encoding can reduce distinct-frame cadence. Identical frames are held, and frame anchors preserve actual capture timing. This applies to new recordings; existing videos retain their original cadence.
+
 On startup, automatic playtests maximize the game window without fullscreen and enable the Airicraft debug conversation overlay (`/airicraft debug conversation`). These defaults apply once per run; you can change the window or overlay afterward.
 
 The launcher uses the compatibility-enabled production client, including JourneyMap and REI (Roughly Enough Items), their Airicraft adapters, and dependencies. It shares the optional-mod cache used by `scripts/compat` while keeping the playtest world and config isolated.

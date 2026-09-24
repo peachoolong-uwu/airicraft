@@ -29,10 +29,14 @@ public final class LightingRuntime {
 	private static final long ATTEMPT_INTERVAL_TICKS = 10L;
 	private static final long CONFIRMATION_TIMEOUT_TICKS = 20L;
 	private static final double MAX_REACH_SQUARED = 4.5D * 4.5D;
+	private static final long STATIONARY_TICKS = 100L;
 
 	private LightingPolicy policy = LightingPolicy.defaults();
 	private PendingPlacement pendingPlacement;
 	private long nextAttemptTick;
+	private Vec3d stationaryPosition;
+	private long stationarySinceTick;
+	private long lastObservedTick;
 
 	public LightingPolicy configure(
 		boolean enabled,
@@ -53,48 +57,93 @@ public final class LightingRuntime {
 		return policy;
 	}
 
-	public Optional<PlacementEvent> tick(MinecraftClient client, WorldTaskType activity, long tick) {
-		if (client == null || client.world == null || client.player == null || client.interactionManager == null) {
+	public Optional<PlacementEvent> tick(MinecraftClient client, WorldTaskType activity, boolean actuationAllowed, long tick) {
+		if (client == null || client.world == null || client.player == null || client.interactionManager == null || !actuationAllowed) {
 			pendingPlacement = null;
+			stationaryPosition = null;
 			return Optional.empty();
 		}
+		ClientPlayerEntity player = client.player;
+		boolean stationaryLongEnough = observeStationary(player.getPos(), player.isOnGround(), tick);
 		Optional<PlacementEvent> confirmation = confirmPending(client, tick);
 		if (confirmation.isPresent() || pendingPlacement != null || tick < nextAttemptTick) {
 			return confirmation;
 		}
 		nextAttemptTick = tick + ATTEMPT_INTERVAL_TICKS;
 
-		ClientPlayerEntity player = client.player;
-		if (!LightingPolicyEvaluator.supportsActivity(activity) || !policy.enabled()
+		if (!LightingPolicyEvaluator.supportsActivity(activity, stationaryLongEnough) || !policy.enabled()
 			|| player.isUsingItem() || client.interactionManager.isBreakingBlock()
 			|| player.currentScreenHandler != player.playerScreenHandler
 			|| !player.currentScreenHandler.getCursorStack().isEmpty()) return Optional.empty();
 		BlockPos origin = player.getBlockPos();
+		// Do not interpret an unloaded edge of the sampling area as darkness.
+		for (BlockPos sample : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			if (!client.world.isChunkLoaded(sample)) return Optional.empty();
+		}
+		double combinedLight = averageFootLevelLight(origin, client.world::isAir, pos -> client.world.getLightLevel(pos));
+		double blockLight = averageFootLevelLight(origin, client.world::isAir, pos -> client.world.getLightLevel(LightType.BLOCK, pos));
 		boolean nearbyTorch = hasNearbyTorch(client, origin, policy.minSpacingBlocks());
 		boolean placementRequired = LightingPolicyEvaluator.shouldPlace(
 			policy,
 			true,
 			torchCount(player) > 0,
-			client.world.isSkyVisible(origin.up()),
-			client.world.getLightLevel(origin),
-			client.world.getLightLevel(LightType.BLOCK, origin),
+			hasFootLevelSkyAccess(origin, pos -> client.world.isSkyVisible(pos)),
+			combinedLight,
+			blockLight,
 			nearbyTorch
 		);
 		if (!placementRequired) {
 			return Optional.empty();
 		}
 		for (PlacementCandidate candidate : placementCandidates(player.getBlockPos(), player.getHorizontalFacing())) {
-			if (tryPlace(client, player, candidate, activity, tick)) {
+			if (tryPlace(client, player, candidate, activity, tick,
+				policy.mode() == LightingPolicy.Mode.SPAWN_PROOF ? blockLight : combinedLight)) {
 				break;
 			}
 		}
 		return Optional.empty();
 	}
 
+	boolean observeStationary(Vec3d position, boolean grounded, long tick) {
+		if (!grounded) {
+			stationaryPosition = null;
+			lastObservedTick = tick;
+			return false;
+		}
+		if (stationaryPosition == null || tick != lastObservedTick + 1
+			|| stationaryPosition.squaredDistanceTo(position) > 0.0001D) {
+			stationaryPosition = position;
+			stationarySinceTick = tick;
+		}
+		lastObservedTick = tick;
+		return tick - stationarySinceTick >= STATIONARY_TICKS;
+	}
+
+	static double averageFootLevelLight(BlockPos origin, java.util.function.Predicate<BlockPos> isAirAt,
+		java.util.function.ToIntFunction<BlockPos> lightAt) {
+		int total = 0;
+		int samples = 0;
+		for (BlockPos sample : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			if (!isAirAt.test(sample)) continue;
+			total += lightAt.applyAsInt(sample);
+			samples++;
+		}
+		// No air means no evidence of darkness that should trigger placement.
+		return samples == 0 ? Double.POSITIVE_INFINITY : total / (double) samples;
+	}
+
+	static boolean hasFootLevelSkyAccess(BlockPos origin, java.util.function.Predicate<BlockPos> skyVisibleAt) {
+		for (BlockPos sample : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			if (skyVisibleAt.test(sample)) return true;
+		}
+		return false;
+	}
+
 	public void reset() {
 		policy = LightingPolicy.defaults();
 		pendingPlacement = null;
 		nextAttemptTick = 0L;
+		stationaryPosition = null;
 	}
 
 	public LightingPolicy policy() {
@@ -119,7 +168,7 @@ public final class LightingRuntime {
 				"torchCount", torchCount(client.player),
 				"side", confirmed.side(),
 				"facing", confirmed.face().asString(),
-				"activity", confirmed.activity().name().toLowerCase(java.util.Locale.ROOT)
+				"activity", confirmed.activity() == null ? "idle" : confirmed.activity().name().toLowerCase(java.util.Locale.ROOT)
 			)));
 		}
 		if (tick - pendingPlacement.startedTick() > CONFIRMATION_TIMEOUT_TICKS) {
@@ -128,7 +177,7 @@ public final class LightingRuntime {
 		return Optional.empty();
 	}
 
-	private boolean tryPlace(MinecraftClient client, ClientPlayerEntity player, PlacementCandidate candidate, WorldTaskType activity, long tick) {
+	private boolean tryPlace(MinecraftClient client, ClientPlayerEntity player, PlacementCandidate candidate, WorldTaskType activity, long tick, double lightBefore) {
 		BlockPos target = candidate.target();
 		if (!client.world.isChunkLoaded(target)) {
 			return false;
@@ -154,7 +203,6 @@ public final class LightingRuntime {
 		var visible = client.world.raycast(new RaycastContext(player.getEyePos(), inside,
 			RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, player));
 		if (visible.getType() != HitResult.Type.BLOCK || !visible.getBlockPos().equals(candidate.support())) return false;
-		int lightBefore = client.world.getLightLevel(target);
 		ActionResult result = placeWithTorch(client, player, new BlockHitResult(hit, candidate.face(), candidate.support(), false));
 		if (!result.isAccepted()) {
 			return false;
@@ -277,7 +325,7 @@ public final class LightingRuntime {
 		long startedTick,
 		long policyRevision,
 		LightingPolicy.Mode mode,
-		int lightLevelBefore,
+		double lightLevelBefore,
 		String side,
 		Direction face,
 		WorldTaskType activity

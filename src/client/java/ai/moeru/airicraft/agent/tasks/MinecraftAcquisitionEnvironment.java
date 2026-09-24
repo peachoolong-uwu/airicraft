@@ -220,6 +220,14 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		return client().world.getEntitiesByClass(ItemEntity.class, new Box(block(target.position())).expand(3),
 			item -> item.isAlive() && item.getUuidAsString().equals(target.id())).size() > 0;
 	}
+	@Override public boolean canCollectDrop(Candidate target) {
+		var inventory = client().player.getInventory();
+		if (inventory.getEmptySlot() >= 0) return true;
+		var drops = client().world.getEntitiesByClass(ItemEntity.class, new Box(block(target.position())).expand(3),
+			item -> item.isAlive() && item.getUuidAsString().equals(target.id()));
+		// Disappearance is handled by targetPresent, not evidence of a full inventory.
+		return drops.isEmpty() || inventory.getOccupiedSlotWithRoomForStack(drops.getFirst().getStack()) >= 0;
+	}
 	@Override public boolean canInteract(Candidate target) {
 		if (!client().player.isOnGround()) return false;
 		if (target.kind() == Kind.DROP) return client().world.getEntitiesByClass(ItemEntity.class,
@@ -236,10 +244,13 @@ final class MinecraftAcquisitionEnvironment implements Environment {
 		if (hit == null || WorldPlacePreservation.contains(client.world, hit.getBlockPos())) return BreakStatus.FAILED;
 		BlockPos pos = hit.getBlockPos();
 		// Aim at the actual hit, which may be leaves being cleared in front of the resource.
-		cameraController.lookAtNow(client, hit.getPos());
+		cameraController.lookAt(client, hit.getPos());
+		var cursorHit = cameraController.blockHit(client, pos);
+		if (cursorHit.isEmpty()) return BreakStatus.BREAKING;
+		hit = cursorHit.get();
 		if (!pos.equals(breaking)) {
 			cancelBreaking();
-			var result = BaritoneTaskExecutor.MiningToolPreflight.ensureSelected(client, client.player,
+			var result = MiningToolPreparation.ensureSelected(client, client.player,
 				List.of(client.world.getBlockState(pos)), pos.equals(block(target.position())) ? spec.requiredToolItemIds() : List.of());
 			if (!result.ok()) return new ToolFailure(result.message());
 			if (!client.interactionManager.attackBlock(pos, hit.getSide())) return BreakStatus.FAILED;

@@ -344,6 +344,12 @@ public final class CraftingTaskExecutor implements WorldTaskExecutor {
 			if (tableTarget == null || tableTarget.tablePos() == null) {
 				return WorkbenchReadiness.failed(TaskFailure.of(TaskFailureCode.MISSING_FACT, "crafting_table_not_found"));
 			}
+			Vec3d aim = Vec3d.ofCenter(tableTarget.tablePos());
+			cameraController.lookAt(client, aim);
+			if (!cameraController.isLookingAt(client, aim)) {
+				snapshot = snapshot(TaskExecutionState.RUNNING, request, "aiming_at_crafting_table");
+				return WorkbenchReadiness.notReadyState();
+			}
 			if (!openCraftingTable(client, player, tableTarget.tablePos())) {
 				return fallBackToPortableCraftingTable(request, player);
 			}
@@ -922,7 +928,7 @@ public final class CraftingTaskExecutor implements WorldTaskExecutor {
 			return false;
 		}
 		Vec3d hitVec = Vec3d.ofCenter(pos);
-		cameraController.lookAtNow(client, hitVec);
+		cameraController.lookAt(client, hitVec);
 		BlockHitResult hitResult = new BlockHitResult(hitVec, Direction.UP, pos, false);
 		ActionResult result = client.interactionManager.interactBlock(player, Hand.MAIN_HAND, hitResult);
 		if (result.isAccepted()) {

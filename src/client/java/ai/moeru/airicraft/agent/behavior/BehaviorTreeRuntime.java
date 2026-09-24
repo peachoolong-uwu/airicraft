@@ -22,8 +22,6 @@ import java.util.Optional;
 
 public final class BehaviorTreeRuntime {
 	private static final double FOLLOW_STOP_DISTANCE = 4.0D;
-	private static final float LOOK_YAW_STEP = 8.0F;
-	private static final float LOOK_PITCH_STEP = 6.0F;
 
 	private final CameraController cameraController;
 	private final MovementController movementController = new MovementController();
@@ -60,8 +58,36 @@ public final class BehaviorTreeRuntime {
 			return;
 		}
 
+
+		if (taskOwnsMovement(taskExecutionSnapshot)) {
+			snapshot = new BehaviorTreeSnapshot(NodeStatus.RUNNING, List.of("Root", "EntityInteractionSubtree", "TaskOwnedMovement"), movementController.snapshot());
+			return;
+		}
+
+		movementController.stop(client);
+		if (activeGoal.isEmpty() || taskExecutionSnapshot == null || taskExecutionSnapshot.state() == TaskExecutionState.IDLE) {
+			snapshot = new BehaviorTreeSnapshot(NodeStatus.RUNNING, List.of("Root", "ObserveAndWait"), movementController.snapshot());
+			return;
+		}
+
+		if (shouldLookAtFollowTarget(activeGoal.get(), followState)) {
+			Vec3d targetPos = new Vec3d(followState.targetX(), followState.targetY() + 1.62D, followState.targetZ());
+			cameraController.lookAt(client, targetPos);
+		}
+
+		snapshot = new BehaviorTreeSnapshot(
+			NodeStatus.RUNNING,
+			nodePathFor(activeGoal.get(), followState, taskExecutionSnapshot.state()),
+			movementController.snapshot()
+		);
+	}
+
+	/** Chat does not acquire movement or wait for gameplay/reflex ownership. */
+	public void tickChat(MinecraftClient client, SessionSnapshot sessionSnapshot,
+		DialogueRuntime dialogueRuntime, ChatService chatService, AgentDebugRecorder debugRecorder, long tick) {
+		if (client == null || !sessionSnapshot.worldLoaded() || client.player == null) return;
+
 		if (dialogueRuntime.hasPendingReply()) {
-			movementController.stop(client);
 			String source = dialogueRuntime.pendingReplyReason();
 			boolean reusedPriorResponse = "failure_reused_last_response".equals(source);
 			dialogueRuntime.pendingReplyReady(tick)
@@ -81,31 +107,7 @@ public final class BehaviorTreeRuntime {
 						debugRecorder.recordDialogueState(dialogueRuntime.snapshot());
 					}
 				});
-			snapshot = new BehaviorTreeSnapshot(NodeStatus.RUNNING, List.of("Root", "ReplyToPlayer"), movementController.snapshot());
-			return;
 		}
-
-		if (taskOwnsMovement(taskExecutionSnapshot)) {
-			snapshot = new BehaviorTreeSnapshot(NodeStatus.RUNNING, List.of("Root", "EntityInteractionSubtree", "TaskOwnedMovement"), movementController.snapshot());
-			return;
-		}
-
-		movementController.stop(client);
-		if (activeGoal.isEmpty() || taskExecutionSnapshot == null || taskExecutionSnapshot.state() == TaskExecutionState.IDLE) {
-			snapshot = new BehaviorTreeSnapshot(NodeStatus.RUNNING, List.of("Root", "ObserveAndWait"), movementController.snapshot());
-			return;
-		}
-
-		if (shouldLookAtFollowTarget(activeGoal.get(), followState)) {
-			Vec3d targetPos = new Vec3d(followState.targetX(), followState.targetY() + 1.62D, followState.targetZ());
-			cameraController.lookAtStep(client, targetPos, LOOK_YAW_STEP, LOOK_PITCH_STEP);
-		}
-
-		snapshot = new BehaviorTreeSnapshot(
-			NodeStatus.RUNNING,
-			nodePathFor(activeGoal.get(), followState, taskExecutionSnapshot.state()),
-			movementController.snapshot()
-		);
 	}
 
 	public void reflectSurvivalReflex(MinecraftClient client, SurvivalReflexSnapshot reflexSnapshot) {

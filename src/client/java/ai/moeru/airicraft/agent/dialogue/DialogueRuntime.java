@@ -40,7 +40,7 @@ public final class DialogueRuntime {
 	private long delegationEventCursor;
 	private final ai.moeru.airicraft.agent.llm.goal.PlannerGoalStore plannerGoal;
 	private long nextGoalContinuationTick;
-	private ai.moeru.airicraft.agent.work.WorkSnapshot waitingForWork;
+	private ai.moeru.airicraft.agent.work.WorkSnapshot acceptedWork;
 	private final Clock clock;
 	private final int maxRecentTurns;
 	private final List<DialogueTurn> recentTurns = new ArrayList<>();
@@ -74,6 +74,59 @@ public final class DialogueRuntime {
 		this.plannerOrchestrator = plannerOrchestrator;
 		this.clock = clock;
 		this.maxRecentTurns = Math.max(1, maxRecentTurns);
+	}
+
+	public void configurePolicyContinuation(ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner planner,
+		java.util.function.Predicate<JsonObject> blockMatches, ai.moeru.airicraft.agent.llm.PlannerActionToolExecutor execute) {
+		policyContinuation = planner;
+		continuationBlockMatches = blockMatches;
+		continuationExecutor = execute;
+	}
+
+	private ai.moeru.airicraft.agent.llm.PolicyContinuationPlanner policyContinuation;
+	private java.util.function.Predicate<JsonObject> continuationBlockMatches;
+	private ai.moeru.airicraft.agent.llm.PlannerActionToolExecutor continuationExecutor;
+	private ai.moeru.airicraft.agent.work.WorkSnapshot continuationParent;
+	private CompletableFuture<String> continuationAdmission;
+	private ai.moeru.airicraft.agent.llm.PlannerToolCall admittedContinuation;
+
+	private boolean pollPolicyContinuation(long tick, SemanticEventBuffer events) {
+		if (policyContinuation == null || decisionContextSource == null) return false;
+		boolean handled = false;
+		if (continuationAdmission != null) {
+			if (!continuationAdmission.isDone()) return true;
+			String receipt;
+			try { receipt = continuationAdmission.join(); }
+			catch (RuntimeException error) { receipt = "TOOL_ERROR: continuation admission failed"; }
+			boolean accepted = !receipt.startsWith("TOOL_ERROR:") && !receipt.startsWith("TOOL_UNAVAILABLE:");
+			events.append(tick, "policy.continuation." + (accepted ? "accepted" : "rejected"),
+				Map.of("source", admittedContinuation.arguments().get("source").getAsString(),
+					"input", admittedContinuation.arguments().get("input"), "receipt", receipt));
+			continuationAdmission = null;
+			admittedContinuation = null;
+			handled = true;
+		}
+		boolean available = !externalDriverActive && plannerEnabled() && llmAvailable() && !isDegraded()
+			&& !reflexActive && safetyHoldId == null && (delegation == null || !delegation.active())
+			&& !plannerOrchestrator.hasInFlight() && (plannerGoal == null || plannerGoal.active());
+		if (!available) policyContinuation.discard("planner_unavailable");
+		else if (continuationParent != null) {
+			var context = decisionContextSource.get();
+			if (!continuationParent.state().terminal()) policyContinuation.start(continuationParent, context,
+				plannerOrchestrator.delegationContext(), userGuidanceRevision, safetyEpoch);
+			var candidate = policyContinuation.poll(context, continuationParent, userGuidanceRevision, safetyEpoch, continuationBlockMatches);
+			if (candidate != null) {
+				// Resolve and admit on the same client thread as the fresh guard checks.
+				// The regular action executor still enforces policy, task and safety ownership.
+				continuationParent = null;
+				pendingTaskWakeups.clear();
+				admittedContinuation = candidate;
+				continuationAdmission = continuationExecutor.execute(candidate);
+				handled = true;
+			}
+		}
+		for (var event : policyContinuation.drainEvents()) events.append(tick, "policy.continuation." + event.get("state"), event);
+		return handled;
 	}
 
 	public void configureDelegation(PlannerOrchestrator thinker, ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation handoff) {
@@ -120,16 +173,20 @@ public final class DialogueRuntime {
 
 	public void updateGameplayWorkIdle(boolean idle) { delegationWorkIdle = idle; }
 
-	public void waitForWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
-		waitingForWork = work.state().terminal() ? null : work;
+	public void observeAcceptedWork(ai.moeru.airicraft.agent.work.WorkSnapshot work) {
+		if (!work.state().terminal() && work.state() != ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED) acceptedWork = work;
+		if (work.label().equals("run_policy") && work.parentWorkId().isBlank()) continuationParent = work;
 	}
 
 	public void observeWork(List<ai.moeru.airicraft.agent.work.WorkSnapshot> work) {
-		if (waitingForWork == null) return;
+		if (continuationParent != null) continuationParent = work.stream()
+			.filter(current -> current.handle().equals(continuationParent.handle())).findFirst().orElse(null);
+		if (acceptedWork == null) return;
 		for (var current : work) {
-			if (current.handle().equals(waitingForWork.handle())
-				&& (current.state() != waitingForWork.state() || !current.phase().equals(waitingForWork.phase()))) {
-				waitingForWork = null;
+			if (current.handle().equals(acceptedWork.handle())
+				&& (current.state().terminal() || current.state() == ai.moeru.airicraft.agent.work.WorkSnapshot.State.PAUSED
+					|| current.phase().equals("CHECK_OUTPUT"))) {
+				acceptedWork = null;
 				nextGoalContinuationTick = 0;
 				return;
 			}
@@ -147,8 +204,12 @@ public final class DialogueRuntime {
 	}
 
 	private void resetPlanners(String reason) {
+		if (policyContinuation != null) policyContinuation.discard(reason);
+		continuationParent = null;
+		continuationAdmission = null;
+		admittedContinuation = null;
 		lastSupervisedHold = null;
-		waitingForWork = null;
+		acceptedWork = null;
 		if (delegation != null) delegation.reset(reason);
 		planners().forEach(PlannerOrchestrator::reset);
 		planners().forEach(p -> p.updateSafetyContext(safetyEpoch, safetyHoldId, reflexActive));
@@ -165,7 +226,7 @@ public final class DialogueRuntime {
 		delegationWorkIdle = workIdle;
 		boolean delegated = delegation != null && delegation.active();
 		if (delegated && (delegation.starting() || delegation.returning())) return true;
-		if (waitingForWork != null) return true;
+		if (acceptedWork != null) return true;
 		if (!delegated && plannerGoal != null && plannerGoal.blocked()) return true;
 		if (!delegated && (plannerGoal == null || !plannerGoal.active())) return false;
 		boolean awaitingSafetyDecision = !reflexActive && safetyHoldId != null;
@@ -182,7 +243,7 @@ public final class DialogueRuntime {
 			+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
 			+ plannerGoal.context();
 		if (awaitingSafetyDecision) continuation = "Safety hold " + safetyHoldId
-			+ " still awaits your decision. The previous job remains paused. Use inspect_work and resume_work with its exact workId and this holdId, or cancel_work."
+			+ " still awaits your decision. The previous job remains paused. Use continue to keep and resume the plan, or clear_queue to abort and replace it."
 			+ " Saying you will act does not release the hold.\n" + continuation;
 		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
 			continuation, tick, clock.millis(), "planner_goal"),
@@ -293,6 +354,18 @@ public final class DialogueRuntime {
 		return activePlanner().canonicalConversationDebugSnapshot();
 	}
 
+	public PlannerConversationDebugSnapshot plannerChronicleConversationDebugSnapshot() {
+		return plannerChronicleConversationDebugSnapshot(true);
+	}
+
+	public PlannerConversationDebugSnapshot plannerChronicleConversationDebugSnapshot(boolean verbose) {
+		return activePlanner().chronicleConversationDebugSnapshot(verbose);
+	}
+
+	public PlannerConversationDebugSnapshot plannerContextConversationDebugSnapshot() {
+		return activePlanner().contextConversationDebugSnapshot();
+	}
+
 	public List<String> plannerContextExcerpt() {
 		return activePlanner().contextExcerpt();
 	}
@@ -364,6 +437,7 @@ public final class DialogueRuntime {
 		supersedePendingInternalTaskUpdates("planner_reset", tick, eventBuffer);
 		resetPlanners("runtime reset");
 		queuedTimeoutInjections = 0;
+		pendingVisibleReplies.clear();
 		applyTransition(DialogueCore.onReset(state, senderName, tick), tick, eventBuffer);
 		return true;
 	}
@@ -442,6 +516,11 @@ public final class DialogueRuntime {
 		if (trigger == null) {
 			return;
 		}
+		// Accepted work already consumes these observations. Retain the evidence in the
+		// event buffer, but do not launch a competing turn for ordinary progress.
+		if (acceptedWork != null
+			&& !trigger.maySupersedeLaunchedTurn() && safetyHoldId == null && !reflexActive
+			&& List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK).contains(trigger.type())) return;
 		submitPlannerTrigger(
 			new PlannerRequest(
 				trigger.tick(),
@@ -527,6 +606,10 @@ public final class DialogueRuntime {
 				blockedEventCursor = eventBuffer.latestSeqNo();
 			}
 		}
+
+		if (pollPolicyContinuation(tick, eventBuffer)) return null;
+
+		activePlanner().tickToolQueue();
 
 		if (queuedTimeoutInjections > 0 && !activePlanner().hasInFlight()) {
 			queuedTimeoutInjections--;
@@ -635,6 +718,7 @@ public final class DialogueRuntime {
 	}
 
 	public void shutdown() {
+		if (policyContinuation != null) policyContinuation.close();
 		state = DialogueCore.initialState();
 		queuedTimeoutInjections = 0;
 		pendingTimeoutVisibleReply = false;
@@ -691,8 +775,15 @@ public final class DialogueRuntime {
 		pendingTimeoutVisibleReply = directUserGuidance && submitted;
 	}
 
+	public void queueTaskAttention(long tick, long eventSequence) {
+		if (externalDriverActive) return;
+		if (policyContinuation != null) policyContinuation.discard("execution_attention");
+		continuationParent = null;
+		pendingTaskWakeups.addFirst(new PendingTaskWakeup(tick, userGuidanceRevision, null, eventSequence, true));
+	}
+
 	public void queueTaskWakeup(String missionId, long tick, long eventSequence) {
-		if (!externalDriverActive) pendingTaskWakeups.addLast(new PendingTaskWakeup(tick, userGuidanceRevision, missionId, eventSequence));
+		if (!externalDriverActive) pendingTaskWakeups.addLast(new PendingTaskWakeup(tick, userGuidanceRevision, missionId, eventSequence, false));
 	}
 
 	private boolean submitNextPendingInternalTaskUpdate(
@@ -705,9 +796,12 @@ public final class DialogueRuntime {
 			return false;
 		}
 		while (!pendingTaskWakeups.isEmpty()) {
+			if (acceptedWork != null && acceptedWork.label().equals("run_policy") && safetyHoldId == null && !reflexActive
+				&& !pendingTaskWakeups.peekFirst().attention()) return false;
+			if (activePlanner().hasQueuedToolWork() && !pendingTaskWakeups.peekFirst().attention()) return false;
 			PendingTaskWakeup wake = pendingTaskWakeups.removeFirst();
 			if (activePlanner().hasIncorporatedDecisionEvent(wake.eventSequence())) continue;
-			if (plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()
+			if (!wake.attention() && plannerGoal != null && plannerGoal.blocked() && !eventBuffer.query(wake.eventSequence()-1).events().stream()
 				.anyMatch(event -> event.seqNo() == wake.eventSequence() && (plannerGoal.relevantToBlock(event.type())
 					|| isSupervisoryEvent(event.type())))) continue;
 			String currentMissionId = missionId(activeTask, missionExecution);
@@ -721,7 +815,7 @@ public final class DialogueRuntime {
 			String message = eventBuffer.query(wake.eventSequence() - 1).events().stream()
 				.filter(event -> event.seqNo() == wake.eventSequence() && event.type().equals("task.notice"))
 				.map(event -> Objects.toString(event.payload().get("message"))).findFirst()
-				.orElse("WORK CHANGED: review current work and observed outcomes in DECISION CONTEXT.");
+				.orElse("Work changed.");
 			submitPlannerTrigger(new PlannerRequest(wake.tick(), clock.millis(),
 				sessionSnapshot == null ? SessionSnapshot.initial().mode() : sessionSnapshot.mode(), null,
 				activeGoal == null ? null : activeGoal.orElse(null), activeTask, missionExecution,
@@ -740,7 +834,9 @@ public final class DialogueRuntime {
 	}
 
 	private void supersedePendingInternalTaskUpdates(String reason, long tick, SemanticEventBuffer eventBuffer) {
-		waitingForWork = null;
+		if (policyContinuation != null) policyContinuation.discard(reason);
+		continuationParent = null;
+		acceptedWork = null;
 		userGuidanceRevision++;
 		while (!pendingTaskWakeups.isEmpty()) {
 			recordSupersededInternalTaskUpdate(pendingTaskWakeups.removeFirst(), reason, null, tick, eventBuffer);
@@ -806,8 +902,9 @@ public final class DialogueRuntime {
 		visibleReplyOwner = activePlanner();
 		state = transition.state();
 		applyEffects(transition.effects(), tick, eventBuffer);
-		pendingVisibleReplies.clear();
-		long nextReadyTick = tick;
+		// A new planner result must not erase accepted speech that has not been sent.
+		long nextReadyTick = pendingVisibleReplies.isEmpty() ? tick
+			: Math.max(tick, pendingVisibleReplies.peekLast().readyTick());
 		for (DialogueResponse response : transition.visibleResponses()) {
 			if (response != null && response.text() != null && !response.text().isBlank()) {
 				nextReadyTick += response.delayTicks();
@@ -837,6 +934,6 @@ public final class DialogueRuntime {
 		);
 	}
 
-	private record PendingTaskWakeup(long tick, long userGuidanceRevision, String missionId, long eventSequence) { }
+	private record PendingTaskWakeup(long tick, long userGuidanceRevision, String missionId, long eventSequence, boolean attention) { }
 
 }

@@ -145,7 +145,8 @@ final class CurrentWorldQueryServiceTest {
 		String summary = CurrentWorldQueryService.formatSites(List.of(first, second));
 		assertTrue(summary.contains("All listed targets are air"));
 		assertTrue(summary.contains("Each support is directly below"));
-		assertTrue(summary.contains("All are within interaction range"));
+		assertTrue(summary.contains("All are within interaction range by distance only"));
+		assertTrue(summary.contains("routes and support-face visibility are not verified"));
 		assertTrue(summary.contains("grass_block support {snowy=false}"));
 		assertTrue(summary.contains("stand at 1,64,1"));
 		var exception = new CurrentWorldQueryService.PlacementSite(new BlockPos(0, 64, 2), "minecraft:oak_door", Map.of("open", "false", "facing", "west"), new BlockPos(0, 63, 2), "minecraft:dirt", Map.of(), 9, null, new BlockPos(0, 64, 3), false);

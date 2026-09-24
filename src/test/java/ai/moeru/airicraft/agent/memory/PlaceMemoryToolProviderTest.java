@@ -80,7 +80,6 @@ class PlaceMemoryToolProviderTest {
 	@Test
 	void memoryIsDiscoverableWithoutMapIntegrationAndWritesCannotEnterReadBatches() {
 		var registry = PlannerToolRegistry.of(provider());
-		registry.discoverTools("place memory", 4);
 		for (String name : List.of("remember_place", "recall_place", "list_places", "forget_place")) {
 			assertTrue(registry.isActiveTool(name), name);
 		}
@@ -89,6 +88,18 @@ class PlaceMemoryToolProviderTest {
 		assertFalse(registry.isReadTool("remember_place"));
 		assertFalse(registry.isBatchSafeReadTool("forget_place"));
 		assertTrue(registry.promptInstructions().contains("not fresh evidence"));
+	}
+
+	@Test
+	void toolsAcceptIdsAndRejectAmbiguousSelectors() {
+		var provider = provider();
+		call(provider, "remember_place", "{\"name\":\"home\"}");
+		String result = call(provider, "list_places", "{}");
+		String id = JsonParser.parseString(result.substring(result.indexOf("result=") + 7)).getAsJsonArray().get(0).getAsJsonObject().get("id").getAsString();
+		assertTrue(call(provider, "remember_place", "{\"id\":\"" + id + "\",\"name\":\"base\"}").contains("base"));
+		assertTrue(call(provider, "recall_place", "{\"id\":\"" + id + "\"}").contains("base"));
+		assertTrue(call(provider, "recall_place", "{\"id\":\"" + id + "\",\"name\":\"base\"}").contains("TOOL_ERROR"));
+		assertTrue(call(provider, "forget_place", "{\"id\":\"" + id + "\"}").contains("\"deleted\":true"));
 	}
 
 	@Test

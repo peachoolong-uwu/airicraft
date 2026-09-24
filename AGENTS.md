@@ -1,31 +1,37 @@
 # Airicraft Agent Notes
 
 ## Current Project State
+
 - This repo is a Fabric mod for Minecraft `1.21.8`.
 - It currently uses Yarn mappings, not Mojang official mappings.
-- Java target is `21`.
+- Java target is `21`, but the Gradle build JVM must be JDK 25+ (Fabric Loom `1.18` requires JVM 25). `.java-version` pins `25`; compile/test/runClient use a JBR 21 toolchain (`JvmVendorSpec.JETBRAINS`), auto-detected or downloaded via the Foojay resolver.
+- Gradle wrapper is `9.7.1` (Loom `1.18` requires Gradle 9.7+).
 - The build is a multi-project Gradle build with:
   - root project: Fabric mod
   - `wrapper/`: standalone Java CLI for agent-driven control
 
 ## Build And Run
+
 - Full build: `./gradlew build`
-- Run Minecraft client in dev: `./gradlew runClient`
+- Requires git submodules: `git submodule update --init --recursive` (build fails on `action-plan-advisor` if absent).
+- `ffmpeg` must be on PATH or `PlaytestVideoRecorder`-related tests fail with `IOException` (playtest screen recording spawns it). Install: `brew install ffmpeg`.
+- Normal Minecraft launches (`./gradlew runClient`, `scripts/codex-driver`, `scripts/arthas kickstart`) enable all supported mod integrations by default.
 - `runClient` starts JDWP by default on `127.0.0.1:5005` with `suspend=n`
 - Attach a debugger with `jdb -attach 127.0.0.1:5005` or any JDWP client
 - Override JDWP settings with Gradle properties, for example:
   - `./gradlew runClient -Pairicraft.jdwp.port=5006`
   - `./gradlew runClient -Pairicraft.jdwp.suspend=y`
 - Compatibility smoke:
-  - Use `scripts/compat run`, not plain `runClient`.
-  - Why: external optional-mod jars are production/intermediary; dev remap path can conflict.
-  - It integrates all supported optional mods instead of testing them one at a time.
+  - `scripts/compat run` and normal `runClient` use the production/intermediary client with all integrations; this avoids optional-mod dev remapping conflicts.
+  - Use `-Pairicraft.includeCompat=false` only when explicitly testing the bare development client.
   - Debug port: JDWP `127.0.0.1:5007`.
   - Config shared with normal dev: `run/config/airicraft`.
   - Jar cache ignored: `.airicraft-compat/integration/`; never vendor optional-mod jars or copy them into `run/mods`.
   - Setup/list jars: `scripts/compat setup`, `scripts/compat mods`.
   - Verify live: mod list has `airicraft` + `airicraft-journeymap-compat` + `journeymap` + `airicraft-rei-compat` + `roughlyenoughitems`; `airicraft map status` says `available: true`, `preferredProvider: journeymap`; planner still exposes `search_recipes`.
 - Evaluation batches:
+  - Each `scenarios/<id>/scenario.yml` declares `requiredMods: [journeymap, roughlyenoughitems]` as needed. Omitted or empty means no optional integrations; dependencies of a declared mod are included automatically.
+  - Manual evaluator launches: set `AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST` to the chosen manifest path. The evaluation harness sets it per worker; discovery loads no integrations.
   - Use `scripts/run-evaluation-scenarios --scenario <id>` for a serial run.
   - Add repeated `--scenario` options and `--jobs <count>` for isolated parallel clients.
   - Parallel clients use separate game directories and bridge files.
@@ -52,6 +58,7 @@
 - CLI artifact is built by the `wrapper` subproject as a runnable jar and application distribution.
 
 ## Architecture
+
 - The public control surface is the standalone `wrapper` CLI.
 - The Fabric mod exposes an internal localhost HTTP bridge.
 - Bridge discovery defaults to `~/.airicraft/bridge-state.json`.
@@ -60,6 +67,7 @@
 - The CLI reads the selected state file, calls the localhost bridge, and deletes stale state if the bridge is unreachable.
 
 ## Key Mod-Side Files
+
 - `src/client/java/ai/moeru/airicraft/ModBridgeServer.java`
   - localhost bridge entrypoint
   - bridge auth, routing, error mapping
@@ -73,12 +81,14 @@
   - list and join saved multiplayer servers
 
 ## Key Wrapper Files
+
 - `wrapper/src/main/java/ai/moeru/airicraft/wrapper/AiricraftCliMain.java`
   - CLI command tree, text output, error handling
 - `wrapper/src/main/java/ai/moeru/airicraft/wrapper/HttpBridgeTransport.java`
   - bridge HTTP client and stale-state handling
 
 ## Current CLI Commands
+
 - `airicraft status`
 - `airicraft reload`
 - `airicraft worlds list`
@@ -114,6 +124,7 @@
 - `airicraft help [command...]`
 
 ## CLI Output Contract
+
 - Operational commands print deterministic plain text to `stdout`.
 - Success starts with:
   - `status: ok`
@@ -132,6 +143,7 @@
   - `1` unexpected internal failure
 
 ## Current Bridge Endpoints
+
 - `GET /v1/status`
 - `POST /v1/reload`
 - `GET /v1/worlds`
@@ -143,6 +155,10 @@
 - `GET|POST|DELETE /v1/highlights`
 
 ## Behavior Notes
+
+- Location memory uses one planner interface: `remember_place`, `recall_place`, `list_places`, `forget_place`. JourneyMap is authoritative when installed; `places.json` is used only without it. No import, mirroring, or silent fallback while JourneyMap loads.
+- Recall/forget accept exact name or stable ID; duplicate names require IDs. JourneyMap native and death waypoints are ordinary entries. Notes and preserved areas live in waypoint custom data.
+- New location-memory consumers use `LocationMemoryService`/`LocationMemoryBridge`; only the fallback provider accesses the local file store. Protection follows the selected backend and fails closed when its data is unavailable.
 - Each client automatically owns a read-only LAN debug dashboard. It scans upward from configured port `8765`, uses a viewer token distinct from the control bridge token, and prints the clickable URL in logs, `airicraft status`, and in-game chat.
 - Live playtest diagnosis: pause server ticks, query the rolling decision history, and export the incident before rebuilding. See `docs/live-playtest-recording.md` for CLI queries, selective frames, playback, and loss checks.
 - Dashboard observations include full LLM envelopes, runtime snapshots, decision states, events, and sparse client RGB. The default window is 12,000 completed server ticks, capped at 64 MiB; tick-debug pause freezes it. Pixel-identical frames are skipped before encoding.
@@ -162,6 +178,7 @@
   - list, clear-one, clear-all
 
 ## Important Caveat
+
 - If behavior changes in bridge handlers do not appear in a running dev client, restart `runClient`.
 - A running Minecraft dev process keeps the old classes loaded even if the repo has already been rebuilt.
 - The in-mod verification scenarios are stateful. Running multiple planner/follow scenarios back to back in one client session can produce cross-scenario interference.

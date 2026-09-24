@@ -57,6 +57,10 @@ public final class DropItemsTaskExecutor implements WorldTaskExecutor {
 		this(MinecraftClient::getInstance, navigationFacade, new CameraController());
 	}
 
+	public DropItemsTaskExecutor(BaritoneFacade navigationFacade, CameraController cameraController) {
+		this(MinecraftClient::getInstance, navigationFacade, cameraController);
+	}
+
 	DropItemsTaskExecutor(Supplier<MinecraftClient> clientSupplier) {
 		this(clientSupplier, null, new CameraController());
 	}
@@ -153,6 +157,14 @@ public final class DropItemsTaskExecutor implements WorldTaskExecutor {
 		);
 		PlayerItemDeliveryPolicy.Decision decision = PlayerItemDeliveryPolicy.decide(deliveryState, observation);
 		pendingPickupEvidence.clear();
+		if (decision.command() == PlayerItemDeliveryPolicy.Command.DROP && target.isPresent()) {
+			cameraController.lookAt(client, targetAimPoint(target.get()));
+			if (!cameraController.isLookingAt(client, targetAimPoint(target.get()), 5.0F)) {
+				stopApproach(client);
+				snapshot = snapshot(TaskExecutionState.RUNNING, request, "aiming_at_recipient");
+				return Optional.empty();
+			}
+		}
 		deliveryState = decision.nextState();
 		return switch (decision.command()) {
 			case APPROACH -> {
@@ -163,13 +175,13 @@ public final class DropItemsTaskExecutor implements WorldTaskExecutor {
 			}
 			case AIM -> {
 				stopApproach(client);
-				target.ifPresent(value -> cameraController.lookAtNow(client, targetAimPoint(value)));
+				target.ifPresent(value -> cameraController.lookAt(client, targetAimPoint(value)));
 				snapshot = snapshot(TaskExecutionState.RUNNING, request, decision.reason());
 				yield Optional.empty();
 			}
 			case DROP -> {
 				stopApproach(client);
-				target.ifPresent(value -> cameraController.lookAtNow(client, targetAimPoint(value)));
+				target.ifPresent(value -> cameraController.lookAt(client, targetAimPoint(value)));
 				baselineItemEntityCounts = itemEntityCounts(client, args.itemId());
 				ScreenHandler handler = player.currentScreenHandler;
 				for (DropClick click : planDropClicks(matchingSlots(handler, args.itemId()), args.quantity())) {
@@ -179,7 +191,7 @@ public final class DropItemsTaskExecutor implements WorldTaskExecutor {
 				yield Optional.empty();
 			}
 			case WAIT -> {
-				target.ifPresent(value -> cameraController.lookAtNow(client, targetAimPoint(value)));
+				target.ifPresent(value -> cameraController.lookAt(client, targetAimPoint(value)));
 				snapshot = snapshot(TaskExecutionState.RUNNING, request, decision.reason());
 				yield Optional.empty();
 			}
@@ -195,9 +207,9 @@ public final class DropItemsTaskExecutor implements WorldTaskExecutor {
 		String reason,
 		long tick
 	) {
-		cameraController.lookAtNow(client, targetAimPoint(target));
 		double distance = client.player.distanceTo(target);
 		if (distance <= 10.0D && !movementController.snapshot().stuck()) {
+			cameraController.lookAt(client, targetAimPoint(target));
 			cancelBaritoneChase();
 			movementController.moveForward(client, true, false, tick);
 			snapshot = snapshot(TaskExecutionState.RUNNING, request, reason + " direct_chase");

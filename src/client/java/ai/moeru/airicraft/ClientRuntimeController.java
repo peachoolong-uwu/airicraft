@@ -32,10 +32,12 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import org.lwjgl.glfw.GLFW;
 
 import java.net.URI;
 import java.util.LinkedHashMap;
@@ -78,7 +80,7 @@ public final class ClientRuntimeController {
 				var dashboard = config.debugDashboard();
 				return ai.moeru.airicraft.playtest.AutomaticPlaytestRuntime.enabled()
 					? new ai.moeru.airicraft.dashboard.DebugDashboardConfig(dashboard.enabled(), dashboard.basePort(), dashboard.portScanLimit(),
-						dashboard.historyByteBudget(), true, 20)
+						dashboard.historyByteBudget(), true, 1)
 					: dashboard;
 			}
 		);
@@ -135,6 +137,22 @@ public final class ClientRuntimeController {
 		plannerDebugOverlay.setMode(mode);
 	}
 
+	public PlannerConversationView plannerDebugConversationView() {
+		return plannerDebugOverlay.conversationView();
+	}
+
+	public void setPlannerDebugConversationView(PlannerConversationView view) {
+		plannerDebugOverlay.setConversationView(view);
+	}
+
+	public boolean plannerDebugConversationVerbose() {
+		return plannerDebugOverlay.conversationVerbose();
+	}
+
+	public void setPlannerDebugConversationVerbose(boolean verbose) {
+		plannerDebugOverlay.setConversationVerbose(verbose);
+	}
+
 	public DashboardObservationStore liveRecording() {
 		return dashboardObservationStore;
 	}
@@ -176,6 +194,8 @@ public final class ClientRuntimeController {
 		highlightManager.clear();
 	}
 
+	public CameraController cameraController() { return cameraController; }
+
 	public void onClientTick(MinecraftClient client) {
 		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.tick(client);
 		if (!automaticPlaytest.freezing()) currentAgentRuntime().onClientTick(client);
@@ -193,7 +213,30 @@ public final class ClientRuntimeController {
 			}
 		}
 		automaticPlaytest.onClientTick(client);
+		pollConversationScrollKeys(client);
 		announceDashboardUrl(client);
+	}
+
+	// The HUD has no cursor to hover the pane, and the wheel drives the hotbar;
+	// PgUp/PgDn/Home/End scroll the conversation overlay when no screen is open.
+	private void pollConversationScrollKeys(MinecraftClient client) {
+		if (client == null || client.currentScreen != null || client.getWindow() == null
+			|| plannerDebugOverlay.mode() != PlannerDebugOverlayMode.CONVERSATION) {
+			return;
+		}
+		long handle = client.getWindow().getHandle();
+		if (InputUtil.isKeyPressed(handle, GLFW.GLFW_KEY_PAGE_UP)) {
+			plannerDebugOverlay.scrollConversationBy(-PlannerDebugOverlay.CONVERSATION_KEY_SCROLL_STEP_PX);
+		}
+		if (InputUtil.isKeyPressed(handle, GLFW.GLFW_KEY_PAGE_DOWN)) {
+			plannerDebugOverlay.scrollConversationBy(PlannerDebugOverlay.CONVERSATION_KEY_SCROLL_STEP_PX);
+		}
+		if (InputUtil.isKeyPressed(handle, GLFW.GLFW_KEY_HOME)) {
+			plannerDebugOverlay.scrollConversationToStart();
+		}
+		if (InputUtil.isKeyPressed(handle, GLFW.GLFW_KEY_END)) {
+			plannerDebugOverlay.scrollConversationToEnd();
+		}
 	}
 
 	private void announceDashboardUrl(MinecraftClient client) {
@@ -390,10 +433,10 @@ public final class ClientRuntimeController {
 		WorldTaskExecutor worldTaskExecutor = new DispatchingWorldTaskExecutor(new DispatchingWorldTaskExecutor.ExecutorSet(
 			baritoneTaskExecutor,
 			new CraftingTaskExecutor(baritoneFacade, cameraController),
-			new DropItemsTaskExecutor(baritoneFacade),
+			new DropItemsTaskExecutor(baritoneFacade, cameraController),
 			new EntityInteractionTaskExecutor(baritoneFacade, cameraController),
 			new SmeltingTaskExecutor(smeltingProcessManager, baritoneFacade),
-			new ReturnToSurfaceTaskExecutor(baritoneFacade),
+			new ReturnToSurfaceTaskExecutor(baritoneFacade, cameraController),
 			new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade),
 			new BlockBreakTaskExecutor(cameraController),
 			new TargetAcquisitionTaskExecutor(baritoneFacade, cameraController),
@@ -487,6 +530,7 @@ public final class ClientRuntimeController {
 			payload.put("codexExecutable", agentConfig.llm().codexAppServer().executable());
 			payload.put("codexModel", agentConfig.llm().codexAppServer().model());
 			payload.put("codexReasoningEffort", agentConfig.llm().codexAppServer().reasoningEffort());
+			payload.put("codexServiceTier", agentConfig.llm().codexAppServer().serviceTier());
 			payload.put("codexStartupTimeoutMillis", agentConfig.llm().codexAppServer().startupTimeoutMillis());
 			payload.put("codexTurnTimeoutMillis", agentConfig.llm().codexAppServer().turnTimeoutMillis());
 			return payload;

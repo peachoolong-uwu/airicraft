@@ -10,6 +10,10 @@ codexAppServer:
   # Examples: low, medium, high, xhigh. Accepted values are model-specific.
   # Empty uses the local Codex default.
   reasoningEffort: ""
+  # Set to "fast" to request Codex Fast mode (higher credit consumption).
+  # Empty inherits the local Codex default. Other tiers depend on the model/account.
+  # After changing this setting, run /airicraft reload to start a fresh planner session.
+  serviceTier: ""
   startupTimeoutMillis: 10000
   turnTimeoutMillis: 120000
 
@@ -95,6 +99,10 @@ visionImageDetail: "low"
 # When true, planner visual tool follow-up attaches the captured image directly to the planner.
 # When false, the visual tool uses the external vision model to summarize the screenshot first.
 plannerNativeVisionEnabled: false
+# Maximum native images retained in the planner context (minimum 1).
+# At the limit, interpret new images with the same planner model in a fresh context
+# and return text. Existing images stay unchanged; compaction restores capacity.
+plannerMaxImages: 8
 
 # Deprecated for normal planner turns. Normal planning now uses plaintext replies plus tool calls.
 # Hidden compaction requests still use response_format.type=json_object.
@@ -137,3 +145,7 @@ observability:
   #   wandb.entity: "shinohara-rin"
   #   wandb.project: "airicraft"
   # vendorProfile: "weave"
+
+# Experimental sequential short-term findings for world inspection/query results.
+# Requires openai-compatible. Raw results remain in debug records, not future context.
+plannerSummarizeToolResults: true

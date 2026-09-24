@@ -2,13 +2,23 @@
 
 Airicraft is a Fabric mod that exposes an in-game agent bridge and a CLI for automating common tasks. It targets Minecraft `1.21.8` with Java `21`, plus a `wrapper/` CLI subproject.
 
-
 ## Development And Verification
 
-Run these after Java is configured. Source `.envrc` before Gradle build, test, or run commands:
+Prerequisites:
+
+- JDK 25 on `PATH` for running Gradle; Fabric Loom `1.18` requires a Java 25+ build JVM. The repo pins `25` in `.java-version`, so jenv, asdf, or jolta can supply the JDK automatically (for jenv: `jenv add <jdk-home>` once, then the pin applies). A plain `.jdk` bundle under `~/Library/Java/JavaVirtualMachines` works too.
+- A JetBrains Runtime JDK 21 toolchain for compiling, testing, and running the mod; the language target stays on Java 21 and the toolchain vendor is pinned to JBR (`JvmVendorSpec.JETBRAINS`), which is what enables enhanced class redefinition (`-XX:+AllowEnhancedClassRedefinition`) for HotSwap. Gradle auto-detects installed JDKs and can auto-download a JBR 21 toolchain via the Foojay resolver, so a `.jdk` bundle under `~/Library/Java/JavaVirtualMachines` or a version-manager install is picked up without configuration.
+- Git submodules initialized; the build fails on a missing `action-plan-advisor`:
+
+  ```shell
+  git submodule update --init --recursive
+  ```
+
+- `ffmpeg` on `PATH`; playtest screen recording and its tests spawn it. Install: `brew install ffmpeg`.
+
+`.envrc` is optional, gitignored, and only sourced when present (`scripts/*` handle this themselves). Use it for machine-local environment variables; it is not required for builds.
 
 ```shell
-source .envrc
 ./gradlew --version
 ./gradlew build
 ./gradlew test wrapper:test --rerun-tasks
@@ -34,7 +44,25 @@ Every queried block must be within 64 blocks of the player. Radius defaults are 
 
 Planner-facing block modification is guarded by the world-read ledger. `place_block` and `use_block` take an intended modified target `x/y/z`; for example, planting seeds targets the crop position above farmland, while the runtime derives the support click. The target position must have been returned by `inspect_world` within the last 10 planner tool calls. If not, the runtime does not queue the modification. It returns a `place_block`/`use_block` tool result containing a small `inspect_world` `inspect_area` query centered on the target and tells the planner to call the same tool again only if it still wants to proceed.
 
+### Location memory
+
+The planner uses one interface: `remember_place`, `recall_place`, `list_places`, and `forget_place`. With JourneyMap installed, these operate directly on persistent native waypoints in the current world/server, including user-created and death waypoints. Names, coordinates, and native UI edits share the same store; notes and `preserveArea` are stored in namespaced waypoint custom data. `take_map_look` remains the map-image tool. The separate planner map-waypoint CRUD tools have been removed; the wrapper's map commands remain available.
+
+Use an exact, case-sensitive name or a returned stable `id` for recall/forget. If names are duplicated, the tool returns candidate IDs and requires an ID. `remember_place` requires a name and accepts an existing ID to update or rename that entry. Replacing a location without `note` or `preserveArea` clears that metadata. `read_logbook` resolves its `place` filter through the same backend and accepts `placeId` for ambiguous names. Native waypoints without Airicraft metadata have no note or protected area; arbitrary non-JSON custom data is left intact, and metadata writes to such a waypoint report a conflict.
+
+JourneyMap starts fresh: existing `airicraft/places.json` files are neither imported nor updated while it is installed. A loading/unavailable JourneyMap returns a backend error instead of switching stores. Without JourneyMap, the local world-save backend uses `places.json`; old files remain readable and gain stable IDs when edited. Removing JourneyMap exposes that independent local store, not a copy of JourneyMap's locations. The local backend still requires a locally hosted world.
+
+Protection follows the selected backend. Legacy local protected areas are inactive with JourneyMap selected. Native waypoint changes refresh protection on the next client tick; periodic refresh also catches file/backend changes. Invalid or unavailable protection data blocks automatic terrain edits until a valid snapshot is available. Location names and notes remain data, not instructions or evidence of safety/reachability.
+
 ### Evaluation scenario checks
+
+Scenario evaluations load only the optional integrations declared by the scenario manifest:
+
+```yaml
+requiredMods: [journeymap, roughlyenoughitems]
+```
+
+Use either supported Fabric mod ID, both, or `[]`. Omitting `requiredMods` means no optional integrations. Dependencies (such as REI's Architectury and Cloth Config) are included automatically. Unknown IDs or malformed declarations fail before launch. The evaluation harness passes each worker its own manifest; the discovery client has no optional integrations. Manual launches use `AIRICRAFT_EVALUATOR_SCENARIO_MANIFEST=/absolute/path/scenario.yml scripts/eval run` (also supported by `scripts/codex-driver-evaluator`), or pass `-Pairicraft.evaluator.scenarioManifest=/absolute/path/scenario.yml` to Gradle. Restart with the appropriate manifest before switching to a scenario requiring a different mod set. The recording profile is configured separately from `requiredMods`.
 
 Evaluation scenarios in `scenarios/*/scenario.yml` can use deterministic checks. `inventory_contains` verifies an item count, `block_state` verifies one exact block position, and `block_count` verifies at least `count` matching blocks in either `scope: self` with `horizontalRadius`/`verticalRadius` or `scope: box` with `x1/y1/z1/x2/y2/z2`.
 
@@ -81,10 +109,10 @@ scenarios/unpack-worlds farm_easy --force
 
 ### Normal dev client
 
-Use this for Airicraft-only development. It runs the Fabric dev client with HotSwap and opens JDWP on `127.0.0.1:5005`.
+Normal development runs include all supported integrations, use the production-style Fabric client with HotSwap, and open JDWP on `127.0.0.1:5005`.
 
 ```shell
-source .envrc && ./gradlew runClient
+./gradlew runClient
 jdb -attach 127.0.0.1:5005
 ```
 
@@ -125,12 +153,7 @@ Visual context is intentionally off by default because screenshot capture and PN
 
 All existing client tasks use HotSwap by default. This includes `runClient`, `scripts/compat run`, and `scripts/eval run`.
 
-The first client start downloads these pinned development tools:
-
-- JetBrains Runtime SDK `21.0.11-b1163.116` for macOS ARM64.
-- HotswapAgent `2.0.3`.
-
-Gradle verifies each download with a pinned SHA-512 value. It stores the files in the Gradle user cache.
+HotswapAgent `2.0.3` is a regular Maven dependency; Gradle resolves it on first use. Enhanced class redefinition (`-XX:+AllowEnhancedClassRedefinition`) is a JetBrains Runtime feature: the client always runs on the JBR 21 toolchain (the Gradle JVM itself is JDK 25). Non-JBR JDK 21 installs are not selected by the toolchain vendor spec, so there is no silent fallback to method-body-only reloads.
 
 Fabric uses its Knot class loader. HotswapAgent cannot watch Knot class roots directly.
 
@@ -142,7 +165,7 @@ Use two terminals:
 2. Start the continuous main-mod build in the second terminal:
 
    ```shell
-   source .envrc && ./gradlew hotswapMain --continuous
+   ./gradlew hotswapMain --continuous
    ```
 
 3. Edit Java code under the main Airicraft mod.
@@ -154,8 +177,8 @@ The task watches named output for the normal client. It watches remapped root-mo
 
 HotSwap has these limits:
 
-- It supports macOS ARM64 only.
-- The first setup needs network access. An offline first setup fails without a partial installation.
+- It is set up and verified on macOS ARM64; other platforms are untested.
+- The first setup needs network access (Gradle toolchain and Maven downloads). An offline first setup fails without a partial installation.
 - Only main Airicraft mod classes reload.
 - Evaluator-addon and compatibility-addon changes need a client restart.
 - Mixin changes, resource changes, and Fabric initialization changes need a client restart.
@@ -166,11 +189,10 @@ HotSwap has these limits:
 - A final evaluator proof needs a clean client start.
 - A code change during an evaluator run invalidates that run as final evidence.
 
-Use the official runtime sources when the pinned versions need an update:
+Related upstream references:
 
 - [JetBrains Runtime](https://github.com/JetBrains/JetBrainsRuntime)
-- [JetBrains Runtime 21.0.11-b1163.116](https://github.com/JetBrains/JetBrainsRuntime/releases/tag/jbr-release-21.0.11b1163.116)
-- [HotswapAgent 2.0.3](https://github.com/HotswapProjects/HotswapAgent/releases/tag/RELEASE-2.0.3)
+- [HotswapAgent](https://github.com/HotswapProjects/HotswapAgent)
 - [Fabric HotSwap guide](https://docs.fabricmc.net/develop/getting-started/intellij-idea/launching-the-game)
 
 ### Agent debug CLI
@@ -182,7 +204,6 @@ A frame capture uses the first rendered frame for its client tick. The next clie
 Build the CLI before its first use or after a wrapper change:
 
 ```shell
-source .envrc
 ./gradlew wrapper:installDist
 AIRICRAFT_CLI=wrapper/build/install/airicraft/bin/airicraft
 "$AIRICRAFT_CLI" agent debug --help
@@ -428,9 +449,9 @@ The window size multiplied by the entity limit cannot exceed 100000. A trace can
 
 ### Compatibility client
 
-Use this for optional third-party mod integration testing. It launches a production-style Fabric client with the remapped Airicraft jar.
+Normal `./gradlew runClient` launches include all supported integrations through the production-style Fabric client with the remapped Airicraft jar. `scripts/codex-driver` and `scripts/arthas kickstart` inherit this default. For an explicit bare development-client test, use `./gradlew runClient -Pairicraft.includeCompat=false`.
 
-The client includes JourneyMap, REI, Fabric API, Architectury, Cloth Config, and local runtime mods. HotSwap uses JDWP on `127.0.0.1:5007`.
+The client includes JourneyMap, REI, Fabric API, Architectury, Cloth Config, and local runtime mods. Normal `runClient` uses JDWP on `127.0.0.1:5005`; `scripts/compat run` uses `127.0.0.1:5007`.
 
 The helper keeps downloaded/runtime jars out of the repository in ignored `.airicraft-compat/`, and uses the shared dev game directory `run/`. That means normal `runClient` and compatibility runs read the same Airicraft config:
 
@@ -470,7 +491,7 @@ Airicraft includes dev-only Gradle helpers for attaching the Arthas CLI to the r
 Start the client:
 
 ```shell
-source .envrc && ./gradlew runClient
+./gradlew runClient
 ```
 
 For a cold dev client, use the helper to start the client, wait for the bridge, join the first saved world, open LAN, and attach Arthas. This command is cold-only and fails fast if a client is already running:
@@ -482,7 +503,7 @@ scripts/arthas kickstart
 Attach Arthas manually when the client is already running:
 
 ```shell
-source .envrc && ./gradlew arthasAttach
+./gradlew arthasAttach
 ```
 
 Use the low-noise HTTP helper for probes after Arthas is attached. It auto-selects the Minecraft Arthas HTTP port when possible and prints compact results:
@@ -506,7 +527,7 @@ If process-name selection misses the dev client, find the JVM and attach by PID:
 
 ```shell
 jps -lv
-source .envrc && ./gradlew arthasAttach -Pairicraft.arthas.pid=<pid>
+./gradlew arthasAttach -Pairicraft.arthas.pid=<pid>
 ```
 
 Useful Airicraft inspection commands include `sc`, `sm`, `jad`, `watch`, `trace`, `stack`, `tt`, `thread`, `dashboard`, and `ognl`.
@@ -514,13 +535,7 @@ Useful Airicraft inspection commands include `sc`, `sm`, `jad`, `watch`, `trace`
 Arthas starts with full command power by default. Mutation commands such as `ognl`, `vmtool`, `sysprop`, `vmoption`, `redefine`, `retransform`, and `mc` can alter the live JVM; use them deliberately. To restrict commands for a session, pass a comma-separated list:
 
 ```shell
-source .envrc && ./gradlew arthasShell -Pairicraft.arthas.disabledCommands=stop,dump,heapdump,redefine,retransform,mc
-```
-
-```text
-> ./gradlew runClient
-The operation couldn't be completed. Unable to locate a Java Runtime.
-Please visit http://www.java.com for information on installing Java.
+./gradlew arthasShell -Pairicraft.arthas.disabledCommands=stop,dump,heapdump,redefine,retransform,mc
 ```
 
 ## Weave / OpenTelemetry Observability Setup
@@ -613,56 +628,21 @@ If all are false, only non-content structural tracing metadata is sent.
 
 ### `./gradlew runClient` says `Unable to locate a Java Runtime`
 
-Check:
+No JDK 25 is visible to the shell that launched Gradle. Check:
 
 ```shell
-java --version
+java -version
 which java
-jenv version
-jenv doctor
+/usr/libexec/java_home -V   # lists JVMs under Library/Java/JavaVirtualMachines
 ```
 
 Fix:
 
-1. Ensure `~/.zshrc` contains:
-   - `export PATH="$HOME/.jenv/bin:$PATH"`
-   - `eval "$(jenv init -)"`
-2. Enable plugin and reload shell:
-   - `jenv enable-plugin export`
-   - `exec zsh`
-3. Re-add JDK:
-   - `jenv add /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`
-4. Re-select Java version:
-   - `jenv global openjdk64-21.0.10`
+1. Install a JDK 25 (any distro). Either drop a `.jdk` bundle into `~/Library/Java/JavaVirtualMachines`, or use a version manager that reads the repo's `.java-version`.
+2. Make sure `java` is on `PATH` (or `JAVA_HOME` is set) in the shell that runs Gradle.
+3. Re-run `./gradlew --version` to confirm Gradle sees Java 25 or newer.
 
-### `jenv versions` only shows `system`
-
-Cause: JDK not added into jenv, or shell init not loaded.
-
-```shell
-jenv add /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-exec zsh
-jenv versions
-```
-
-### `JAVA_HOME` is empty
-
-```shell
-jenv enable-plugin export
-exec zsh
-env | grep JAVA_
-```
-
-If still empty, recheck `~/.zshrc` and run `jenv doctor`.
-
-### `jenv` command not found
-
-```shell
-brew list jenv
-cat ~/.zshrc | rg 'jenv'
-exec zsh
-which jenv
-```
+If Gradle runs but toolchain resolution fails instead, no JBR 21 JDK was detected. Install one under `~/Library/Java/JavaVirtualMachines` (or via your version manager), or let the Foojay resolver download it — toolchain downloads need network access on first setup.
 
 ## Notes
 

@@ -16,6 +16,7 @@ import java.util.Objects;
 
 public final class PlannerContextAggregator {
 	private static final int DEFAULT_PENDING_SEMANTIC_EVENT_CAP = 128;
+	private static final String OVERFLOW_FLUSH_NOTICE = "Pending events reached capacity and were delivered early.";
 	private static final String OVERFLOW_FLUSH_INSTRUCTION = "Pending semantic context reached capacity. Review the context updates above and respond once if any reply or action is needed.";
 
 	private final Clock clock;
@@ -28,6 +29,8 @@ public final class PlannerContextAggregator {
 	private final SemanticContextProjector semanticContextProjector = new SemanticContextProjector();
 
 	private String fixedSystemPrompt;
+	private boolean decisionContextEnabled;
+	public void useDecisionContext() { decisionContextEnabled = true; }
 	private LlmConversation retainedConversation;
 
 	private PlannerContextState state = PlannerContextState.initial();
@@ -163,7 +166,8 @@ public final class PlannerContextAggregator {
 			combinedRequest,
 			PlannerSnapshotMode.TRIGGERED,
 			triggerBatch,
-			composeConversation(nowMs, snapshotNotices, triggerBatch.toTerminalMessage()),
+			composeConversation(nowMs, snapshotNotices, decisionContextEnabled
+				? triggerBatch.toObservedMessages() : List.of(triggerBatch.toTerminalMessage())),
 			state.pendingSemanticEvents().isEmpty() ? 0L : state.pendingSemanticEvents().getLast().seqNo(),
 			state.pendingSemanticGapVersion(),
 			ambientContext,
@@ -189,7 +193,9 @@ public final class PlannerContextAggregator {
 			request,
 			PlannerSnapshotMode.OVERFLOW_FLUSH,
 			PlannerTriggerBatch.of(List.of()),
-			composeConversation(nowMs, snapshotNotices, LlmChatMessage.user(OVERFLOW_FLUSH_INSTRUCTION, LlmMessageKind.TASK)),
+			composeConversation(nowMs, snapshotNotices, List.of(decisionContextEnabled
+				? LlmChatMessage.user(OVERFLOW_FLUSH_NOTICE, LlmMessageKind.NOTICE)
+				: LlmChatMessage.user(OVERFLOW_FLUSH_INSTRUCTION, LlmMessageKind.TASK))),
 			state.pendingSemanticEvents().getLast().seqNo(),
 			state.pendingSemanticGapVersion(),
 			ambientContext,
@@ -238,6 +244,30 @@ public final class PlannerContextAggregator {
 		}
 	}
 
+	LlmConversation retainedToolContext() { return retainedConversation == null ? LlmConversation.of(List.of()) : retainedConversation; }
+
+	/**
+	 * What the model would see if a request went out right now: the retained wire
+	 * conversation (accepted replies, tool envelopes and checkpoints applied), or the
+	 * rebuilt accepted-history base for client-managed history without a fixed prefix.
+	 * Null when history is provider-managed and nothing is retained locally.
+	 */
+	public LlmConversation currentRetainedConversation(long anchorTimeMs) {
+		if (retainedConversation != null) {
+			return retainedConversation;
+		}
+		if (backendManagedHistory) {
+			return null;
+		}
+		ArrayList<LlmChatMessage> messages = new ArrayList<>();
+		messages.add(LlmChatMessage.system(systemPrompt()));
+		if (state.activeCheckpoint() != null) {
+			messages.add(LlmChatMessage.user(state.activeCheckpoint().renderMessage(), LlmMessageKind.CHECKPOINT));
+		}
+		messages.addAll(renderAcceptedHistory(anchorTimeMs));
+		return LlmConversation.of(messages);
+	}
+
 	public LlmConversation buildPlannerConversation(PlannerRequest request) {
 		Objects.requireNonNull(request, "request");
 		recordPlannerRequestSeed(PlannerRequestSeed.fromRequest(request));
@@ -247,7 +277,7 @@ public final class PlannerContextAggregator {
 			}
 		}
 		PlannerContextSnapshot snapshot = freezePlannerSnapshot(request);
-		return snapshot == null ? composeConversation(request.timestampMs(), List.of(), null) : snapshot.plannerConversation();
+		return snapshot == null ? composeConversation(request.timestampMs(), List.of(), List.of()) : snapshot.plannerConversation();
 	}
 
 	public LlmConversation buildPlannerFollowUpConversation(PlannerContextSnapshot snapshot, JsonElement priorAssistantRawContent, String toolResult) {
@@ -393,7 +423,7 @@ public final class PlannerContextAggregator {
 		return composeConversation(
 			clock.millis(),
 			List.of(),
-			LlmChatMessage.user(PlannerPromptPolicy.compactionInstruction(), LlmMessageKind.TASK)
+			List.of(LlmChatMessage.user(PlannerPromptPolicy.compactionInstruction(), LlmMessageKind.TASK))
 		);
 	}
 
@@ -441,6 +471,7 @@ public final class PlannerContextAggregator {
 	}
 
 	public void applyCheckpoint(CompactionCheckpoint checkpoint) {
+		if (microCompactor != null) microCompactor.reset();
 		state = PlannerContextReducer.clearCompactionPending(state, checkpoint, clock.millis());
 		if (toolRegistry.hasFixedPrefix()) retainedConversation = LlmConversation.of(List.of(
 			LlmChatMessage.system(systemPrompt()), LlmChatMessage.user(checkpoint.renderMessage(), LlmMessageKind.CHECKPOINT)));
@@ -452,6 +483,7 @@ public final class PlannerContextAggregator {
 	}
 
 	public void clear() {
+		if (microCompactor != null) microCompactor.reset();
 		state = PlannerContextState.initial();
 		retainedConversation = null;
 		lastFrozenSnapshot = null;
@@ -476,8 +508,17 @@ public final class PlannerContextAggregator {
 	}
 
 	/** Keep the actual accepted wire conversation, including frozen notices and raw tool envelopes. */
-	public void retainConversation(LlmConversation conversation) {
+	private PlannerMicroCompactor microCompactor;
+	public void configureMicroCompaction(PlannerMicroCompactor service) { microCompactor = service; }
+	public void refreshMicroCompaction() {
+		if (retainedConversation != null && microCompactor != null) retainedConversation = microCompactor.update(retainedConversation);
+	}
+	public boolean microCompactionInFlight() { return microCompactor != null && microCompactor.hasInFlight(); }
+	public void closeMicroCompaction() { if (microCompactor != null) microCompactor.close(); }
+	public LlmConversation retainConversation(LlmConversation conversation) {
+		if (microCompactor != null) conversation = microCompactor.update(conversation);
 		if (toolRegistry.hasFixedPrefix() && !backendManagedHistory) retainedConversation = conversation;
+		return conversation;
 	}
 
 	private String systemPrompt() {
@@ -493,7 +534,7 @@ public final class PlannerContextAggregator {
 	) {
 		long anchorTimeMs = request.timestampMs();
 		ArrayList<LlmChatMessage> messages = new ArrayList<>();
-		String providerContext = toolRegistry.contextSnapshot();
+		String providerContext = decisionContextEnabled ? "" : toolRegistry.contextSnapshot();
 		if (!providerContext.isBlank()) messages.add(LlmChatMessage.user(providerContext, LlmMessageKind.NOTICE));
 		if (renderedTimeContextAtMs >= 0L) {
 			messages.add(ContextMessageRenderer.renderEntry(new PlannerContextEntry(
@@ -521,14 +562,14 @@ public final class PlannerContextAggregator {
 	private LlmConversation composeConversation(
 		long anchorTimeMs,
 		List<LlmChatMessage> snapshotNotices,
-		LlmChatMessage terminalMessage
+		List<LlmChatMessage> terminalMessages
 	) {
 		ArrayList<LlmChatMessage> messages = new ArrayList<>();
 		if (toolRegistry.hasFixedPrefix() && retainedConversation != null) {
 			messages.addAll(retainedConversation.messages());
 			messages.addAll(snapshotNotices);
-			if (terminalMessage != null) messages.add(terminalMessage);
-			return LlmConversation.of(messages);
+			messages.addAll(terminalMessages);
+			return microCompactor == null ? LlmConversation.of(messages) : microCompactor.update(LlmConversation.of(messages));
 		}
 		messages.add(LlmChatMessage.system(systemPrompt()));
 		if (!backendManagedHistory && state.activeCheckpoint() != null) {
@@ -538,10 +579,8 @@ public final class PlannerContextAggregator {
 			messages.addAll(renderAcceptedHistory(anchorTimeMs));
 		}
 		messages.addAll(snapshotNotices);
-		if (terminalMessage != null) {
-			messages.add(terminalMessage);
-		}
-		return LlmConversation.of(messages);
+		messages.addAll(terminalMessages);
+		return microCompactor == null ? LlmConversation.of(messages) : microCompactor.update(LlmConversation.of(messages));
 	}
 
 	private LlmConversation followUpBase(PlannerContextSnapshot snapshot) {

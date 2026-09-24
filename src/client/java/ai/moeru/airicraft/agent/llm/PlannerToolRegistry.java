@@ -14,19 +14,23 @@ import java.util.stream.Collectors;
 
 public final class PlannerToolRegistry {
 	private final List<PlannerToolProvider> providers;
-	private final PlannerToolSurface toolSurface = new PlannerToolSurface();
+	private final boolean includeNativeTools;
 	private List<Map<String, Object>> fixedTools;
 	private String fixedInstructions;
 	private PlannerReferences references = new PlannerReferences();
 	public PlannerReferences references() { return references; }
 	public void shareReferences(PlannerToolRegistry other) { references = other.references; }
 
-	/** Freeze the advertised schema for one model session; action gates still apply. */
+	/** Freeze native schemas for one model session; self tools remain dynamic. */
 	public void freezeToolPrefix() {
-		fixedTools = availableOpenAiTools();
+		fixedTools = availableOpenAiTools().stream().filter(tool -> !isDynamic(toolName(tool))).toList();
 		fixedInstructions = providers.stream().filter(PlannerToolProvider::available)
 			.map(PlannerToolProvider::promptInstructions).filter(value -> !value.isBlank())
 			.collect(Collectors.joining("\n"));
+	}
+
+	private boolean isDynamic(String name) {
+		return providers.stream().anyMatch(p -> p.dynamicTools() && p.handles(name));
 	}
 
 	public boolean hasFixedPrefix() { return fixedTools != null; }
@@ -46,9 +50,17 @@ public final class PlannerToolRegistry {
 			.collect(Collectors.joining("\n"));
 	}
 
-	private PlannerToolRegistry(List<PlannerToolProvider> providers) {
+	private PlannerToolRegistry(List<PlannerToolProvider> providers) { this(providers, true); }
+
+	private PlannerToolRegistry(List<PlannerToolProvider> providers, boolean includeNativeTools) {
 		this.providers = List.copyOf(providers);
+		this.includeNativeTools = includeNativeTools;
 	}
+
+	/** A proposal backend must not inherit the normal planner's gameplay tool catalog. */
+	public static PlannerToolRegistry isolated(PlannerToolProvider provider) { return new PlannerToolRegistry(List.of(provider), false); }
+
+	public static PlannerToolRegistry noTools() { return new PlannerToolRegistry(List.of(), false); }
 
 	public static PlannerToolRegistry empty() {
 		return new PlannerToolRegistry(List.of());
@@ -64,7 +76,10 @@ public final class PlannerToolRegistry {
 	}
 
 	public List<Map<String, Object>> openAiTools() {
-		return fixedTools == null ? filterToActiveSurface(availableOpenAiTools()) : fixedTools;
+		var tools = new ArrayList<>(fixedTools == null ? availableOpenAiTools() : fixedTools);
+		tools.removeIf(tool -> isDynamic(toolName(tool)));
+		providers.stream().filter(p -> p.available() && p.dynamicTools()).forEach(p -> tools.addAll(p.openAiTools()));
+		return List.copyOf(tools);
 	}
 
 	public Optional<Map<String, Object>> activeOpenAiTool(String toolName) {
@@ -79,38 +94,16 @@ public final class PlannerToolRegistry {
 	}
 
 	public List<String> activeToolNames() {
-		return fixedTools == null ? toolSurface.activeToolNames() : availableToolNames(fixedTools);
+		return availableToolNames(openAiTools());
 	}
 
 	public boolean isActiveTool(String toolName) {
 		String normalized = PlannerToolCatalog.normalizeName(toolName);
-		return fixedTools == null
-			? toolSurface.isActive(normalized) && availableToolNames(availableOpenAiTools()).contains(normalized)
-			: availableToolNames(fixedTools).contains(normalized);
-	}
-
-	public PlannerToolSurface.DiscoveryResult discoverTools(String query, int maxResults) {
-		var result = toolSurface.discover(availableToolDescriptors(), query, maxResults);
-		return fixedTools == null ? result : new PlannerToolSurface.DiscoveryResult(result.query(), result.matches(), activeToolNames(), true);
-	}
-
-	public void resetToolSurface() {
-		toolSurface.reset();
-	}
-
-	public void setSafetyHoldActive(boolean active) {
-		toolSurface.setSafetyHoldActive(active);
-	}
-
-	/**
-	 * Keeps legacy mock-response tests independent of the staged production surface.
-	 */
-	void activateAllForTesting() {
-		toolSurface.activateAllForTesting(availableToolDescriptors());
+		return availableToolNames(openAiTools()).contains(normalized);
 	}
 
 	private List<Map<String, Object>> availableOpenAiTools() {
-		ArrayList<Map<String, Object>> tools = new ArrayList<>(PlannerToolCatalog.openAiTools());
+		ArrayList<Map<String, Object>> tools = new ArrayList<>(includeNativeTools ? PlannerToolCatalog.openAiTools() : List.of());
 		for (PlannerToolProvider provider : providers) {
 			if (provider.available()) {
 				tools.addAll(provider.openAiTools());
@@ -123,24 +116,13 @@ public final class PlannerToolRegistry {
 		return List.copyOf(tools);
 	}
 
-	private List<Map<String, Object>> filterToActiveSurface(List<Map<String, Object>> tools) {
-		return tools.stream()
-			.filter(tool -> toolSurface.isActive(toolName(tool)))
-			.toList();
-	}
-
 	public String promptInstructions() {
 		if (fixedInstructions != null) return fixedInstructions;
 		return providers.stream()
-			.filter(provider -> provider.available() && providerHasActiveTool(provider))
+			.filter(PlannerToolProvider::available)
 			.map(PlannerToolProvider::promptInstructions)
 			.filter(instruction -> instruction != null && !instruction.isBlank())
 			.collect(Collectors.joining("\n"));
-	}
-
-	public String availableToolNames() {
-		return availableToolNames(openAiTools()).stream()
-			.collect(Collectors.joining(", "));
 	}
 
 	private static List<String> availableToolNames(Collection<Map<String, Object>> tools) {
@@ -148,21 +130,6 @@ public final class PlannerToolRegistry {
 			.map(PlannerToolRegistry::toolName)
 			.filter(name -> !name.isBlank())
 			.map(PlannerToolCatalog::normalizeName)
-			.toList();
-	}
-
-	private boolean providerHasActiveTool(PlannerToolProvider provider) {
-		return provider.openAiTools().stream().anyMatch(tool -> toolSurface.isActive(toolName(tool)));
-	}
-
-	private List<PlannerToolSurface.ToolDescriptor> availableToolDescriptors() {
-		return availableOpenAiTools().stream()
-			.map(tool -> new PlannerToolSurface.ToolDescriptor(
-				toolName(tool),
-				toolDescription(tool),
-				PlannerToolSurface.categoryFor(toolName(tool))
-			))
-			.filter(descriptor -> !descriptor.name().isBlank())
 			.toList();
 	}
 
@@ -244,15 +211,6 @@ public final class PlannerToolRegistry {
 		}
 		Object name = functionMap.get("name");
 		return name instanceof String string ? string : "";
-	}
-
-	private static String toolDescription(Map<String, Object> tool) {
-		Object function = tool == null ? null : tool.get("function");
-		if (!(function instanceof Map<?, ?> functionMap)) {
-			return "";
-		}
-		Object description = functionMap.get("description");
-		return description instanceof String string ? string : "";
 	}
 
 	public enum BatchRejectionReason {

@@ -10,7 +10,6 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
@@ -21,7 +20,6 @@ import java.util.function.Supplier;
 public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 	private static final double INTERACTION_RANGE_SQUARED = 20.25D;
 	private static final int TARGET_TIMEOUT_TICKS = 200;
-	private static final Direction BREAK_FACE = Direction.UP;
 
 	private final Supplier<MinecraftClient> clientSupplier;
 	private final CameraController cameraController;
@@ -74,8 +72,9 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 
 		BlockBreakStepArgs args = ((WorldTaskRequest.BreakBlocks) request.task()).args();
 		while (targetIndex < args.targets().size()) {
+			int previousTarget = targetIndex;
 			Optional<TaskTerminalEvent> event = tickTarget(sessionSnapshot, client, player, request, args.targets().get(targetIndex));
-			if (event.isPresent() || breakingActive) {
+			if (event.isPresent() || targetIndex == previousTarget) {
 				return event;
 			}
 		}
@@ -109,15 +108,20 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 		if (!withinInteractionRange(player, Vec3d.ofCenter(pos))) {
 			return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "target_out_of_range targetPos=" + compactPos(pos)));
 		}
-		cameraController.lookAtNow(client, Vec3d.ofCenter(pos));
+		cameraController.lookAtBlock(client, pos);
+		var hit = cameraController.blockHit(client, pos);
+		if (hit.isEmpty()) {
+			snapshot = snapshot(TaskExecutionState.RUNNING, request, "waiting_for_aim targetPos=" + compactPos(pos));
+			return Optional.empty();
+		}
 		long tick = sessionSnapshot == null ? 0L : sessionSnapshot.tickCount();
 		if (!breakingActive) {
-			BaritoneTaskExecutor.MiningToolPreflight.Result toolSelection =
-				BaritoneTaskExecutor.MiningToolPreflight.ensureSelected(client, player, List.of(state));
+			MiningToolPreparation.Result toolSelection =
+				MiningToolPreparation.ensureSelected(client, player, List.of(state));
 			if (!toolSelection.ok()) {
 				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_ITEM, toolSelection.message()));
 			}
-			boolean accepted = client.interactionManager.attackBlock(pos, BREAK_FACE);
+			boolean accepted = client.interactionManager.attackBlock(pos, hit.get().getSide());
 			if (!accepted) {
 				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "break_start_failed targetPos=" + compactPos(pos) + " beforeBlockId=" + currentBlockId));
 			}
@@ -129,7 +133,7 @@ public final class BlockBreakTaskExecutor implements WorldTaskExecutor {
 			client.interactionManager.cancelBlockBreaking();
 			return fail(request, TaskFailure.of(TaskFailureCode.TRANSIENT, "break_timeout targetPos=" + compactPos(pos) + " beforeBlockId=" + currentBlockId));
 		}
-		client.interactionManager.updateBlockBreakingProgress(pos, BREAK_FACE);
+		client.interactionManager.updateBlockBreakingProgress(pos, hit.get().getSide());
 		player.swingHand(Hand.MAIN_HAND);
 		BlockState after = client.world.isChunkLoaded(pos) ? client.world.getBlockState(pos) : state;
 		if (satisfied(after)) {

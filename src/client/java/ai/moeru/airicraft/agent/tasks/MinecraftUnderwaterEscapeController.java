@@ -52,7 +52,7 @@ public final class MinecraftUnderwaterEscapeController {
 					return;
 				}
 				Vec3d target = new Vec3d(waypoint.x() + 0.5D, waypoint.y() + 1.0D, waypoint.z() + 0.5D);
-				MinecraftUnderwaterEscapeController.this.camera.lookAtNow(client, target);
+				MinecraftUnderwaterEscapeController.this.camera.lookAt(client, target);
 				boolean ascend = waypoint.y() > player.getBlockY();
 				MinecraftUnderwaterEscapeController.this.movement.moveDirectional(
 					client,

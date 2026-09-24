@@ -20,6 +20,20 @@ class WorldPlacePreservationTest {
 	}
 
 	@Test
+	void refreshFailureBlocksUnknownTerrainEvenWhenAnOlderSnapshotExists() {
+		Object world = new Object();
+		var previous = new WorldPlacePreservation.Snapshot(world, List.of(new PlaceMemory.PreservedArea(1, 1, 1, 2, 2, 2)), false);
+		var failed = WorldPlacePreservation.failedSnapshot(previous, world);
+		assertTrue(failed.contains(world, 100, 100, 100));
+		assertEquals(previous.areas(), failed.areas());
+		Object nextWorld = new Object();
+		var changedWorld = WorldPlacePreservation.failedSnapshot(previous, nextWorld);
+		assertTrue(changedWorld.areas().isEmpty());
+		assertFalse(changedWorld.contains(world, 1, 1, 1));
+		assertTrue(changedWorld.contains(nextWorld, 100, 100, 100));
+	}
+
+	@Test
 	void unavailableMemoryRestrictsOnlyTheAffectedWorld() {
 		Object world = new Object();
 		var snapshot = new WorldPlacePreservation.Snapshot(world, List.of(), true);

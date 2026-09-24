@@ -23,14 +23,15 @@ class MapPlannerToolProviderTest {
 	void exposesMapToolsWhenProviderIsAvailable() {
 		MapPlannerToolProvider provider = new MapPlannerToolProvider(registrySupplier(new StubMapProvider()));
 		PlannerToolRegistry registry = PlannerToolRegistry.of(provider);
-		registry.discoverTools("map", 5);
 
 		List<String> toolNames = registry.openAiTools().stream().map(MapPlannerToolProviderTest::toolName).toList();
 
-		assertTrue(toolNames.contains("inspect_map_waypoints"));
-		assertTrue(toolNames.contains("set_map_waypoint"));
-		assertTrue(toolNames.contains("delete_map_waypoint"));
-		assertTrue(toolNames.contains("take_map_look"));
+		assertEquals(List.of("take_map_look"), provider.openAiTools().stream().map(MapPlannerToolProviderTest::toolName).toList());
+		for (String removed : List.of("inspect_map_waypoints", "set_map_waypoint", "delete_map_waypoint")) {
+			org.junit.jupiter.api.Assertions.assertFalse(toolNames.contains(removed));
+			org.junit.jupiter.api.Assertions.assertFalse(provider.handles(removed));
+			org.junit.jupiter.api.Assertions.assertFalse(provider.promptInstructions().contains(removed));
+		}
 	}
 
 	@Test

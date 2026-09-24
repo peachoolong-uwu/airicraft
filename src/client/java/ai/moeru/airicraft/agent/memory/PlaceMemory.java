@@ -14,8 +14,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 
-/** Explicit agent bookmarks. A coordinate is a destination, not a claim of safety or reachability. */
-public final class PlaceMemory {
+/** Fallback file backend only. Application consumers use LocationMemoryService. */
+public final class PlaceMemory implements LocationMemoryProvider {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final int MAX_PLACES = 256;
 	private final Path file;
@@ -24,13 +24,18 @@ public final class PlaceMemory {
 		file = worldDirectory.resolve("airicraft/places.json");
 	}
 
-	public List<Place> list() throws IOException {
+	@Override
+	public String id() { return "airicraft"; }
+
+	public List<Place> list() throws IOException { return read().places(); }
+
+	private Document read() throws IOException {
 		String json;
 		try {
 			json = Files.readString(file);
 		}
 		catch (NoSuchFileException exception) {
-			return List.of();
+			return new Document(1, List.of(), java.util.Map.of());
 		}
 		try {
 			Document document = GSON.fromJson(json, Document.class);
@@ -46,7 +51,14 @@ public final class PlaceMemory {
 					throw new IllegalArgumentException("null or duplicate place");
 				}
 			}
-			return document.places().stream().sorted(Comparator.comparing(Place::name)).toList();
+			java.util.Map<String, String> ids = new java.util.LinkedHashMap<>();
+			HashSet<String> seenIds = new HashSet<>();
+			for (Place place : document.places()) {
+				String id = document.ids() == null ? legacyId(place.name()) : document.ids().getOrDefault(place.name(), legacyId(place.name()));
+				if (id == null || id.isBlank() || !seenIds.add(id)) throw new IllegalArgumentException("invalid or duplicate location id");
+				ids.put(place.name(), id);
+			}
+			return new Document(1, document.places().stream().sorted(Comparator.comparing(Place::name)).toList(), ids);
 		}
 		catch (RuntimeException exception) {
 			throw new IOException("invalid_place_memory: " + exception.getMessage(), exception);
@@ -58,30 +70,63 @@ public final class PlaceMemory {
 	}
 
 	public void remember(Place place) throws IOException {
-		ArrayList<Place> places = new ArrayList<>(list());
-		places.removeIf(existing -> existing.name().equals(place.name()));
-		if (places.size() >= MAX_PLACES) {
-			throw new IOException("place_memory_full: forget a place before adding another");
-		}
-		places.add(place);
-		write(places);
+		var existing = listLocations().stream().filter(value -> value.name().equals(place.name())).findFirst();
+		save(existing.map(Location::id).orElse(null), place);
 	}
 
 	public boolean forget(String name) throws IOException {
-		ArrayList<Place> places = new ArrayList<>(list());
-		if (!places.removeIf(place -> place.name().equals(name))) {
-			return false;
+		var existing = listLocations().stream().filter(value -> value.name().equals(name)).findFirst();
+		return existing.isPresent() && delete(existing.get().id());
+	}
+
+	@Override
+	public List<Location> listLocations() throws IOException {
+		Document document = read();
+		return document.places().stream().map(place -> Location.from(document.ids().get(place.name()), place)).toList();
+	}
+
+	@Override
+	public Location save(String existingId, Place place) throws IOException {
+		Document document = read();
+		String previousName = existingId == null ? null : document.ids().entrySet().stream()
+			.filter(entry -> entry.getValue().equals(existingId)).map(java.util.Map.Entry::getKey).findFirst()
+			.orElseThrow(() -> new IllegalArgumentException("place_not_found: " + existingId));
+		ArrayList<Place> places = new ArrayList<>(document.places());
+		if (places.stream().anyMatch(value -> value.name().equals(place.name()) && !value.name().equals(previousName))) {
+			throw new IllegalArgumentException("place_name_exists: " + place.name());
 		}
-		write(places);
+		places.removeIf(value -> value.name().equals(previousName));
+		if (places.size() >= MAX_PLACES) throw new IOException("place_memory_full: forget a place before adding another");
+		places.add(place);
+		var ids = new java.util.LinkedHashMap<>(document.ids());
+		if (previousName != null) ids.remove(previousName);
+		String id = existingId == null ? java.util.UUID.randomUUID().toString() : existingId;
+		ids.put(place.name(), id);
+		write(places, ids);
+		return Location.from(id, place);
+	}
+
+	@Override
+	public boolean delete(String id) throws IOException {
+		Document document = read();
+		var places = new ArrayList<>(document.places());
+		if (!places.removeIf(value -> id.equals(document.ids().get(value.name())))) return false;
+		var ids = new java.util.LinkedHashMap<>(document.ids());
+		ids.values().removeIf(id::equals);
+		write(places, ids);
 		return true;
 	}
 
-	private void write(List<Place> places) throws IOException {
+	private static String legacyId(String name) {
+		return java.util.UUID.nameUUIDFromBytes(("airicraft.place:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+	}
+
+	private void write(List<Place> places, java.util.Map<String, String> ids) throws IOException {
 		Files.createDirectories(file.getParent());
 		Path temporary = Files.createTempFile(file.getParent(), "places-", ".tmp");
 		try {
 			Files.writeString(temporary, GSON.toJson(new Document(1,
-				places.stream().sorted(Comparator.comparing(Place::name)).toList())) + "\n");
+				places.stream().sorted(Comparator.comparing(Place::name)).toList(), ids)) + "\n");
 			Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 		}
 		finally {
@@ -89,7 +134,7 @@ public final class PlaceMemory {
 		}
 	}
 
-	private record Document(int version, List<Place> places) {}
+	private record Document(int version, List<Place> places, java.util.Map<String, String> ids) {}
 
 	public record Place(String name, String dimension, int x, int y, int z, String note, PreservedArea preserveArea) {
 		public Place(String name, String dimension, int x, int y, int z, String note) {

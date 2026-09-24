@@ -234,9 +234,11 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 			return Optional.empty();
 		}
 		movement.stop(client);
-		camera.lookAtNow(client, targetCenter);
+		camera.lookAtBlock(client, target.pos());
+		var cursorHit = camera.blockHit(client, target.pos());
+		if (cursorHit.isEmpty()) return Optional.empty();
 		if (breakingTarget == null) {
-			if (!client.interactionManager.attackBlock(target.pos(), Direction.UP)) {
+			if (!client.interactionManager.attackBlock(target.pos(), cursorHit.get().getSide())) {
 				return fail(request, TaskFailure.of(TaskFailureCode.MISSING_FACT, "break_start_failed targetPos=" + compactPos(target.pos())));
 			}
 			breakingTarget = target.pos();
@@ -246,7 +248,7 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 		if (tick - breakStartedTick > BREAK_TIMEOUT_TICKS) {
 			return fail(request, TaskFailure.of(TaskFailureCode.TRANSIENT, "break_timeout targetPos=" + compactPos(target.pos())));
 		}
-		client.interactionManager.updateBlockBreakingProgress(target.pos(), Direction.UP);
+		client.interactionManager.updateBlockBreakingProgress(target.pos(), cursorHit.get().getSide());
 		player.swingHand(Hand.MAIN_HAND);
 		if (!spec.blockIds().contains(blockId(client.world.getBlockState(target.pos())))) {
 			harvestedBlocks++;
@@ -373,7 +375,7 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 		Vec3d targetCenter,
 		long tick
 	) {
-		camera.lookAtNow(client, targetCenter);
+		camera.lookAt(client, targetCenter);
 		UnderwaterHarvestPolicy.VerticalMotion verticalMotion = moveUnderwaterToward(
 			client,
 			player,
@@ -568,7 +570,7 @@ public final class UnderwaterHarvestTaskExecutor implements WorldTaskExecutor {
 				itemPos.z
 			);
 			Vec3d target = new Vec3d(blockCenter.x(), blockCenter.y(), blockCenter.z());
-			camera.lookAtNow(client, target);
+			camera.lookAt(client, target);
 			UnderwaterHarvestPolicy.VerticalMotion verticalMotion = moveUnderwaterToward(
 				client,
 				player,

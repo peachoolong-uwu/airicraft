@@ -73,9 +73,12 @@ public record AgentConfig(
 		PlannerBackend plannerBackend,
 		CodexAppServerConfig codexAppServer,
 		String reasoningEffort,
-		ThinkingPlannerConfig thinkingPlanner
+		ThinkingPlannerConfig thinkingPlanner,
+		int plannerMaxImages,
+		boolean plannerSummarizeToolResults
 	) {
 		public LlmConfig {
+			plannerMaxImages = Math.max(1, plannerMaxImages);
 			thinkingPlanner = thinkingPlanner == null ? ThinkingPlannerConfig.defaults() : thinkingPlanner;
 			reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
 			plannerPendingSemanticEventCap = Math.max(1, plannerPendingSemanticEventCap);
@@ -83,7 +86,113 @@ public record AgentConfig(
 			plannerSessionCoalesceMinMillis = Math.max(0, plannerSessionCoalesceMinMillis);
 			plannerSessionCoalesceMaxMillis = Math.max(plannerSessionCoalesceMinMillis, plannerSessionCoalesceMaxMillis);
 			plannerBackend = plannerBackend == null ? PlannerBackend.OPENAI_COMPATIBLE : plannerBackend;
+			if (plannerSummarizeToolResults && plannerBackend != PlannerBackend.OPENAI_COMPATIBLE)
+				throw new IllegalArgumentException("plannerSummarizeToolResults requires openai-compatible conversation history");
 			codexAppServer = codexAppServer == null ? CodexAppServerConfig.defaults() : codexAppServer;
+		}
+
+		public LlmConfig(
+			String providerBaseUrl,
+			String apiKey,
+			String model,
+			String visionProviderBaseUrl,
+			String visionApiKey,
+			String visionModel,
+			int requestTimeoutMillis,
+			int visionRequestTimeoutMillis,
+			int maxRecentConversationTurns,
+			int plannerCompactionTriggerTokens,
+			int plannerPendingSemanticEventCap,
+			int plannerSessionMaxConcurrentAttempts,
+			int plannerSessionCoalesceStepMillis,
+			int plannerSessionCoalesceMinMillis,
+			int plannerSessionCoalesceMaxMillis,
+			String visionImageDetail,
+			boolean plannerNativeVisionEnabled,
+			boolean plannerUseJsonObjectResponseFormat,
+			PlannerBackend plannerBackend,
+			CodexAppServerConfig codexAppServer,
+			String reasoningEffort,
+			ThinkingPlannerConfig thinkingPlanner,
+			int plannerMaxImages
+		) {
+			this(
+				providerBaseUrl,
+				apiKey,
+				model,
+				visionProviderBaseUrl,
+				visionApiKey,
+				visionModel,
+				requestTimeoutMillis,
+				visionRequestTimeoutMillis,
+				maxRecentConversationTurns,
+				plannerCompactionTriggerTokens,
+				plannerPendingSemanticEventCap,
+				plannerSessionMaxConcurrentAttempts,
+				plannerSessionCoalesceStepMillis,
+				plannerSessionCoalesceMinMillis,
+				plannerSessionCoalesceMaxMillis,
+				visionImageDetail,
+				plannerNativeVisionEnabled,
+				plannerUseJsonObjectResponseFormat,
+				plannerBackend,
+				codexAppServer,
+				reasoningEffort,
+				thinkingPlanner,
+				plannerMaxImages,
+				plannerBackend != PlannerBackend.CODEX_APP_SERVER
+			);
+		}
+
+		public LlmConfig(
+			String providerBaseUrl,
+			String apiKey,
+			String model,
+			String visionProviderBaseUrl,
+			String visionApiKey,
+			String visionModel,
+			int requestTimeoutMillis,
+			int visionRequestTimeoutMillis,
+			int maxRecentConversationTurns,
+			int plannerCompactionTriggerTokens,
+			int plannerPendingSemanticEventCap,
+			int plannerSessionMaxConcurrentAttempts,
+			int plannerSessionCoalesceStepMillis,
+			int plannerSessionCoalesceMinMillis,
+			int plannerSessionCoalesceMaxMillis,
+			String visionImageDetail,
+			boolean plannerNativeVisionEnabled,
+			boolean plannerUseJsonObjectResponseFormat,
+			PlannerBackend plannerBackend,
+			CodexAppServerConfig codexAppServer,
+			String reasoningEffort,
+			ThinkingPlannerConfig thinkingPlanner
+		) {
+			this(
+				providerBaseUrl,
+				apiKey,
+				model,
+				visionProviderBaseUrl,
+				visionApiKey,
+				visionModel,
+				requestTimeoutMillis,
+				visionRequestTimeoutMillis,
+				maxRecentConversationTurns,
+				plannerCompactionTriggerTokens,
+				plannerPendingSemanticEventCap,
+				plannerSessionMaxConcurrentAttempts,
+				plannerSessionCoalesceStepMillis,
+				plannerSessionCoalesceMinMillis,
+				plannerSessionCoalesceMaxMillis,
+				visionImageDetail,
+				plannerNativeVisionEnabled,
+				plannerUseJsonObjectResponseFormat,
+				plannerBackend,
+				codexAppServer,
+				reasoningEffort,
+				thinkingPlanner,
+				8
+			);
 		}
 
 		public LlmConfig(
@@ -317,7 +426,9 @@ public record AgentConfig(
 				plannerBackend,
 				codexAppServer,
 				profileEffort,
-				ThinkingPlannerConfig.defaults()
+				ThinkingPlannerConfig.defaults(),
+				plannerMaxImages,
+				plannerSummarizeToolResults
 			);
 		}
 
@@ -404,6 +515,7 @@ public record AgentConfig(
 		String executable,
 		String model,
 		String reasoningEffort,
+		String serviceTier,
 		int startupTimeoutMillis,
 		int turnTimeoutMillis
 	) {
@@ -411,12 +523,13 @@ public record AgentConfig(
 			executable = executable == null ? "" : executable.trim();
 			model = model == null ? "" : model.trim();
 			reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
+			serviceTier = serviceTier == null ? "" : serviceTier.trim();
 			startupTimeoutMillis = Math.max(1, startupTimeoutMillis);
 			turnTimeoutMillis = Math.max(1, turnTimeoutMillis);
 		}
 
 		public static CodexAppServerConfig defaults() {
-			return new CodexAppServerConfig("codex", "", "", 10_000, 120_000);
+			return new CodexAppServerConfig("codex", "", "", "", 10_000, 120_000);
 		}
 
 		public boolean isConfigured() {

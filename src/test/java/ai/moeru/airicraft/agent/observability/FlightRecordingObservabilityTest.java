@@ -25,6 +25,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlightRecordingObservabilityTest {
 	@Test
+	void labelsMicroCompactionRequestsForInspection() {
+		var recorder = new LlmFlightRecorder();
+		var observability = new FlightRecordingObservability(NoopObservability.INSTANCE, recorder);
+		var context = observability.startChildSpan("planner.micro_compaction", Context.root());
+		observability.recordLlmRequest(context, "provider", URI.create("http://localhost/test"),
+			"model", 1000L, LlmConversation.of(List.of(LlmChatMessage.system("compact"))), "{}");
+		assertEquals("micro_compaction", recorder.query(null).records().getFirst().requestKind());
+	}
+
+	@Test
 	void recordsExactPlannerRequestRawResponseAndParsedOutput() {
 		LlmFlightRecorder recorder = new LlmFlightRecorder();
 		AgentObservability observability = new FlightRecordingObservability(NoopObservability.INSTANCE, recorder);

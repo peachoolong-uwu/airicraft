@@ -21,13 +21,14 @@ public final class InteractionLogbookToolProvider implements PlannerToolProvider
 			propertiesForProvider(
 				propForProvider("itemId", optionalStringForProvider("Optional exact item ID, matching transfers or observed contents.")),
 				propForProvider("action", enumStringForProvider("Optional event filter.", List.of("crafted", "dropped", "container_put", "container_take", "container_observed"))),
-				propForProvider("place", optionalStringForProvider("Optional exact remembered place name, e.g. shore shelter.")),
+				propForProvider("place", optionalStringForProvider("Optional exact location name from the active location-memory backend. Ambiguous names require placeId.")),
+				propForProvider("placeId", optionalStringForProvider("Optional stable location ID instead of place.")),
 				propForProvider("radius", Map.of("type", "integer", "description", "Radius around place, default 16, 0..128.")),
 				propForProvider("limit", Map.of("type", "integer", "description", "Most recent matching entries, default 20, 1..100."))
 			), List.of()));
 	}
 	@Override public void validateArguments(String name, JsonObject args) {
-		for (String key : List.of("itemId", "action", "place")) {
+		for (String key : List.of("itemId", "action", "place", "placeId")) {
 			if (args.has(key) && (!args.get(key).isJsonPrimitive() || !args.getAsJsonPrimitive(key).isString()))
 				throw new JsonParseException(key + " must be a string");
 		}
@@ -35,7 +36,8 @@ public final class InteractionLogbookToolProvider implements PlannerToolProvider
 			throw new JsonParseException("unknown logbook action");
 		integer(args, "limit", 20, 1, 100);
 		integer(args, "radius", 16, 0, 128);
-		if (args.has("radius") && !args.has("place")) throw new JsonParseException("radius requires place");
+		if (args.has("place") && args.has("placeId")) throw new JsonParseException("supply either place or placeId");
+		if (args.has("radius") && !args.has("place") && !args.has("placeId")) throw new JsonParseException("radius requires place or placeId");
 	}
 	@Override public String promptInstructions() {
 		return "Before a long supply trip, inspect inventory and use containers to store surplus while keeping tools, shield, food, torches and building blocks. Open a known chest/barrel with use_block. For chest minecarts or chest boats, inspect_nearby_entities, copy uuid and use_entity to approach/open; do not break the vehicle to access loot. Then inspect_container, transfer_container with its exact syncId, inspect_container again to verify settled counts and close_container before other work. read_logbook retrieves automatic world-persistent history; query a remembered place and item before reacquiring supplies. Entity containers retain identity by containerEntityUuid when they move; coordinates describe the recorded interaction location. Container contents are last-seen stock at worldTick, not current truth: reopen and inspect before relying on them. Logbook entries cannot be written or deleted by planner tools.";
@@ -54,8 +56,9 @@ public final class InteractionLogbookToolProvider implements PlannerToolProvider
 				var itemHistory = InteractionLogbook.matchingItemHistory(item);
 				String action = text(args, "action");
 				String place = text(args, "place");
-				PlaceMemory.Place center = place.isEmpty() ? null : new PlaceMemory(directory).recall(place)
-					.orElseThrow(() -> new IllegalArgumentException("place_not_found " + place));
+				String placeId = text(args, "placeId");
+				LocationMemoryProvider.Location center = place.isEmpty() && placeId.isEmpty() ? null
+					: LocationMemoryBridge.forClient(client).recall(placeId.isEmpty() ? null : placeId, place.isEmpty() ? null : place);
 				int radius = integer(args, "radius", 16, 0, 128);
 				InteractionLogbook.query(directory, entry -> entry.actor().equals(actor)
 					&& itemHistory.test(entry)

@@ -18,6 +18,7 @@ const state = {
   selectedServerTick: 0,
   seekGeneration: 0,
   frameCache: null,
+  frameLoadGeneration: 0,
   playbackTimer: null,
 };
 
@@ -91,6 +92,7 @@ function trimClientHistory() {
 }
 
 function resetObservations() {
+  ++state.frameLoadGeneration;
   state.observations = [];
   state.bySequence.clear();
   state.observationCharacters.clear();
@@ -162,13 +164,55 @@ function matches(item) {
   return JSON.stringify(item).toLowerCase().includes(state.search);
 }
 
-function render() {
-  const snapshot = snapshotAtCursor();
-  if (!snapshot && state.view !== 'timeline' && state.view !== 'logs' && state.view !== 'raw' && state.view !== 'transcript') {
-    el('content').innerHTML = `<div class="empty-state"><div class="loader"></div><h2>Waiting for the first runtime snapshot</h2><p>Transitions and transcripts will appear as soon as Airicraft emits them.</p></div>`;
+// Retain matching nodes so live updates do not reset disclosures, scroll, or RGB.
+function updateContent(html) {
+  const content = el('content');
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  if (content.dataset.view !== state.view) {
+    content.replaceChildren(template.content);
+    content.dataset.view = state.view;
     return;
   }
-  ({ overview: renderOverview, transcript: renderTranscript, timeline: renderTimeline, runtime: renderRuntime, logs: renderLogs, raw: renderRaw })[state.view](snapshot);
+  reconcileChildren(content, template.content);
+}
+function nodeKey(node) {
+  return node.nodeType === 1 ? node.dataset.key || node.dataset.sequence || null : null;
+}
+function reconcileChildren(parent, next) {
+  const keyed = new Map([...parent.childNodes].filter(nodeKey).map(node => [nodeKey(node), node]));
+  let cursor = parent.firstChild;
+  for (const wanted of [...next.childNodes]) {
+    const key = nodeKey(wanted);
+    let current = key ? keyed.get(key) : cursor;
+    if (!current || current.nodeType !== wanted.nodeType || current.nodeName !== wanted.nodeName || nodeKey(current) !== key) {
+      parent.insertBefore(wanted, cursor);
+      continue;
+    }
+    if (current !== cursor) parent.insertBefore(current, cursor);
+    if (current.nodeType === 1) {
+      for (const attribute of [...current.attributes]) {
+        if (current.tagName === 'DETAILS' && attribute.name === 'open') continue;
+        if (current.tagName === 'IMG' && attribute.name === 'src') continue;
+        if (!wanted.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+      }
+      for (const attribute of wanted.attributes) {
+        if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+      }
+      reconcileChildren(current, wanted);
+    } else if (current.nodeValue !== wanted.nodeValue) current.nodeValue = wanted.nodeValue;
+    cursor = current.nextSibling;
+  }
+  while (cursor) { const next = cursor.nextSibling; cursor.remove(); cursor = next; }
+}
+
+function render() {
+  const snapshot = snapshotAtCursor();
+  if (!snapshot && state.view !== 'timeline' && state.view !== 'logs' && state.view !== 'raw' && state.view !== 'transcript' && state.view !== 'compactions') {
+    updateContent(`<div class="empty-state"><div class="loader"></div><h2>Waiting for the first runtime snapshot</h2><p>Transitions and transcripts will appear as soon as Airicraft emits them.</p></div>`);
+    return;
+  }
+  ({ overview: renderOverview, transcript: renderTranscript, compactions: renderCompactions, timeline: renderTimeline, runtime: renderRuntime, logs: renderLogs, raw: renderRaw })[state.view](snapshot);
 }
 
 function renderOverview(snapshot) {
@@ -188,7 +232,7 @@ function renderOverview(snapshot) {
     hasDrops ? `Server history has evicted observations: ${escapeHtml(JSON.stringify(dropped))}` : '',
     state.partialHistory ? 'Showing a recent browser window to stay responsive. Save session exports the full retained history.' : '',
   ].filter(Boolean);
-  el('content').innerHTML = `
+  updateContent(`
     ${warnings.map(warning => `<div class="warning">${warning}</div>`).join('')}
     <div class="grid summary-grid" style="margin-top:${warnings.length ? '12px' : '0'}">
       ${statCard('Planner', safe(planner.phase || planner.sessionPhase || (p.degraded ? 'DEGRADED' : 'READY')), `enabled ${p.plannerEnabled}`, 'cyan')}
@@ -202,7 +246,7 @@ function renderOverview(snapshot) {
         <div class="timeline">${lastEvents.length ? lastEvents.map(timelineRow).join('') : '<p class="muted card-body">No transitions in the retained window.</p>'}</div>
       </section>
       <div class="grid">
-        ${frame ? `<section class="card"><div class="card-head"><h2>Visual context</h2><small>server tick ${fmt.format(frame.serverTickId ?? frame.tick)} · sparse client RGB</small></div><img class="visual-frame selectable" data-sequence="${frame.sequence}" data-recorded-frame="${frame.sequence}" alt="Minecraft frame at tick ${frame.tick}"></section>` : ''}
+        ${frame ? `<section class="card"><div class="card-head"><h2>Visual context</h2><small>server tick ${fmt.format(frame.serverTickId ?? frame.tick)} · sparse client RGB</small></div><img class="visual-frame selectable" data-key="visual-frame" data-sequence="${frame.sequence}" data-recorded-frame="${frame.sequence}" alt="Minecraft frame at tick ${frame.tick}"></section>` : ''}
         <section class="card">
           <div class="card-head"><h2>Embodied state</h2><small>tick ${fmt.format(snapshot.tick)}</small></div>
           <div class="card-body">${kv({
@@ -221,7 +265,7 @@ function renderOverview(snapshot) {
           <div class="card-body transcript">${calls.length ? calls.map(callSummary).join('') : '<p class="muted">No LLM calls recorded.</p>'}</div>
         </section>
       </div>
-    </div>`;
+    </div>`);
   bindSelectable();
   if (frame) loadRecordedFrame(frame).catch(error => toast(error.message));
 }
@@ -235,7 +279,14 @@ function kv(entries) {
 
 function renderTranscript() {
   const calls = currentLlmCalls().filter(matches).reverse();
-  el('content').innerHTML = `<section class="card"><div class="card-head"><h2>Full LLM transcript</h2><small>${calls.length} lifecycle records · raw envelopes retained</small></div><div class="card-body transcript">${calls.length ? calls.map(renderCall).join('') : '<p class="muted">No matching LLM calls.</p>'}</div></section>`;
+  updateContent(`<section class="card"><div class="card-head"><h2>Full LLM transcript</h2><small>${calls.length} lifecycle records · raw envelopes retained</small></div><div class="card-body transcript">${calls.length ? calls.map(renderCall).join('') : '<p class="muted">No matching LLM calls.</p>'}</div></section>`);
+  bindSelectable();
+}
+function renderCompactions() {
+  const calls = currentLlmCalls().filter(item => ['micro_compaction', 'compaction'].includes(item.payload?.requestKind)).filter(matches).reverse();
+  updateContent(`<section class="card"><div class="card-head"><h2>Compactions</h2><small>${calls.length} calls in the loaded window</small></div>
+    <div class="card-body transcript"><p class="muted">Inspect source evidence and returned findings or checkpoints. Call completion does not by itself confirm the planner applied the result.</p>
+    ${calls.map(item => `<section data-key="compaction-${escapeHtml(item.sessionId || '')}-${escapeHtml(item.payload.sequenceId ?? item.sequence)}"><h3>${item.payload.requestKind === 'micro_compaction' ? 'Microcompaction' : 'Full compaction'}</h3>${renderCall(item)}</section>`).join('') || '<p class="muted">No matching compaction calls in the loaded window.</p>'}</div></section>`);
   bindSelectable();
 }
 function currentLlmCalls() {
@@ -256,7 +307,7 @@ function renderCall(item) {
   const requestBody = p.requestBody ?? state.bySequence.get(p.request?.observationSequence)?.payload?.requestBody;
   try { request = JSON.parse(requestBody || 'null'); } catch {}
   const messages = request?.messages || [];
-  return `<article class="call">
+  return `<article class="call" data-key="call-${escapeHtml(item.sessionId || '')}-${escapeHtml(p.sequenceId ?? item.sequence)}">
     <div class="call-header selectable" data-sequence="${item.sequence}">
       <span class="badge llm_call">${escapeHtml(p.status)}</span>
       <strong>${escapeHtml(safe(p.model || p.providerName, p.requestKind))}</strong>
@@ -280,8 +331,8 @@ function messageHtml(message) {
 }
 
 function renderTimeline() {
-  const items = state.observations.filter(o => o.sequence <= state.selectedSequence && o.type !== 'runtime_snapshot' && o.type !== 'log' && matches(o)).slice().reverse();
-  el('content').innerHTML = `<section class="card"><div class="card-head"><h2>Causal timeline</h2><small>${items.length} observations</small></div><div class="timeline">${items.length ? items.map(timelineRow).join('') : '<p class="muted card-body">No matching observations.</p>'}</div></section>`;
+  const items = state.observations.filter(o => o.sequence <= state.selectedSequence && o.type !== 'runtime_snapshot' && o.type !== 'log' && o.type !== 'visual_frame' && matches(o)).slice().reverse();
+  updateContent(`<section class="card"><div class="card-head"><h2>Causal timeline</h2><small>${items.length} observations</small></div><div class="timeline">${items.length ? items.map(timelineRow).join('') : '<p class="muted card-body">No matching observations.</p>'}</div></section>`);
   bindSelectable();
 }
 function timelineRow(item) {
@@ -293,7 +344,7 @@ function timelineRow(item) {
 function renderRuntime(snapshot) {
   const p = snapshot.payload || {};
   const sections = ['agent','system2','planner','activeGoal','activeJob','task','taskExecution','missionExecution','reflex','actionGraph','behaviorTree','eventPipeline','dialogueState','conversationSources','world','observability'];
-  el('content').innerHTML = `<div class="grid two-col">${sections.map(key => `<section class="card"><div class="card-head"><h2>${escapeHtml(key.replace(/([A-Z])/g,' $1'))}</h2><small>snapshot #${snapshot.sequence}</small></div><div class="card-body"><pre class="json">${escapeHtml(pretty(p[key]))}</pre></div></section>`).join('')}</div>`;
+  updateContent(`<div class="grid two-col">${sections.map(key => `<section class="card"><div class="card-head"><h2>${escapeHtml(key.replace(/([A-Z])/g,' $1'))}</h2><small>snapshot #${snapshot.sequence}</small></div><div class="card-body"><pre class="json">${escapeHtml(pretty(p[key]))}</pre></div></section>`).join('')}</div>`);
 }
 
 function contextReferences(value, references = new Set()) {
@@ -307,17 +358,17 @@ function contextReferences(value, references = new Set()) {
 
 function renderLogs() {
   const logs = state.observations.filter(o => o.sequence <= state.selectedSequence && o.type === 'log' && matches(o)).slice().reverse();
-  el('content').innerHTML = `<section class="card"><div class="card-head"><h2>Minecraft / Airicraft logs</h2><small>${logs.length} retained lines</small></div>${logs.length ? logs.map(o => `<div class="log-line selectable" data-sequence="${o.sequence}"><time>${timeFmt.format(o.capturedAtMs)}</time><span>${escapeHtml(o.payload?.message)}</span></div>`).join('') : '<p class="muted card-body">No matching log lines.</p>'}</section>`;
+  updateContent(`<section class="card"><div class="card-head"><h2>Minecraft / Airicraft logs</h2><small>${logs.length} retained lines</small></div>${logs.length ? logs.map(o => `<div class="log-line selectable" data-sequence="${o.sequence}"><time>${timeFmt.format(o.capturedAtMs)}</time><span>${escapeHtml(o.payload?.message)}</span></div>`).join('') : '<p class="muted card-body">No matching log lines.</p>'}</section>`);
   bindSelectable();
 }
 
 function renderRaw(snapshot) {
   const selected = state.selectedObservation || observationAtCursor() || snapshot;
-  el('content').innerHTML = `<section class="card"><div class="card-head"><h2>Raw observation</h2><small>${selected ? `#${selected.sequence} · ${selected.type}` : 'none selected'}</small></div><div class="card-body"><pre class="json">${escapeHtml(pretty(selected))}</pre></div></section>`;
+  updateContent(`<section class="card"><div class="card-head"><h2>Raw observation</h2><small>${selected ? `#${selected.sequence} · ${selected.type}` : 'none selected'}</small></div><div class="card-body"><pre class="json">${escapeHtml(pretty(selected))}</pre></div></section>`);
 }
 
 function bindSelectable() {
-  document.querySelectorAll('.selectable').forEach(node => node.addEventListener('click', () => selectObservation(Number(node.dataset.sequence))));
+  document.querySelectorAll('.selectable').forEach(node => node.onclick = () => selectObservation(Number(node.dataset.sequence)));
 }
 function selectObservation(sequence) {
   const item = state.bySequence.get(sequence);
@@ -401,6 +452,7 @@ async function exportSession() {
 }
 
 async function loadRecordedFrame(frame) {
+  const generation = ++state.frameLoadGeneration;
   const key = `${frame.sessionId}:${frame.sequence}`;
   if (state.frameCache?.key !== key) {
     let url;
@@ -412,6 +464,10 @@ async function loadRecordedFrame(frame) {
       url = `data:image/${record.payload.format};base64,${record.payload.imageBase64}`;
     } else {
       url = URL.createObjectURL(await (await api(`/api/frame?sequence=${frame.sequence}`)).blob());
+    }
+    if (generation !== state.frameLoadGeneration) {
+      if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+      return;
     }
     if (state.frameCache?.url.startsWith('blob:')) URL.revokeObjectURL(state.frameCache.url);
     state.frameCache = { key, url };
@@ -547,4 +603,4 @@ el('export').addEventListener('click', exportSession);
 el('session-file').addEventListener('change', event => event.target.files[0] && openSession(event.target.files[0]).catch(error => toast(error.message)));
 el('close-inspector').addEventListener('click', () => { el('inspector').classList.add('collapsed'); document.querySelector('.workspace').classList.add('inspector-collapsed'); });
 
-loadInitial().catch(error => { connected(false, error.message); el('content').innerHTML = `<div class="empty-state"><h2 class="error">Dashboard connection failed</h2><p>${escapeHtml(error.message)}</p></div>`; });
+loadInitial().catch(error => { connected(false, error.message); updateContent(`<div class="empty-state"><h2 class="error">Dashboard connection failed</h2><p>${escapeHtml(error.message)}</p></div>`); });

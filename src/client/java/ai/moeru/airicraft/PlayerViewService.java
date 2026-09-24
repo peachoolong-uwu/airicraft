@@ -40,7 +40,7 @@ public final class PlayerViewService {
 		payload.put("available", true);
 		payload.put("worldLoaded", true);
 		payload.put("durationTicks", effectiveDurationTicks);
-		payload.put("scheduled", effectiveDurationTicks > 0);
+		payload.put("scheduled", true);
 		payload.put("target", Map.of(
 			"x", x,
 			"y", y,

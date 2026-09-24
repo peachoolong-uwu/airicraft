@@ -15,6 +15,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurvivalReflexRuntimeTest {
+	@Test void resolvedCombatCanHaveNoStallDuration() {
+		assertNull(SurvivalReflexRuntime.noProgressTicks(null, null, 7609));
+		var progressing = new CombatProgress(7500, java.util.Map.of(), false);
+		var approaching = new CombatStalemate(CombatStalemate.Phase.APPROACHING, 7400,
+			net.minecraft.util.math.Vec3d.ZERO, java.util.Map.of());
+		assertNull(SurvivalReflexRuntime.noProgressTicks(progressing, approaching, 7609));
+	}
+
+	@Test void resolvedStalemateReportsItsDurationWithCombatProgressTakingPrecedence() {
+		var stalled = new CombatProgress(7400, java.util.Map.of(), true);
+		var deferred = new CombatStalemate(CombatStalemate.Phase.DEFERRED, 7000,
+			net.minecraft.util.math.Vec3d.ZERO, java.util.Map.of());
+		assertEquals(Long.valueOf(209), SurvivalReflexRuntime.noProgressTicks(stalled, deferred, 7609));
+		assertEquals(Long.valueOf(609), SurvivalReflexRuntime.noProgressTicks(null, deferred, 7609));
+	}
+
 	@Test void awarenessIncludesFlankersOutsideTheEngagementGate() {
 		var policy = ReflexPolicy.defaults();
 		assertTrue(policy.observesMob(12));
@@ -334,6 +350,22 @@ class SurvivalReflexRuntimeTest {
 		assertTrue(SurvivalReflexRuntime.creeperShouldKite(1, .3F));
 		assertFalse(SurvivalReflexRuntime.creeperShouldKite(1, 0));
 	}
+	@Test void creeperEscapePersistsAfterFuseReversesUntilPursuerIsWellClear() {
+		boolean fleeing = SurvivalReflexRuntime.creeperEscapeActive(false, 2.5, 1, .1F, false);
+		assertTrue(fleeing, "Start escaping at ignition, before a late fuse");
+		for (double distance : new double[]{3, 4, 5, 6, 7}) {
+			fleeing = SurvivalReflexRuntime.creeperEscapeActive(fleeing, distance, -1, 0, false);
+			assertTrue(fleeing, "A reset fuse or attack cooldown must not end retreat at " + distance);
+		}
+		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(fleeing, 8, -1, 0, false));
+		assertTrue(SurvivalReflexRuntime.creeperEscapeActive(true, 8, -1, .1F, false));
+		assertTrue(SurvivalReflexRuntime.creeperEscapeActive(true, 8, -1, 0, true));
+		assertTrue(SurvivalReflexRuntime.creeperEscapeActive(true, 10, 1, .1F, true));
+		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(true, 10.01, 1, .1F, true));
+		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(true, 14, -1, 0, true));
+		assertFalse(SurvivalReflexRuntime.creeperEscapeActive(false, 2, -1, 0, false));
+	}
+
 	@Test void bowGuardLeavesEarlyDrawForMovementAndAttacks() {
 		assertFalse(SurvivalReflexRuntime.shouldGuardBow(true, 0));
 		assertFalse(SurvivalReflexRuntime.shouldGuardBow(true, 13));

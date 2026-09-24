@@ -133,6 +133,9 @@ public final class CodexAppServerLlmBackend implements LlmBackend {
 			if (!codexConfig.reasoningEffort().isBlank()) {
 				turnParams.addProperty("effort", codexConfig.reasoningEffort());
 			}
+			if (!codexConfig.serviceTier().isBlank()) {
+				turnParams.addProperty("serviceTier", codexConfig.serviceTier());
+			}
 
 			CodexAppServerClient.TurnHandle handle = requireClient().startTurn(
 				turnParams,
@@ -227,6 +230,9 @@ public final class CodexAppServerLlmBackend implements LlmBackend {
 		params.addProperty("sandbox", "read-only");
 		params.addProperty("cwd", Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize().toString());
 		params.addProperty("baseInstructions", BASE_INSTRUCTIONS);
+		if (!codexConfig.serviceTier().isBlank()) {
+			params.addProperty("serviceTier", codexConfig.serviceTier());
+		}
 		if (!codexConfig.model().isBlank()) {
 			params.addProperty("model", codexConfig.model());
 		}

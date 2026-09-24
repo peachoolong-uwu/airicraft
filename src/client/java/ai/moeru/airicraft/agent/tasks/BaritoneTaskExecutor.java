@@ -11,11 +11,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.ItemStack;
-import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.Registries;
-import net.minecraft.screen.PlayerScreenHandler;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
@@ -233,7 +229,8 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 			&& !navigateGoalReached(appliedTask)) {
 			var sample = waterProgressObserver.observe().orElse(null);
 			if (sample == null) navigationStall.clear();
-			else if (navigationStall.observe(sessionSnapshot.tickCount(), sample.x(), sample.y(), sample.z())) {
+			else if (facade.navigationProgress().map(progress -> navigationStall.observe(sessionSnapshot.tickCount(), progress))
+				.orElseGet(() -> navigationStall.observe(sessionSnapshot.tickCount(), sample.x(), sample.y(), sample.z()))) {
 				requestInternalCancellation(appliedTask.taskId());
 				pendingNavigationEnd = null;
 				pathEvent = Optional.of("PATH_STUCK");
@@ -386,7 +383,7 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 			case FOLLOW_PLAYER -> facade.startFollow(goal.targetPlayer());
 			case NAVIGATE_TO -> facade.startNavigate(goal.position());
 			case MINE_BLOCKS -> {
-				MiningToolPreflight.Result result = ensureMiningToolSelected(goal);
+				MiningToolPreparation.Result result = ensureMiningToolSelected(goal);
 				if (!result.ok()) {
 					throw new IllegalStateException(result.message());
 				}
@@ -395,24 +392,24 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 		}
 	}
 
-	private MiningToolPreflight.Result ensureMiningToolSelected(GoalSnapshot goal) {
+	private MiningToolPreparation.Result ensureMiningToolSelected(GoalSnapshot goal) {
 		MinecraftClient client = clientSupplier.get();
 		ClientPlayerEntity player = client == null ? null : client.player;
 		if (client == null || client.world == null || client.interactionManager == null || player == null || goal.mineSpec() == null) {
-			return MiningToolPreflight.Result.success();
+			return MiningToolPreparation.Result.success();
 		}
 		if (player.currentScreenHandler != player.playerScreenHandler || !player.currentScreenHandler.getCursorStack().isEmpty()) {
-			return MiningToolPreflight.Result.failed("inventory_unavailable_for_tool_selection");
+			return MiningToolPreparation.Result.failed("inventory_unavailable_for_tool_selection");
 		}
 		ArrayList<BlockState> targetStates = new ArrayList<>();
 		for (String blockId : goal.mineSpec().blockIds()) {
 			Optional<Block> block = resolveBlock(blockId);
 			if (block.isEmpty()) {
-				return MiningToolPreflight.Result.failed("invalid_block_id " + blockId);
+				return MiningToolPreparation.Result.failed("invalid_block_id " + blockId);
 			}
 			targetStates.add(block.get().getDefaultState());
 		}
-		return MiningToolPreflight.ensureSelected(client, player, targetStates, goal.mineSpec().requiredToolItemIds());
+		return MiningToolPreparation.ensureSelected(client, player, targetStates, goal.mineSpec().requiredToolItemIds());
 	}
 
 	private static Optional<Block> resolveBlock(String blockId) {
@@ -429,186 +426,6 @@ public final class BaritoneTaskExecutor implements WorldTaskExecutor {
 		return Registries.BLOCK.getOptionalValue(identifier);
 	}
 
-	static final class MiningToolPreflight {
-		private MiningToolPreflight() {
-		}
-
-		static Result ensureSelected(MinecraftClient client, ClientPlayerEntity player, java.util.List<BlockState> targetStates) {
-			return ensureSelected(client, player, targetStates, java.util.List.of());
-		}
-
-		static Result ensureSelected(
-			MinecraftClient client,
-			ClientPlayerEntity player,
-			java.util.List<BlockState> targetStates,
-			java.util.List<String> requiredToolItemIds
-		) {
-			ScreenHandler handler = player.currentScreenHandler;
-			ItemStack selectedStack = player.getInventory().getSelectedStack();
-			java.util.Set<String> requiredTools = requiredToolItemIds == null
-				? java.util.Set.of()
-				: java.util.Set.copyOf(requiredToolItemIds);
-			int sourceSlot = requiredTools.isEmpty()
-				? findPreferredToolSlot(handler, selectedStack, targetStates)
-				: findRequiredToolSlot(handler, selectedStack, targetStates, requiredTools);
-			if (sourceSlot < 0) {
-				if (!requiredTools.isEmpty() && !matchesRequiredTool(selectedStack, requiredTools)) {
-					return Result.failed("missing_required_harvest_tool itemIds=" + requiredTools);
-				}
-				return needsSuitableTool(targetStates) && !isSuitableForAllRequiredBlocks(selectedStack, targetStates)
-					? Result.failed("missing_suitable_tool blockIds=" + requiredBlockIds(targetStates))
-					: Result.success();
-			}
-			int selectedHotbarSlot = player.getInventory().getSelectedSlot();
-			if (sourceSlot >= PlayerScreenHandler.HOTBAR_START && sourceSlot < PlayerScreenHandler.HOTBAR_END) {
-				selectAndSyncHotbarSlot(client, player, sourceSlot - PlayerScreenHandler.HOTBAR_START);
-			}
-			else {
-				client.interactionManager.clickSlot(handler.syncId, sourceSlot, selectedHotbarSlot, SlotActionType.SWAP, player);
-				selectAndSyncHotbarSlot(client, player, selectedHotbarSlot);
-			}
-			ItemStack selected = player.getInventory().getSelectedStack();
-			if (!requiredTools.isEmpty() && !matchesRequiredTool(selected, requiredTools)) {
-				return Result.failed("tool_selection_failed requiredItemIds=" + requiredTools);
-			}
-			return !needsSuitableTool(targetStates) || isSuitableForAllRequiredBlocks(selected, targetStates)
-				? Result.success()
-				: Result.failed("tool_selection_failed blockIds=" + requiredBlockIds(targetStates));
-		}
-
-		static boolean needsSuitableTool(java.util.List<BlockState> targetStates) {
-			return targetStates != null && targetStates.stream().anyMatch(BlockState::isToolRequired);
-		}
-
-		static boolean isSuitableForAllRequiredBlocks(ItemStack stack, java.util.List<BlockState> targetStates) {
-			if (targetStates == null || targetStates.isEmpty()) {
-				return true;
-			}
-			for (BlockState state : targetStates) {
-				if (state.isToolRequired() && (stack == null || stack.isEmpty() || !stack.isSuitableFor(state))) {
-					return false;
-				}
-			}
-			return true;
-		}
-
-		private static int findPreferredToolSlot(ScreenHandler handler, ItemStack selectedStack, java.util.List<BlockState> targetStates) {
-			if (!(handler instanceof PlayerScreenHandler)) {
-				return -1;
-			}
-			ItemStack bestStack = selectedStack == null ? ItemStack.EMPTY : selectedStack;
-			int bestSlot = -1;
-			for (int slot = PlayerScreenHandler.HOTBAR_START; slot < PlayerScreenHandler.HOTBAR_END; slot++) {
-				ItemStack candidate = handler.getSlot(slot).getStack();
-				if (isBetterMiningTool(candidate, bestStack, targetStates)) {
-					bestStack = candidate;
-					bestSlot = slot;
-				}
-			}
-			for (int slot = PlayerScreenHandler.INVENTORY_START; slot < PlayerScreenHandler.HOTBAR_START; slot++) {
-				ItemStack candidate = handler.getSlot(slot).getStack();
-				if (isBetterMiningTool(candidate, bestStack, targetStates)) {
-					bestStack = candidate;
-					bestSlot = slot;
-				}
-			}
-			return bestSlot;
-		}
-
-		private static int findRequiredToolSlot(
-			ScreenHandler handler,
-			ItemStack selectedStack,
-			java.util.List<BlockState> targetStates,
-			java.util.Set<String> requiredToolItemIds
-		) {
-			if (!(handler instanceof PlayerScreenHandler)) {
-				return -1;
-			}
-			ItemStack bestStack = matchesRequiredTool(selectedStack, requiredToolItemIds)
-				? selectedStack
-				: ItemStack.EMPTY;
-			int bestSlot = -1;
-			for (int slot = PlayerScreenHandler.HOTBAR_START; slot < PlayerScreenHandler.HOTBAR_END; slot++) {
-				ItemStack candidate = handler.getSlot(slot).getStack();
-				if (matchesRequiredTool(candidate, requiredToolItemIds) && isBetterMiningTool(candidate, bestStack, targetStates)) {
-					bestStack = candidate;
-					bestSlot = slot;
-				}
-			}
-			for (int slot = PlayerScreenHandler.INVENTORY_START; slot < PlayerScreenHandler.HOTBAR_START; slot++) {
-				ItemStack candidate = handler.getSlot(slot).getStack();
-				if (matchesRequiredTool(candidate, requiredToolItemIds) && isBetterMiningTool(candidate, bestStack, targetStates)) {
-					bestStack = candidate;
-					bestSlot = slot;
-				}
-			}
-			return bestSlot;
-		}
-
-		private static boolean matchesRequiredTool(ItemStack stack, java.util.Set<String> requiredToolItemIds) {
-			return stack != null
-				&& !stack.isEmpty()
-				&& requiredToolItemIds.contains(Registries.ITEM.getId(stack.getItem()).toString());
-		}
-
-		static boolean isBetterMiningTool(ItemStack candidate, ItemStack current, java.util.List<BlockState> targetStates) {
-			if (candidate == null || candidate.isEmpty()) {
-				return false;
-			}
-			return isBetterMiningTool(toolScore(candidate, targetStates), toolScore(current, targetStates));
-		}
-
-		static boolean isBetterMiningTool(ToolScore candidate, ToolScore current) {
-			return candidate != null
-				&& candidate.eligible()
-				&& (current == null || !current.eligible() || candidate.speed() > current.speed());
-		}
-
-		private static ToolScore toolScore(ItemStack stack, java.util.List<BlockState> targetStates) {
-			boolean eligible = isSuitableForAllRequiredBlocks(stack, targetStates);
-			return new ToolScore(eligible, miningSpeed(stack, targetStates));
-		}
-
-		private static float miningSpeed(ItemStack stack, java.util.List<BlockState> targetStates) {
-			if (stack == null || stack.isEmpty() || targetStates == null || targetStates.isEmpty()) {
-				return 1.0F;
-			}
-			float speed = Float.MAX_VALUE;
-			for (BlockState state : targetStates) {
-				speed = Math.min(speed, stack.getMiningSpeedMultiplier(state));
-			}
-			return speed == Float.MAX_VALUE ? 1.0F : speed;
-		}
-
-		private static void selectAndSyncHotbarSlot(MinecraftClient client, ClientPlayerEntity player, int hotbarSlot) {
-			player.getInventory().setSelectedSlot(hotbarSlot);
-			if (client.getNetworkHandler() != null) {
-				client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(hotbarSlot));
-			}
-		}
-
-		private static String requiredBlockIds(java.util.List<BlockState> targetStates) {
-			return targetStates.stream()
-				.filter(BlockState::isToolRequired)
-				.map(state -> Registries.BLOCK.getId(state.getBlock()).toString())
-				.distinct()
-				.toList()
-				.toString();
-		}
-
-		record ToolScore(boolean eligible, float speed) {
-		}
-
-		record Result(boolean ok, String message) {
-			static Result success() {
-				return new Result(true, "");
-			}
-
-			static Result failed(String message) {
-				return new Result(false, message);
-			}
-		}
-	}
 
 	private Optional<TaskTerminalEvent> failTaskStart(WorldTaskRequest request, RuntimeException exception) {
 		String message = nonEmpty(exception.getMessage(), exception.getClass().getSimpleName());

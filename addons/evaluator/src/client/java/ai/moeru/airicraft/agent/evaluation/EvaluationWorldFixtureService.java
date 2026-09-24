@@ -94,7 +94,8 @@ public final class EvaluationWorldFixtureService {
 				scenario.budget(),
 				scenario.checks(),
 				scenario.waypoints(),
-				scenario.evidence()
+				scenario.evidence(),
+				scenario.requiredMods()
 			);
 			repository.write(frozenScenario);
 			return new FreezeResult(scenarioId, repository.configPath(scenarioId), archivePath, true);
@@ -121,7 +122,8 @@ public final class EvaluationWorldFixtureService {
 				scenario.budget(),
 				scenario.checks(),
 				scenario.waypoints(),
-				scenario.evidence()
+				scenario.evidence(),
+				scenario.requiredMods()
 			);
 			EvaluationScenarioLoader.write(configPath, unfrozen);
 			return new FreezeResult(unfrozen.id(), configPath, repository.archivePath(unfrozen), false);

@@ -92,9 +92,10 @@ dependencies {
 
 	testImplementation platform("org.junit:junit-bom:5.11.4")
 	testImplementation "org.junit.jupiter:junit-jupiter"
-	testImplementation "info.journeymap:journeymap-api-fabric:${project.journeymap_api_version}"
-	testRuntimeOnly rootProject.sourceSets.main.output
-	testRuntimeOnly rootProject.sourceSets.client.output
+	// Tests need the same named API classes as client code, not the intermediary artifact.
+	testImplementation files(sourceSets.client.compileClasspath)
+	testImplementation rootProject.sourceSets.main.output
+	testImplementation rootProject.sourceSets.client.output
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
@@ -177,5 +178,8 @@ tasks.register("runClientJourneyMapCompat", net.fabricmc.loom.task.prod.ClientPr
 	javaLauncher = javaToolchains.launcherFor {
 		languageVersion = JavaLanguageVersion.of(21)
 	}
-	jvmArgs.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5007")
+	def normalLaunch = gradle.startParameter.taskNames.any { it == "runClient" || it == ":runClient" }
+	def debugPort = providers.gradleProperty("airicraft.jdwp.port").orElse(normalLaunch ? "5005" : "5007").get()
+	def debugSuspend = providers.gradleProperty("airicraft.jdwp.suspend").orElse("n").get()
+	jvmArgs.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=${debugSuspend},address=127.0.0.1:${debugPort}")
 }

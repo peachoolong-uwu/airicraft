@@ -11,6 +11,87 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LightingPolicyEvaluatorTest {
 	@Test
+	void skyAccessAtAnySampleIncludingAnEdgeVetoesBothLightingTriggers() {
+		BlockPos origin = new BlockPos(10, 64, -8);
+		for (BlockPos openCell : BlockPos.iterate(origin.add(-2, 0, -2), origin.add(2, 0, 2))) {
+			boolean skyAccess = LightingRuntime.hasFootLevelSkyAccess(origin, openCell::equals);
+			assertTrue(skyAccess, "Every cell in the 5x5 foot-level area must be checked: " + openCell);
+			for (LightingPolicy.Mode mode : LightingPolicy.Mode.values()) {
+				LightingPolicy policy = new LightingPolicy(true, mode, 4, false, 6, 1);
+				assertTrue(policy.requireUnderground(), "Legacy configuration cannot bypass sky exclusion");
+				assertFalse(LightingPolicyEvaluator.shouldPlace(policy,
+					LightingPolicyEvaluator.supportsActivity(WorldTaskType.MINE, false), true, skyAccess, 0, 0, false));
+				assertFalse(LightingPolicyEvaluator.shouldPlace(policy,
+					LightingPolicyEvaluator.supportsActivity(null, true), true, skyAccess, 0, 0, false));
+			}
+		}
+	}
+
+	@Test
+	void fullyCoveredAreaRemainsEligibleAndSkyOutsideTheSampleDoesNotVetoIt() {
+		BlockPos origin = new BlockPos(10, 64, -8);
+		var sampled = new java.util.HashSet<BlockPos>();
+		assertFalse(LightingRuntime.hasFootLevelSkyAccess(origin, pos -> {
+			sampled.add(pos.toImmutable());
+			return pos.getY() != origin.getY() || Math.abs(pos.getX() - origin.getX()) > 2
+				|| Math.abs(pos.getZ() - origin.getZ()) > 2;
+		}));
+		assertEquals(25, sampled.size());
+		assertTrue(LightingPolicyEvaluator.shouldPlace(LightingPolicy.defaults(), true, true, false, 0, 0, false));
+	}
+
+	@Test
+	void averagesExactlyTheTwentyFiveFootLevelCellsWithoutRounding() {
+		BlockPos origin = new BlockPos(10, 64, -8);
+		var sampled = new java.util.HashSet<BlockPos>();
+		double average = LightingRuntime.averageFootLevelLight(origin, pos -> true, pos -> {
+			assertEquals(64, pos.getY());
+			assertTrue(Math.abs(pos.getX() - origin.getX()) <= 2);
+			assertTrue(Math.abs(pos.getZ() - origin.getZ()) <= 2);
+			sampled.add(pos.toImmutable());
+			return pos.equals(origin) ? 3 : 4;
+		});
+		assertEquals(25, sampled.size());
+		assertEquals(3.96, average, 0.00001);
+		assertTrue(LightingPolicyEvaluator.shouldPlace(LightingPolicy.defaults(), true, true, false, average, 0, false));
+		assertFalse(LightingPolicyEvaluator.shouldPlace(LightingPolicy.defaults(), true, true, false, 4, 0, false));
+		assertFalse(LightingPolicyEvaluator.shouldPlace(LightingPolicy.defaults(), true, true, false, 4.04, 0, false));
+	}
+
+	@Test
+	void aDarkCenterDoesNotTriggerWhenTheAreaAverageIsBright() {
+		BlockPos origin = BlockPos.ORIGIN;
+		double average = LightingRuntime.averageFootLevelLight(origin, pos -> true, pos -> pos.equals(origin) ? 0 : 5);
+		assertFalse(LightingPolicyEvaluator.shouldPlace(LightingPolicy.defaults(), true, true, false, average, 0, false));
+	}
+
+	@Test
+	void idlePlacementRequiresFiveContinuousSecondsAndRestartsAfterMovement() {
+		var runtime = new LightingRuntime();
+		var position = new net.minecraft.util.math.Vec3d(0.5, 64, 0.5);
+		for (long tick = 0; tick < 100; tick++) assertFalse(runtime.observeStationary(position, true, tick));
+		assertTrue(runtime.observeStationary(position, true, 100));
+		assertTrue(LightingPolicyEvaluator.supportsActivity(null, true));
+		assertFalse(LightingPolicyEvaluator.supportsActivity(null, false));
+		position = position.add(0.25, 0, 0); // Movement within the same block also resets the timer.
+		for (long tick = 101; tick < 201; tick++) assertFalse(runtime.observeStationary(position, true, tick));
+		assertTrue(runtime.observeStationary(position, true, 201));
+		assertFalse(runtime.observeStationary(position, false, 202));
+		assertFalse(runtime.observeStationary(position, true, 203));
+		assertFalse(runtime.observeStationary(position, true, 1000), "Time under another actuator owner cannot count as standing still");
+		runtime.reset();
+		assertFalse(runtime.observeStationary(position, true, 1001));
+	}
+
+	@Test
+	void standingStillDoesNotTakeControlFromOtherInteractions() {
+		for (WorldTaskType activity : WorldTaskType.values()) {
+			assertEquals(activity == WorldTaskType.MINE || activity == WorldTaskType.NAVIGATE,
+				LightingPolicyEvaluator.supportsActivity(activity, true), activity.name());
+		}
+	}
+
+	@Test
 	void freshAndResetRuntimeAutomaticallyLightsDarkUndergroundWork() {
 		var runtime = new LightingRuntime();
 		assertTrue(LightingPolicyEvaluator.shouldPlace(runtime.policy(), true, true, false, 0, 0, false));
@@ -25,7 +106,7 @@ class LightingPolicyEvaluatorTest {
 	void darknessPolicyRequiresSupportedActivityTorchAndUndergroundWhenConfigured() {
 		LightingPolicy policy = new LightingPolicy(true, LightingPolicy.Mode.DARKNESS, 2, true, 6, 1L);
 
-		assertTrue(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 2, 0, false));
+		assertTrue(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 1.96, 0, false));
 		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, false, true, false, 0, 0, false));
 		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, false, false, 0, 0, false));
 		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, true, 0, 0, false));
@@ -36,18 +117,18 @@ class LightingPolicyEvaluatorTest {
 	void lightingAccompaniesTravelAndMiningButNotOtherInteractionOwners() {
 		for (WorldTaskType activity : WorldTaskType.values()) {
 			assertEquals(activity == WorldTaskType.MINE || activity == WorldTaskType.NAVIGATE,
-				LightingPolicyEvaluator.supportsActivity(activity), activity.name());
+				LightingPolicyEvaluator.supportsActivity(activity, false), activity.name());
 		}
-		assertFalse(LightingPolicyEvaluator.supportsActivity(null));
+		assertFalse(LightingPolicyEvaluator.supportsActivity(null, false));
 	}
 
 	@Test
 	void spawnProofPolicyUsesBlockLightAndHonorsSpacing() {
 		LightingPolicy policy = new LightingPolicy(true, LightingPolicy.Mode.SPAWN_PROOF, 7, false, 6, 1L);
 
-		assertTrue(LightingPolicyEvaluator.shouldPlace(policy, true, true, true, 15, 7, false));
-		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, true, 0, 8, false));
-		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, true, 0, 0, true));
+		assertTrue(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 15, 6.96, false));
+		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 0, 8, false));
+		assertFalse(LightingPolicyEvaluator.shouldPlace(policy, true, true, false, 0, 0, true));
 	}
 
 	@Test
