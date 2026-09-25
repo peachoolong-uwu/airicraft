@@ -15,6 +15,11 @@ public class MinecraftClientTickDebugMixin {
 		value = "INVOKE", target = "Lnet/minecraft/client/MinecraftClient;tick()V"
 	))
 	private boolean airicraft$gateClientTick(MinecraftClient client) {
+		if (client.world != null && AiricraftClient.runtimeController().automaticPlaytest().emptyHostPaused()) {
+			// Keep protocol maintenance alive while suppressing Fabric/Baritone/agent simulation ticks.
+			if (client.getNetworkHandler() != null) client.getNetworkHandler().getConnection().tick();
+			return false;
+		}
 		return AiricraftClient.runtimeController().clientTickDebugRuntime().beginClientTick();
 	}
 

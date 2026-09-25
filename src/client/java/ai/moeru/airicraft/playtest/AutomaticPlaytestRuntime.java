@@ -35,6 +35,25 @@ public final class AutomaticPlaytestRuntime {
 	private HostedPlaytestParticipants participants;
 	private CompletableFuture<PlayerListSnapshot> playerQuery;
 	private int participantPollCountdown;
+	private final HostedEmptyPause emptyPause = new HostedEmptyPause();
+	private volatile String hostingCompanionUuid;
+	private volatile boolean emptyHostPaused;
+
+	/** Runs on the server thread; frozen simulation still processes joins and disconnects. */
+	public void onHostedServerTick(net.minecraft.server.MinecraftServer server) {
+		String companion = hostingCompanionUuid;
+		boolean empty = hosted() && companion != null && server.isRemote()
+			&& server.getPlayerManager().getPlayerList().stream().allMatch(p -> p.getUuidAsString().equals(companion));
+		switch (emptyPause.update(empty, server.getTickManager().isFrozen())) {
+			case FREEZE -> server.getTickManager().setFrozen(true);
+			case RESUME -> server.getTickManager().setFrozen(false);
+			case NONE -> { }
+		}
+		if (emptyHostPaused != empty) Airicraft.LOGGER.info("Hosted empty-player pause: {}", empty);
+		emptyHostPaused = empty;
+	}
+
+	public boolean emptyHostPaused() { return emptyHostPaused; }
 
 	public AutomaticPlaytestRuntime(ClientRuntimeController controller, Path root) {
 		this.controller = controller;
@@ -58,7 +77,10 @@ public final class AutomaticPlaytestRuntime {
 					"playerName", client.player.getName().getString());
 				String runId = System.getProperty("airicraft.automaticPlaytestId");
 				recording = runId == null ? new AutomaticPlaytestRecording(root, context) : new AutomaticPlaytestRecording(root, runId, context);
-				if (hosted()) participants = new HostedPlaytestParticipants(client.player.getUuidAsString());
+				if (hosted()) {
+					participants = new HostedPlaytestParticipants(client.player.getUuidAsString());
+					hostingCompanionUuid = client.player.getUuidAsString();
+				}
 				state = State.RECORDING;
 			}
 			if (state == State.REPORT_PENDING && resultCommitted) { pause(client); return; }
@@ -201,11 +223,14 @@ public final class AutomaticPlaytestRuntime {
 		if (hosted()) {
 			payload.put("connectedTesters", participants == null ? List.of() : participants.connectedTesters());
 			payload.put("testersEverJoined", participants == null ? 0 : participants.testersEverJoined());
+			payload.put("pausedForNoTesters", emptyHostPaused);
 		}
 		return payload;
 	}
 
 	public void worldLeft(String reason) {
+		hostingCompanionUuid = null;
+		emptyHostPaused = false;
 		// This mode has one run per process. Keep its pause through disconnect/server save.
 		if (captureReady() || state == State.FINISHED || recording == null) return;
 		sessionEpoch++;
