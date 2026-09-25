@@ -14,6 +14,14 @@ changes and ends the agent's current work; Cancel discards edits. Opening the
 menu or saving unchanged settings does not reload the agent. Existing YAML
 files remain compatible, including settings not exposed in the menu.
 
+Use **Profiles…** to switch connections or duplicate, rename, and delete named
+profiles. Duplicate copies the selected connection; enter a new name first.
+Profiles keep provider credentials, planner/Codex and vision models, reasoning,
+timeouts, and model context limits together. Behaviour settings stay shared.
+Switching and profile edits remain provisional until **Save & reload agent**.
+Profiles are stored in `agent.yml`; its existing top-level settings always
+represent the active connection and remain editable by advanced users.
+
 Run the isolated rendered menu test with
 `./gradlew runClientGameTest -Pairicraft.includeCompat=false -Pairicraft.settingsSmoke=true`.
 Add `-Pairicraft.settingsSmokeModMenu=true` to also exercise Mod Menu integration.

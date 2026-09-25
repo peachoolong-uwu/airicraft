@@ -23,11 +23,18 @@ public final class AiricraftSettingsScreen extends ClothConfigScreen {
 	private static final String MOD = "airicraft.yml";
 	private static final String AGENT = "agent.yml";
 	private final SettingsDraft draft;
+	private final SettingsProfiles profiles;
 	private ButtonWidget saveButton;
+	private ButtonWidget profilesButton;
 
 	private AiricraftSettingsScreen(Screen parent, Form form) {
+		this(parent, form, new SettingsProfiles(form.draft));
+	}
+
+	private AiricraftSettingsScreen(Screen parent, Form form, SettingsProfiles profiles) {
 		super(parent, text("title", "Airicraft Settings"), form.categories, form.builder.getDefaultBackgroundTexture());
 		draft = form.draft;
+		this.profiles = profiles;
 		setAlwaysShowTabs(true);
 		setConfirmSave(false);
 	}
@@ -46,6 +53,14 @@ public final class AiricraftSettingsScreen extends ClothConfigScreen {
 	@Override
 	protected void init() {
 		super.init();
+		profilesButton = addDrawableChild(ButtonWidget.builder(text("profiles", "Profiles…"), ignored -> {
+			if (hasErrors()) return;
+			super.saveAll(false);
+			profiles.stage();
+			client.setScreen(new SettingsProfilesScreen(profiles, () ->
+				client.setScreen(new AiricraftSettingsScreen(parent, new Form(draft), profiles))));
+		}).dimensions(width - 104, 4, 100, 20).build());
+		profilesButton.setTooltip(net.minecraft.client.gui.tooltip.Tooltip.of(Text.literal("Active profile: " + profiles.active())));
 		// Cloth recreates the bottom-right save button with a dynamic label on each init.
 		for (var child : java.util.List.copyOf(children())) {
 			if (child instanceof ButtonWidget button && button.getY() == height - 26 && button.getX() > width / 2) {
@@ -58,9 +73,14 @@ public final class AiricraftSettingsScreen extends ClothConfigScreen {
 
 	@Override
 	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-		saveButton.active = isEdited() && !hasErrors();
+		boolean valid = !hasErrors();
+		saveButton.active = isEdited() && valid;
+		profilesButton.active = valid;
 		super.render(context, mouseX, mouseY, delta);
 	}
+
+	@Override
+	public boolean isEdited() { return draft.isDirty() || super.isEdited(); }
 
 	private boolean hasErrors() {
 		return getCategorizedEntries().values().stream().flatMap(java.util.Collection::stream)
@@ -73,6 +93,7 @@ public final class AiricraftSettingsScreen extends ClothConfigScreen {
 		try {
 			// Cloth's callbacks update only the draft; no persistence happens while editing.
 			super.saveAll(false);
+			profiles.stage();
 			boolean saved = draft.saveAndReload(() -> AiricraftClient.runtimeController().reload());
 			if (saved) client.inGameHud.setOverlayMessage(text("saved", "Airicraft settings saved. Agent reloaded."), false);
 			client.setScreen(parent);

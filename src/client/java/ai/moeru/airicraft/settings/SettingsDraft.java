@@ -35,6 +35,7 @@ public final class SettingsDraft {
 		Document document = documents.get(file);
 		Object value = document.value(key, fallback);
 		document.initial.putIfAbsent(key, value);
+		document.defaults.putIfAbsent(key, fallback);
 		return (T) document.changes.getOrDefault(key, value);
 	}
 
@@ -44,6 +45,12 @@ public final class SettingsDraft {
 		if (Objects.equals(value, initial)) document.changes.remove(key);
 		else document.changes.put(key, value);
 	}
+
+	public boolean isDirty() {
+		return documents.values().stream().anyMatch(document -> !document.changes.isEmpty());
+	}
+
+	Map<String, Object> agentDefaults() { return new LinkedHashMap<>(documents.get("agent.yml").defaults); }
 
 	/** Saves a validated draft, then applies it. A failed apply restores the files for retry. */
 	public boolean saveAndReload(Runnable reload) throws IOException {
@@ -117,6 +124,7 @@ public final class SettingsDraft {
 		private final String original;
 		private final Map<String, Object> values;
 		private final Map<String, Object> initial = new HashMap<>();
+		private final Map<String, Object> defaults = new LinkedHashMap<>();
 		private final Map<String, Object> changes = new LinkedHashMap<>();
 
 		private Document(Path path, String original) {

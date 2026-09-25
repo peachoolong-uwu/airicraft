@@ -88,6 +88,44 @@ public final class SettingsScreenGameTest implements FabricClientGameTest {
 			}
 			context.clickScreenButton("gui.cancel");
 			context.waitForScreen(TitleScreen.class);
+			context.clickScreenButton("button.airicraft.settings");
+			context.waitForScreen(AiricraftSettingsScreen.class);
+			context.clickScreenButton("airicraft.settings.profiles");
+			context.waitForScreen(SettingsProfilesScreen.class);
+			context.runOnClient(client -> client.currentScreen.children().stream()
+				.filter(child -> child instanceof net.minecraft.client.gui.widget.TextFieldWidget)
+				.map(child -> (net.minecraft.client.gui.widget.TextFieldWidget) child)
+				.findFirst().orElseThrow().setText("Second provider"));
+			context.clickScreenButton("Duplicate");
+			context.takeScreenshot("airicraft-settings-profiles");
+			context.clickScreenButton("gui.back");
+			context.waitForScreen(AiricraftSettingsScreen.class);
+			context.runOnClient(client -> field((AiricraftSettingsScreen) client.currentScreen, "Model").setValue("second-provider-model"));
+			context.clickScreenButton("airicraft.settings.profiles");
+			context.waitForScreen(SettingsProfilesScreen.class);
+			context.clickScreenButton("Profile: Second provider");
+			context.clickScreenButton("gui.back");
+			context.waitForScreen(AiricraftSettingsScreen.class);
+			context.runOnClient(client -> {
+				if (!field((AiricraftSettingsScreen) client.currentScreen, "Model").getValue().equals("settings-smoke-model")) throw new AssertionError("Switch did not restore first profile");
+			});
+			context.waitTick();
+			context.clickScreenButton("airicraft.settings.save");
+			context.waitForScreen(TitleScreen.class);
+			context.clickScreenButton("button.airicraft.settings");
+			context.waitForScreen(AiricraftSettingsScreen.class);
+			context.clickScreenButton("airicraft.settings.profiles");
+			context.waitForScreen(SettingsProfilesScreen.class);
+			context.clickScreenButton("Profile: Default");
+			context.clickScreenButton("gui.back");
+			context.waitForScreen(AiricraftSettingsScreen.class);
+			context.runOnClient(client -> {
+				if (!field((AiricraftSettingsScreen) client.currentScreen, "Model").getValue().equals("second-provider-model")) throw new AssertionError("Saved second profile lost edits");
+			});
+			String beforeCancel = Files.readString(path);
+			context.clickScreenButton("text.cloth-config.cancel_discard");
+			context.waitForScreen(TitleScreen.class);
+			if (!beforeCancel.equals(Files.readString(path))) throw new AssertionError("Profile switch persisted on Cancel");
 			Files.writeString(path, original);
 			if (FabricLoader.getInstance().isModLoaded("modmenu")) {
 				context.runOnClient(client -> client.setScreen(ModMenuProbe.open(client.currentScreen)));
