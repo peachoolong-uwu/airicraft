@@ -1555,6 +1555,28 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void possibleItemOfferReachesPlannerBeforePickup() throws Exception {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		var payload = Map.<String, Object>of("player", "Alice", "playerUuid", "alice-id",
+			"itemId", "minecraft:bread", "count", 3, "inferred", true,
+			"position", Map.of("x", 2, "y", 65, "z", 0));
+		Field field = EmbodiedAgentRuntime.class.getDeclaredField("eventPipeline");
+		field.setAccessible(true);
+		var pipeline = (ai.moeru.airicraft.agent.events.AgentEventPipeline) field.get(runtime);
+		pipeline.appendRaw(20, "social.item_offered", payload);
+		var triggers = pipeline.drain(runtime::createPlannerTriggerForTests);
+		assertEquals(1, triggers.size());
+		assertEquals(payload, pipeline.plannerEventBuffer().query(null).events().getFirst().payload());
+		var trigger = triggers.getFirst();
+		assertEquals(PlannerTriggerType.SYSTEM, trigger.type());
+		assertEquals("item_offer:alice-id", trigger.coalescingKey());
+		assertTrue(trigger.text().contains("Alice"));
+		assertTrue(trigger.text().contains("minecraft:bread"));
+		assertTrue(trigger.text().contains("inferred"));
+		assertTrue(trigger.text().contains("not confirmed pickup"));
+	}
+
+	@Test
 	void physicalEpisodesDeliverObservedPositionAndTaskContextToPlanner() throws Exception {
 		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		var payload = Map.<String,Object>of("kind","fall","phase","ended","position",Map.of("x",318,"y",-12,"z",279),

@@ -57,6 +57,7 @@ import ai.moeru.airicraft.agent.dialogue.DialogueSnapshot;
 import ai.moeru.airicraft.agent.dialogue.DialogueRuntime;
 import ai.moeru.airicraft.agent.events.AgentEventPipeline;
 import ai.moeru.airicraft.agent.events.PhysicalEventObserver;
+import ai.moeru.airicraft.agent.events.ItemOfferObserver;
 import ai.moeru.airicraft.agent.events.EventPolicyChanges;
 import ai.moeru.airicraft.agent.events.EventPolicyDecision;
 import ai.moeru.airicraft.agent.events.EventPolicyEffect;
@@ -240,6 +241,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final ChatIngestService chatIngestService = new ChatIngestService();
 	private final LocalDamageTracker localDamageTracker = new LocalDamageTracker();
 	private PhysicalEventObserver physicalEventObserver;
+	private ItemOfferObserver itemOfferObserver;
+	private net.minecraft.client.world.ClientWorld itemOfferWorld;
 	private ai.moeru.airicraft.agent.events.SlowMiningObserver slowMiningObserver;
 	private Object physicalObservationWorld;
 	private final NearbyPlayerTracker nearbyPlayerTracker;
@@ -438,6 +441,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		autoLanOpenState.clear();
 		localDamageTracker.clear();
 		physicalObserver().reset();
+		if (itemOfferObserver != null) itemOfferObserver.reset();
 		if (slowMiningObserver != null) slowMiningObserver.reset();
 		physicalObservationWorld = null;
 		sessionSnapshotOverrideForTests = null;
@@ -506,10 +510,12 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			worldLoadTick = tickCount;
 			localDamageTracker.onLifecycleReset(tickCount);
 			physicalObserver().reset();
+			if (itemOfferObserver != null) itemOfferObserver.reset();
 			if (slowMiningObserver != null) slowMiningObserver.reset();
 		}
 		if (sessionSnapshot.requiresRespawn()) {
 			physicalObserver().reset();
+			if (itemOfferObserver != null) itemOfferObserver.reset();
 			if (slowMiningObserver != null) slowMiningObserver.reset();
 			behaviorTreeRuntime.tick(
 				client,
@@ -526,6 +532,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			lastKnownPlayerHealth = currentPlayerHealth(client);
 			return;
 		}
+		observeItemOffers(client);
 		observePhysicalEvents(client);
 		observeSlowMining(client);
 		openLanIfSingleplayerLocal(client);
@@ -668,6 +675,34 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		drainEventPipeline();
 
 		lastKnownPlayerHealth = currentPlayerHealth(client);
+	}
+
+	private void observeItemOffers(MinecraftClient client) {
+		if (itemOfferObserver == null) itemOfferObserver = new ItemOfferObserver();
+		if (client == null || client.world == null || client.player == null || !client.player.isAlive()) {
+			itemOfferObserver.reset();
+			itemOfferWorld = null;
+			return;
+		}
+		if (itemOfferWorld != client.world) {
+			itemOfferObserver.reset();
+			itemOfferWorld = client.world;
+		}
+		var players = client.world.getPlayers().stream().filter(player -> player.isAlive() && !player.isSpectator())
+			.map(player -> new ItemOfferObserver.Player(player.getUuid(), player.getName().getString(),
+				player.getEyePos().add(0, -.3, 0), player.getRotationVec(1.0F))).toList();
+		List<ItemOfferObserver.Item> items = new ArrayList<>();
+		for (var entity : client.world.getEntities()) {
+			if (entity instanceof net.minecraft.entity.ItemEntity item && !item.isRemoved()) {
+				var stack = item.getStack();
+				items.add(new ItemOfferObserver.Item(item.getUuid(), Registries.ITEM.getId(stack.getItem()).toString(),
+					stack.getCount(), new Vec3d(item.getX(), item.getY(), item.getZ()), item.getVelocity(), item.age));
+			}
+		}
+		for (var payload : itemOfferObserver.observe(tickCount, client.world.getRegistryKey().getValue().toString(),
+			client.player.getUuid(), new Vec3d(client.player.getX(), client.player.getY(), client.player.getZ()), players, items)) {
+			eventBuffer.append(tickCount, "social.item_offered", payload);
+		}
 	}
 
 	private PhysicalEventObserver physicalObserver() {
@@ -1090,6 +1125,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		autoLanOpenState.clear();
 		localDamageTracker.clear();
 		physicalObserver().reset();
+		if (itemOfferObserver != null) itemOfferObserver.reset();
 		if (slowMiningObserver != null) slowMiningObserver.reset();
 		physicalObservationWorld = null;
 		nearbyPlayerTracker.clear(tickCount, eventBuffer);
@@ -1853,6 +1889,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	public void onPlayerRespawned() {
 		localDamageTracker.onLifecycleReset(tickCount);
 		physicalObserver().reset();
+		if (itemOfferObserver != null) itemOfferObserver.reset();
 		if (slowMiningObserver != null) slowMiningObserver.reset();
 		lastKnownPlayerHealth = null;
 		if (sessionSnapshotOverrideForTests != null && sessionSnapshot.requiresRespawn()) {
@@ -4469,6 +4506,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			case "social.local_controller_spoke" -> createLocalControllerTrigger(event);
 			case "social.system_message" -> createSystemTrigger(event);
 			case "pickup.item_picked_up" -> createPickupTrigger(event);
+			case "social.item_offered" -> createItemOfferTrigger(event);
 			case "crafting.item_crafted" -> createCraftTrigger(event);
 			case "combat.damage_taken" -> createDamageTrigger(event);
 			case "player.physical" -> createPhysicalTrigger(event);
@@ -4486,6 +4524,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			case "social.player_spoke",
 				"social.system_message",
 				"pickup.item_picked_up",
+				"social.item_offered",
 				"crafting.item_crafted",
 				"combat.damage_taken",
 				"player.physical",
@@ -4699,6 +4738,16 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			event.timestampMs(),
 			"damage"
 		);
+	}
+
+	private PlannerTrigger createItemOfferTrigger(SemanticEvent event) {
+		return PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
+			"Possible item offer: " + event.payload().get("player") + " dropped " + event.payload().get("count")
+				+ "x " + event.payload().get("itemId") + " toward me at " + event.payload().get("position")
+				+ ". The player and intent are inferred from spawn position and motion; this is not confirmed pickup."
+				+ " Decide whether to collect or acknowledge the items using current world evidence.",
+			event.tick(), event.timestampMs(), "item_offer:" + event.payload().get("playerUuid"),
+			new com.google.gson.Gson().toJsonTree(event.payload()));
 	}
 
 	private PlannerTrigger createPhysicalTrigger(SemanticEvent event) {
@@ -4918,6 +4967,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		profiles.put("social.player_addressed_agent", new EventRoutingProfile("social.player_addressed_agent", false, PlannerTriggerType.CHAT, true));
 		profiles.put("social.local_controller_spoke", new EventRoutingProfile("social.local_controller_spoke", false, PlannerTriggerType.CHAT, true));
 		profiles.put("social.system_message", new EventRoutingProfile("social.system_message", false, PlannerTriggerType.SYSTEM, false));
+		profiles.put("social.item_offered", new EventRoutingProfile("social.item_offered", true, PlannerTriggerType.SYSTEM, false));
 		profiles.put("pickup.item_picked_up", new EventRoutingProfile("pickup.item_picked_up", true, PlannerTriggerType.PICKUP, false));
 		profiles.put("crafting.item_crafted", new EventRoutingProfile("crafting.item_crafted", true, PlannerTriggerType.CRAFT, false));
 		profiles.put("smelting.output_ready", new EventRoutingProfile("smelting.output_ready", true, PlannerTriggerType.SYSTEM, true));

@@ -14,6 +14,17 @@ class SemanticContextProjectorTest {
 	private final SemanticContextProjector projector = new SemanticContextProjector();
 
 	@Test
+	void preservesPossibleOfferAsUnconfirmedInContext() {
+		var event = new SemanticEvent(1, 20, 1000, "social.item_offered",
+			Map.of("player", "Alice", "itemId", "minecraft:bread", "count", 3, "inferred", true));
+		var result = projector.project(new SemanticEventQueryResult(1, 1, false, List.of(event)), 1000);
+		assertEquals(1, result.updates().size());
+		assertTrue(result.updates().getFirst().text().contains("Alice"));
+		assertTrue(result.updates().getFirst().text().contains("3x minecraft:bread"));
+		assertTrue(result.updates().getFirst().text().contains("possibly offered"));
+	}
+
+	@Test
 	void coalescesRepeatedPickupEventsIntoSingleUpdate() {
 		SemanticContextProjectionResult result = projector.project(new SemanticEventQueryResult(
 			1L,
