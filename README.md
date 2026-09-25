@@ -56,14 +56,24 @@ mod jars as the `mod-jars` workflow artifact. Push a version tag to also publish
 those jars to GitHub Releases:
 
 ```shell
-git tag v1.2.3
-git push origin v1.2.3
+git tag v1.2.3-alpha.1
+git push origin v1.2.3-alpha.1
 ```
 
-Tag builds override `mod_version` with the tag minus its `v` prefix, so both the
-jar filenames and mod metadata use the release version. Tags such as
-`v1.2.3-rc.1` create prereleases. Publishing requires a successful build and tests;
-the workflow uses the repository's automatic `GITHUB_TOKEN` without extra secrets.
+Releases from `dev` are always alpha prereleases, never GitHub's latest release.
+Use `vX.Y.Z-alpha.N` tags; a plain `vX.Y.Z` tag on `dev` automatically builds
+version `X.Y.Z-alpha` and uses that version in the release title. The original
+Git tag is preserved. Jar filenames and mod metadata use the resolved version.
+
+Once release candidates are ready, move release work to `main`. On `main`,
+`vX.Y.Z-rc.N` publishes a prerelease and `vX.Y.Z` publishes a stable release.
+RC tags on `dev` are rejected. Tags do not record their source branch, so CI checks
+whether the tagged commit is an ancestor of `origin/main` or `origin/dev`, giving
+`main` precedence when both contain it. Tags outside both branches are rejected.
+An absent remote `main` is supported during alpha development.
+
+Publishing requires a successful build and tests; the workflow uses the
+repository's automatic `GITHUB_TOKEN` without extra secrets.
 
 Each release contains the main `airicraft` jar and the optional
 `airicraft-journeymap-compat` and `airicraft-rei-compat` jars. Install the main jar
