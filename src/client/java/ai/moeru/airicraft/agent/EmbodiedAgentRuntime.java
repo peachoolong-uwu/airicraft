@@ -1070,9 +1070,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			debugRecorder.recordCollectResourceProbe(activeJobRuntime.collectResourceDebugSnapshot());
 			recordSemanticTaskTransition(previousTaskSnapshot, taskSnapshot);
 		}
-		dialogueRuntime.clear();
 		dialogueRuntime.updateSafetyContext(survivalReflexRuntime.snapshot().safetyEpoch(), null, false);
-		chatService.clear();
 		taskExecutionSnapshot = TaskExecutionSnapshot.idle();
 		completePendingCraftToolResult("Tool result for craft_recipe: cancelled reason=player_died");
 		cancelPolicy("player_died");

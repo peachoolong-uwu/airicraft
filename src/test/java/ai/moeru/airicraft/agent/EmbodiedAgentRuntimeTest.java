@@ -3405,9 +3405,11 @@ class EmbodiedAgentRuntimeTest {
 		runtime.onClientTick(null);
 		ActionGraphExecutionSnapshot graph = runtime.startActionGoal(ActionGoal.inventoryItem("minecraft:bread", 1), "test");
 
+		var journalBeforeDeath = runtime.plannerShellJournal();
 		runtime.overrideSessionSnapshotForTests(deadRemoteSession());
 		runtime.onClientTick(null);
 
+		assertEquals(journalBeforeDeath, runtime.plannerShellJournal(), "Death must not reset the planner");
 		assertEquals(TaskState.CANCELLED, runtime.taskSnapshot().state());
 		assertEquals(ActionGraphExecutionState.CANCELLED, runtime.actionGraphExecution(graph.executionId()).execution().state());
 		assertEquals(1, executor.onWorldLeaveCalls);

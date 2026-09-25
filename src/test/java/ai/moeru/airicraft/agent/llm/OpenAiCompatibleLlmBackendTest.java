@@ -26,6 +26,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleLlmBackendTest {
+	@Test void rejectsEmptyLoadCompletion() throws Exception {
+		try (TestServer server = TestServer.start(new AtomicReference<>(),
+			"{\"choices\":[{\"finish_reason\":\"load\",\"message\":{\"role\":\"assistant\"}}]}")) {
+			var backend = new OpenAiCompatibleLlmBackend(config(server.port(), false));
+			assertThrows(LlmBackendException.class, () -> backend.generate(
+				LlmConversation.of(List.of(LlmChatMessage.user("Gather wood", LlmMessageKind.TASK)))));
+		}
+	}
+
 	@Test void identifiesOpenCodeSessionsWithoutSendingTheirHeaderToOtherProviders() {
 		var client = new OpenAiCompatibleChatClient(config(1, false));
 		var first = client.buildHttpRequest(java.net.URI.create("https://opencode.ai/zen/go/v1/chat/completions"), "{}");

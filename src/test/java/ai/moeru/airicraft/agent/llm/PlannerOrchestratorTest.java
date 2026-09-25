@@ -52,6 +52,35 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerOrchestratorTest {
+	@Test void autonomousConversationCarriesGoalAsUserAndEventsAsToolResults() throws Exception {
+		var backend = new RecordingBackend();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, 3, Clock.systemUTC());
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		events.append(10, "player.died", Map.of("reason", "zombie"));
+		var objective = new AtomicReference<>("Gather wood");
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10,
+			"controller", "idle", Map.of("objective", Map.of("objective", objective.get(), "constraints", "Preserve camp")), events.query(null)));
+		try {
+			for (int turn = 0; turn < 4; turn++) {
+				if (turn == 2) objective.set("Craft a shield");
+				if (turn == 3) orchestrator.reset();
+				var request = requestAt(10L + turn, 1000L + turn * 1000, "self", "continue")
+					.withTriggerBatch(PlannerTriggerBatch.of(List.of(PlannerTrigger.autonomous(
+						PlannerTriggerType.SYSTEM, "self", "GOAL CONTINUATION", 10L + turn, 1000L + turn * 1000, "planner_goal"))));
+				orchestrator.submit(request);
+				backend.awaitCalls(turn + 1, Duration.ofSeconds(1));
+				var messages = backend.conversation(turn).messages();
+				assertEquals(1, messages.stream().filter(m -> "user".equals(m.role()) && m.content().contains(objective.get())).count());
+				assertTrue(messages.stream().anyMatch(m -> "user".equals(m.role()) && m.content().contains("Preserve camp")));
+				assertTrue(messages.stream().anyMatch(m -> "tool".equals(m.role()) && m.content().contains("player.died")));
+				assertFalse(messages.stream().anyMatch(m -> "user".equals(m.role()) && (m.content().contains("player.died") || m.content().contains("GOAL CONTINUATION"))));
+				backend.succeed(turn, replyOnly("Ready"));
+				awaitResult(orchestrator);
+				orchestrator.onAcceptedReplyRecorded();
+			}
+		} finally { orchestrator.shutdown(); }
+	}
+
 	@org.junit.jupiter.params.ParameterizedTest
 	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
 	void microCompactionDoesNotBlockPlanningAndReplacesFutureContext(boolean noFinding) {

@@ -371,6 +371,7 @@ public final class PlannerOrchestrator {
 			return contextAggregator.retainConversation(delivered);
 		}
 		PlannerDecisionContext context = decisionContextSource.get();
+		conversation = withGoalMessage(conversation, context);
 		conversation = deferredWorkReceipts.deliver(conversation, context.current());
 		if (endsWithObservation(conversation)) return contextAggregator.retainConversation(conversation);
 		var messages = new ArrayList<>(conversation.messages());
@@ -378,6 +379,31 @@ public final class PlannerOrchestrator {
 		messages.addAll(PlannerObservation.exchange(observation(context, notices)));
 		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
 		return contextAggregator.retainConversation(LlmConversation.of(messages));
+	}
+
+	/** Keep actual goal intent in the conversation; runtime events remain observe results. */
+	private static LlmConversation withGoalMessage(LlmConversation conversation, PlannerDecisionContext context) {
+		JsonElement value = GSON.toJsonTree(context.current().get("objective"));
+		if (value == null || !value.isJsonObject()) return conversation;
+		JsonObject goal = value.getAsJsonObject();
+		if (!goal.has("objective") || goal.get("objective").getAsString().isBlank()) return conversation;
+		String text = "Goal: " + goal.get("objective").getAsString();
+		for (String field : List.of("constraints", "completionCriteria")) {
+			if (goal.has(field) && !goal.get(field).isJsonNull() && !goal.get(field).getAsString().isBlank()) {
+				text += "\n" + field + ": " + goal.get(field).getAsString();
+			}
+		}
+		// Inspect retained history so resets and compaction naturally restore the goal.
+		for (var message : conversation.messages().reversed()) {
+			if (message.kind() == LlmMessageKind.TASK && message.fields() != null
+				&& message.fields().isJsonObject() && message.fields().getAsJsonObject().has("plannerGoal")) {
+				if (message.content().equals(text)) return conversation;
+				break;
+			}
+		}
+		JsonObject fields = new JsonObject();
+		fields.addProperty("plannerGoal", true);
+		return conversation.withAppended(LlmChatMessage.user(text, LlmMessageKind.TASK, fields));
 	}
 
 	/** Advances the event cursor: every observation is committed to the role's history. */

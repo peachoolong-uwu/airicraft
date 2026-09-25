@@ -126,6 +126,7 @@ public final class OpenAiCompatibleLlmBackend implements LlmBackend {
 				return new PlannerResponse(chatMessages, new PlannerIntent("reply_only", null, null), rawAssistantContent);
 			}
 			String replyText = visibleText.strip();
+			if (replyText.isEmpty()) throw new JsonParseException("Empty planner completion: no text or tool calls");
 			Airicraft.LOGGER.info("Planner parsed plaintext reply={}", summarizeForLog(replyText));
 			return new PlannerResponse(replyText, List.of(), rawAssistantContent);
 		}
