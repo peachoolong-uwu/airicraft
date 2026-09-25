@@ -49,6 +49,28 @@ Prerequisites:
 ./gradlew test wrapper:test --rerun-tasks
 ```
 
+### Releases
+
+CI builds and tests every branch push and pull request, and saves the installable
+mod jars as the `mod-jars` workflow artifact. Push a version tag to also publish
+those jars to GitHub Releases:
+
+```shell
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+Tag builds override `mod_version` with the tag minus its `v` prefix, so both the
+jar filenames and mod metadata use the release version. Tags such as
+`v1.2.3-rc.1` create prereleases. Publishing requires a successful build and tests;
+the workflow uses the repository's automatic `GITHUB_TOKEN` without extra secrets.
+
+Each release contains the main `airicraft` jar and the optional
+`airicraft-journeymap-compat` and `airicraft-rei-compat` jars. Install the main jar
+in a Fabric 1.21.8 client's `mods` directory with Fabric API and Baritone 1.15.0
+or newer; add a compatibility jar only with its corresponding mod. Sources,
+development jars, and the wrapper CLI are excluded from release assets.
+
 ### Planner world inspection contract
 
 The planner has a read-only `inspect_world` tool for exact local block state. It complements vision: use `take_a_look` for visual semantics, and `inspect_world` when the planner needs precise coordinates, block ids, block-state properties, or placement affordances.
