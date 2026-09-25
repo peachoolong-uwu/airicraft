@@ -509,9 +509,21 @@ configurations.named("include") {
 	resolutionStrategy.useGlobalDependencySubstitutionRules = false
 }
 
+def reportBuildRevision = providers.gradleProperty("airicraft.buildRevision").orElse(
+	file(".git").exists()
+		? providers.exec { commandLine 'git', 'describe', '--always', '--dirty', '--exclude=*' }.standardOutput.asText.map { it.trim() }
+		: providers.provider { "unknown" }
+)
+
 processResources {
+	inputs.property "revision", reportBuildRevision
+	inputs.property "minecraftVersion", project.minecraft_version
 	inputs.property "version", project.version
 
+	filesMatching("airicraft-build.properties") {
+		expand "revision": inputs.properties.revision, "modVersion": inputs.properties.version,
+			"minecraftVersion": inputs.properties.minecraftVersion
+	}
 	filesMatching("fabric.mod.json") {
 		expand "version": inputs.properties.version
 	}

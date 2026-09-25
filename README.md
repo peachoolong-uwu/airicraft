@@ -27,6 +27,12 @@ Run the isolated rendered menu test with
 Add `-Pairicraft.settingsSmokeModMenu=true` to also exercise Mod Menu integration.
 The test uses `build/run/clientGameTest` and writes screenshots there.
 
+## Bug reports
+
+Open **Airicraft Settings → Save bug report**, then **Open report folder** to find the saved file in `airicraft-reports` inside your game directory. Attach it and a description of the problem to your report. This works during normal play and does not require a developer harness. The dashboard also has **Save bug report**.
+
+Reports contain version/model identifiers and a bounded diagnostic summary. Nothing is uploaded automatically. See [diagnostic reports](docs/diagnostic-reports.md) for contents, limits, and the versioned format. **Raw developer export** is a separate, full-history mode.
+
 ## Development And Verification
 
 Prerequisites:
@@ -198,7 +204,7 @@ The dashboard provides:
 - bounded history with explicit eviction/gap reporting
 - JSONL session export and replay through **Open session**
 
-The dashboard is observation-only. It has a separate viewer token and does not expose the localhost bridge token or any bridge mutation route. Runtime state is sampled every five client ticks while discrete transitions are captured as they arrive. The browser keeps a recent memory-bounded window; **Save session** exports the full retained server history. A slow or disconnected browser never backpressures the game.
+The dashboard is observation-only. It has a separate viewer token and does not expose the localhost bridge token or any bridge mutation route. Runtime state is sampled every five client ticks while discrete transitions are captured as they arrive. The browser keeps a recent memory-bounded window; **Raw developer export** exports the full retained server history. A slow or disconnected browser never backpressures the game.
 
 Configure it in `config/airicraft/airicraft.yml`:
 

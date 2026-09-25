@@ -31,6 +31,8 @@ public final class SettingsScreenGameTest implements FabricClientGameTest {
 			context.clickScreenButton("button.airicraft.settings");
 			context.waitForScreen(AiricraftSettingsScreen.class);
 			context.takeScreenshot("airicraft-settings-connection");
+			saveReport(context, false);
+			if (!Files.readString(path).equals(original)) throw new AssertionError("Report changed settings");
 			context.runOnClient(client -> ((AiricraftSettingsScreen) client.currentScreen).saveAll(true));
 			context.waitForScreen(TitleScreen.class);
 			context.runOnClient(client -> {
@@ -139,6 +141,7 @@ public final class SettingsScreenGameTest implements FabricClientGameTest {
 				context.getInput().pressKey(net.minecraft.client.option.KeyBinding.byId("key.airicraft.settings"));
 				context.waitFor(client -> client.currentScreen instanceof AiricraftSettingsScreen, 10);
 				context.takeScreenshot("airicraft-settings-in-world");
+				saveReport(context, true);
 				context.clickScreenButton("gui.cancel");
 				context.waitForScreen(null);
 				context.runOnClient(client -> client.player.networkHandler.sendChatCommand("airicraft config"));
@@ -153,6 +156,32 @@ public final class SettingsScreenGameTest implements FabricClientGameTest {
 				context.waitForScreen(GameMenuScreen.class);
 			}
 		} catch (Exception exception) { throw new AssertionError(exception); }
+	}
+
+	private static void saveReport(ClientGameTestContext context, boolean worldLoaded) throws Exception {
+		var reports = FabricLoader.getInstance().getGameDir().resolve("airicraft-reports");
+		java.util.Set<java.nio.file.Path> before;
+		if (Files.isDirectory(reports)) {
+			try (var files = Files.list(reports)) { before = files.collect(java.util.stream.Collectors.toSet()); }
+		} else before = java.util.Set.of();
+		context.clickScreenButton("airicraft.settings.report");
+		context.waitForScreen(net.minecraft.client.gui.screen.NoticeScreen.class);
+		context.takeScreenshot(worldLoaded ? "airicraft-report-in-world" : "airicraft-report-saved");
+		try (var files = Files.list(reports)) {
+			var created = files.filter(file -> !before.contains(file)).toList();
+			if (created.size() != 1) throw new AssertionError("Expected exactly one completed report");
+			String contents = Files.readString(created.getFirst());
+			var manifest = com.google.gson.JsonParser.parseString(contents.lines().findFirst().orElseThrow()).getAsJsonObject();
+			if (!contents.contains("airicraft.diagnostic-report") || !contents.contains("integrity")
+				|| !manifest.getAsJsonObject("environment").getAsJsonObject("build").get("minecraftVersion").getAsString().equals("1.21.8")) {
+				throw new AssertionError("Report lacks required metadata");
+			}
+			if (manifest.getAsJsonObject("runtimeState").get("available").getAsBoolean() != worldLoaded) {
+				throw new AssertionError("Report must include retained runtime evidence when in-world");
+			}
+		}
+		context.clickScreenButton("gui.back");
+		context.waitForScreen(AiricraftSettingsScreen.class);
 	}
 
 	private static StringListEntry field(AiricraftSettingsScreen screen, String label) {
