@@ -18,6 +18,7 @@ public class MinecraftClientTickDebugMixin {
 		if (client.world != null && AiricraftClient.runtimeController().automaticPlaytest().emptyHostPaused()) {
 			// Keep protocol maintenance alive while suppressing Fabric/Baritone/agent simulation ticks.
 			if (client.getNetworkHandler() != null) client.getNetworkHandler().getConnection().tick();
+			AiricraftClient.runtimeController().automaticPlaytest().maintainPausedHost(client);
 			return false;
 		}
 		return AiricraftClient.runtimeController().clientTickDebugRuntime().beginClientTick();

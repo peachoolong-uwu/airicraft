@@ -122,7 +122,8 @@ public final class AutomaticPlaytestRecording {
 		// The launcher closes the client, validates the required Recorder Play, then publishes the directory.
 	}
 
-	private void recordVisualHistory(DashboardObservationStore history) throws IOException {
+	/** Drain rendered observations even when hosted gameplay ticks are paused. */
+	public void recordVisualHistory(DashboardObservationStore history) throws IOException {
 		video.checkFailure();
 		var status = history.recordingStatus();
 		long through = ((Number) status.get("latestSequence")).longValue();

@@ -55,6 +55,15 @@ public final class AutomaticPlaytestRuntime {
 
 	public boolean emptyHostPaused() { return emptyHostPaused; }
 
+	/** Render-loop maintenance must not accumulate a visual backlog while game ticks are gated. */
+	public void maintainPausedHost(MinecraftClient client) {
+		if (state != State.RECORDING || recording == null) return;
+		try {
+			recording.recordVisualHistory(controller.liveRecording());
+			pollParticipants(client);
+		} catch (IOException exception) { fail(exception); }
+	}
+
 	public AutomaticPlaytestRuntime(ClientRuntimeController controller, Path root) {
 		this.controller = controller;
 		this.root = root;
