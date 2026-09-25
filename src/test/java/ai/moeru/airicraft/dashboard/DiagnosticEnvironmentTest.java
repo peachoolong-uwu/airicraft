@@ -4,6 +4,8 @@ import ai.moeru.airicraft.agent.AgentConfig;
 import ai.moeru.airicraft.agent.AgentConfigLoader;
 import com.google.gson.Gson;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -27,5 +29,23 @@ class DiagnosticEnvironmentTest {
 		assertTrue(json.contains("codex-test-model"));
 		assertTrue(json.contains("codex-app-server"));
 		assertFalse(json.contains("PRIVATE"));
+	}
+
+	@ParameterizedTest
+	@CsvSource({
+		"openai-compatible, true, '', gpt-example",
+		"openai-compatible, true, '   ', gpt-example",
+		"openai-compatible, true, thinking-override, thinking-override",
+		"openai-compatible, false, '', ''",
+		"codex-app-server, true, '', codex-model",
+		"codex-app-server, true, thinking-override, codex-model"
+	})
+	void reportsTheEffectiveModelForEnabledThinkingPlanners(String backend, boolean enabled, String override, String expectedModel) {
+		var config = AgentConfigLoader.fromMapStrict(Map.of("plannerBackend", backend, "model", "gpt-example",
+			"codexAppServer", Map.of("model", "codex-model"),
+			"thinkingPlanner", Map.of("enabled", enabled, "model", override)), AgentConfig.defaults());
+		var thinker = new Gson().toJsonTree(DiagnosticEnvironment.providers(config.llm())).getAsJsonObject().getAsJsonObject("thinker");
+		assertEquals(expectedModel, thinker.get("model").getAsString());
+		assertEquals(enabled, thinker.get("enabled").getAsBoolean());
 	}
 }

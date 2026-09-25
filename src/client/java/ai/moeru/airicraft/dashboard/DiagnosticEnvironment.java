@@ -39,8 +39,10 @@ public final class DiagnosticEnvironment {
 			"provider", provider, "model", model, "configured", config.isConfigured()));
 		result.put("vision", Map.of("provider", host(config.visionProviderBaseUrl()),
 			"model", config.visionModel(), "configured", config.visionConfigured()));
-		result.put("thinker", Map.of("provider", provider, "model", config.thinkingPlanner().model(),
-			"enabled", config.thinkingPlanner().enabled()));
+		var thinking = config.thinkingPlanner();
+		// forRole retains the Codex model; blank OpenAI-compatible overrides use the controller model.
+		String thinkingModel = thinking.enabled() && (codex || thinking.model().isBlank()) ? model : thinking.model();
+		result.put("thinker", Map.of("provider", provider, "model", thinkingModel, "enabled", thinking.enabled()));
 		return result;
 	}
 
