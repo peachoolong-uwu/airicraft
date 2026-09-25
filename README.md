@@ -2,6 +2,23 @@
 
 Airicraft is a Fabric mod that exposes an in-game agent bridge and a CLI for automating common tasks. It targets Minecraft `1.21.8` with Java `21`, plus a `wrapper/` CLI subproject.
 
+## Settings
+
+Click **Airicraft** on the title or pause screen, press **F8** in-game (rebindable
+under Controls), or run `/airicraft config`. With Mod Menu installed, use
+**Mods → Airicraft → Configure**. Cloth Config is bundled; Mod Menu is optional.
+
+The menu groups connection, behaviour, vision, and advanced settings. API keys
+are masked unless you choose **Show API keys**. **Save & reload agent** applies
+changes and ends the agent's current work; Cancel discards edits. Opening the
+menu or saving unchanged settings does not reload the agent. Existing YAML
+files remain compatible, including settings not exposed in the menu.
+
+Run the isolated rendered menu test with
+`./gradlew runClientGameTest -Pairicraft.includeCompat=false -Pairicraft.settingsSmoke=true`.
+Add `-Pairicraft.settingsSmokeModMenu=true` to also exercise Mod Menu integration.
+The test uses `build/run/clientGameTest` and writes screenshots there.
+
 ## Development And Verification
 
 Prerequisites:

@@ -5,6 +5,8 @@ plugins {
 }
 
 repositories {
+	maven { url = uri("https://maven.shedaniel.me/") }
+	maven { url = uri("https://maven.terraformersmc.com/releases/") }
 	maven {
 		url = uri("vendor/action-plan-advisor/build/repository")
 	}
@@ -133,6 +135,22 @@ loom {
 		}
 	}
 
+}
+
+// Opt-in rendered settings test; never touches the normal development game directory.
+if (providers.gradleProperty("airicraft.settingsSmoke").orElse("false").get().toBoolean()) {
+	if (providers.gradleProperty("airicraft.settingsSmokeModMenu").orElse("false").get().toBoolean()) {
+		dependencies { modLocalRuntime "com.terraformersmc:modmenu:${project.modmenu_version}" }
+	}
+	fabricApi.configureTests {
+		createSourceSet = true
+		modId = "airicraft-settings-test"
+		enableGameTests = false
+		enableClientGameTests = true
+	}
+	loom.runs.clientGameTest {
+		vmArg "-Dairicraft.bridgeStateFile=${layout.buildDirectory.file('settings-smoke-bridge.json').get().asFile.absolutePath}"
+	}
 }
 
 def prepareMinecraftRunOptions = tasks.register("prepareMinecraftRunOptions") {
@@ -437,6 +455,11 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	modImplementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+		exclude group: "net.fabricmc.fabric-api"
+	}
+	include("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") { transitive = false }
+	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
 	modImplementation files("libs/baritone-unoptimized-fabric-1.15.0.jar")
 	modImplementation files("libs/nether-pathfinder-1.4.1.jar")
 	implementation "ai.moeru:action-plan-advisor:0.1.0"
