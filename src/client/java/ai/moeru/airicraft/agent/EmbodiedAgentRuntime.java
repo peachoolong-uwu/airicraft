@@ -303,6 +303,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private boolean initialized;
 	private volatile long tickCount;
 	private final ai.moeru.airicraft.agent.work.WorkHistory workHistory = new ai.moeru.airicraft.agent.work.WorkHistory();
+	private final ai.moeru.airicraft.agent.work.WorkProgressWatchdog workProgressWatchdog =
+		new ai.moeru.airicraft.agent.work.WorkProgressWatchdog(ai.moeru.airicraft.agent.work.WorkProgressWatchdog.DEFAULT_STALL_TICKS);
 	private Object workWorld;
 	private long worldLoadTick = -1L;
 	private Boolean proactiveSocialModeOverride;
@@ -488,6 +490,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	public void onClientTick(MinecraftClient client) {
 		try { tickClient(client); }
 		finally { refreshWorkHistory(); }
+		observeWorkProgress(client);
 		tickPolicy();
 	}
 
@@ -812,6 +815,48 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			player.getAbilities().flying || player.isGliding() || player.hasVehicle(), directional, player.isOnFire(),
 			player.isSubmergedInWater() && player.getAir() <= config.reflex().lowAirTicks(), player.getAir(), player.getHealth(), physicalTaskContext());
 		for (var event : physicalObserver().observe(sample)) eventBuffer.append(tickCount, "player.physical", event.payload());
+	}
+
+	private void observeWorkProgress(MinecraftClient client) {
+		if (client == null || client.player == null || client.world == null) {
+			workProgressWatchdog.reset();
+			return;
+		}
+		boolean enabled = !client.isPaused() && sessionSnapshot.companionActuationAllowed()
+			&& !survivalReflexRuntime.snapshot().holdsNormalTasks()
+			&& taskExecutionSnapshot.state() != ai.moeru.airicraft.agent.tasks.TaskExecutionState.PAUSED_BY_SESSION_GATE
+			&& taskExecutionSnapshot.state() != ai.moeru.airicraft.agent.tasks.TaskExecutionState.PAUSED_BY_REFLEX;
+		var player = client.player;
+		var metrics = new java.util.HashMap<String, Double>();
+		for (int slot = 0; slot < player.getInventory().size(); slot++) {
+			var stack = player.getInventory().getStack(slot);
+			if (!stack.isEmpty()) metrics.merge("inventory:" + Registries.ITEM.getId(stack.getItem()), (double) stack.getCount(), Double::sum);
+		}
+		if (client.interactionManager != null) {
+			var breaking = (ai.moeru.airicraft.mixin.client.ClientPlayerInteractionManagerAccessor) client.interactionManager;
+			var target = breaking.airicraft$currentBreakingPos();
+			if (breaking.airicraft$breakingBlock() && target != null)
+				metrics.put("block:" + target.asLong(), (double) breaking.airicraft$currentBreakingProgress());
+		}
+		if (client.targetedEntity instanceof net.minecraft.entity.LivingEntity target)
+			metrics.put("damage:" + target.getUuidAsString(), -(double) target.getHealth());
+		var input = player.input == null ? net.minecraft.util.PlayerInput.DEFAULT : player.input.playerInput;
+		boolean hasInput = input.forward() || input.backward() || input.left() || input.right() || input.jump()
+			|| client.options.attackKey.isPressed() || client.options.useKey.isPressed() || player.isUsingItem();
+		var sample = new ai.moeru.airicraft.agent.work.WorkProgressWatchdog.Sample(player.getX(), player.getY(), player.getZ(), metrics, hasInput);
+		// A follower already at its destination legitimately has nothing to actuate.
+		var work = workHistory.list().stream().map(w -> w.label().equals("FOLLOW_PLAYER") && behaviorTreeRuntime.snapshot().activeNodePath().contains("ObserveAndWait")
+			? new ai.moeru.airicraft.agent.work.WorkSnapshot(w.handle(), w.parentWorkId(),
+				ai.moeru.airicraft.agent.work.WorkSnapshot.State.WAITING, w.label(), w.phase(), w.foreground(), w.updatedTick(), w.details()) : w).toList();
+		for (var notice : workProgressWatchdog.observe(work, sample, enabled)) {
+			var event = eventBuffer.append(tickCount, "task.notice", Map.of(
+				"reason", "work_stalled", "workId", notice.workId(), "evidence", notice.reason(),
+				"stalledActiveTicks", notice.stalledTicks(), "position", Map.of("x", player.getX(), "y", player.getY(), "z", player.getZ()),
+				"message", "No observed progress for " + notice.stalledTicks() + " active ticks on " + notice.workId()
+					+ " (" + notice.reason() + "). Work is still running. Inspect current world/work and choose recovery or continue trying. "
+					+ "Use continue to grant another observation window; this notice does not cancel or fail work."));
+			dialogueRuntime.queueTaskAttention(tickCount, event.seqNo());
+		}
 	}
 
 	private void observeSlowMining(MinecraftClient client) {
@@ -2672,7 +2717,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private void refreshWorkHistory() {
 		var client = MinecraftClient.getInstance();
 		Object world = client == null ? null : client.world;
-		if (world != workWorld) { workHistory.clear(); workWorld = world; }
+		if (world != workWorld) { workHistory.clear(); workProgressWatchdog.reset(); workWorld = world; }
 		var reflex = survivalReflexRuntime.snapshot();
 		var projected = ai.moeru.airicraft.agent.work.WorkProjection.project(activeJobRuntime.current(), taskExecutionSnapshot,
 			actionGraphExecutions(), smeltingProcessManager.processSnapshots(), reflex.holdsNormalTasks(), reflex.holdId(), reflex.interruptedJobId(), reflex.interruptedActionExecutionId(), tickCount);
@@ -2715,6 +2760,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_UNAVAILABLE: run_policy disabled");
 		refreshWorkHistory();
 		if (call.name().equals("continue")) {
+			workProgressWatchdog.continueTrying();
 			var reflex = survivalReflexRuntime.snapshot();
 			if (reflex.state() == ai.moeru.airicraft.agent.reflex.SurvivalReflexState.AWAITING_PLANNER) {
 				resumeSafetyHold(reflex.holdId(), "planner_continue");

@@ -159,6 +159,30 @@ class DialogueRuntimeTest {
 	}
 
 	@Test
+	void stalledWorkAttentionWakesPlannerWhileWorkRemainsAccepted() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.JOB, "break"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "BREAK_BLOCKS", "RUNNING", true, 10, java.util.Map.of());
+		runtime.observeAcceptedWork(work);
+		var watchdog = new ai.moeru.airicraft.agent.work.WorkProgressWatchdog(10);
+		var sample = new ai.moeru.airicraft.agent.work.WorkProgressWatchdog.Sample(0, 135, 0, java.util.Map.of(), false);
+		for (int tick = 0; tick <= 10; tick++) {
+			for (var notice : watchdog.observe(List.of(work), sample, true)) {
+				var event = events.append(tick, "task.notice", java.util.Map.of("reason", "work_stalled", "workId", notice.workId(),
+					"message", "Work is still running. Inspect and recover or continue trying."));
+				runtime.queueTaskAttention(tick, event.seqNo());
+			}
+		}
+		runtime.poll(11, events);
+		assertTrue(runtime.plannerDebugSnapshot().inFlight());
+		assertTrue(runtime.continuePlannerGoal(12, true, SessionSnapshot.initial(), null, Optional.empty(), null, null, events));
+		runtime.shutdown();
+	}
+
+	@Test
 	void slowMiningNoticeWakesPlannerDuringPolicy() {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend);
