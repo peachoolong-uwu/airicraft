@@ -94,6 +94,11 @@ public final class OpenAiCompatibleLlmBackend implements LlmBackend {
 		return config.isConfigured();
 	}
 
+	@Override
+	public void resetBackend() {
+		chatClient.resetProtocolMode();
+	}
+
 	private PlannerResponse parsePlannerResponse(LlmConversation conversation, LlmCallResult<String> rawResponse) throws LlmBackendException {
 		String responseBody = rawResponse == null ? "" : rawResponse.payload();
 		try {

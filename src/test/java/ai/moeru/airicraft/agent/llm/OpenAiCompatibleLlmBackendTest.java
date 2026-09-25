@@ -14,8 +14,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -520,6 +522,85 @@ class OpenAiCompatibleLlmBackendTest {
 			assertEquals("tool", tool.get("role").getAsString());
 			assertEquals("call_inv", tool.get("tool_call_id").getAsString());
 		}
+	}
+
+	@Test
+	void switchesToTypedToolResultsUntilBackendResetAfterChatCompletion400() throws Exception {
+		var chatBodies = new ArrayList<String>();
+		var messageBodies = new ArrayList<String>();
+		var chatAttempts = new AtomicInteger();
+		var server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+		server.createContext("/chat/completions", exchange -> {
+			String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+			chatBodies.add(body);
+			chatAttempts.incrementAndGet();
+			byte[] response = "{\"error\":{\"message\":\"Hosted inference request was rejected\",\"code\":\"upstream_error\"}}".getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(400, response.length);
+			exchange.getResponseBody().write(response);
+			exchange.close();
+		});
+		server.createContext("/messages", exchange -> {
+			messageBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+			byte[] response = "{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"planner-model\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}".getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(200, response.length);
+			exchange.getResponseBody().write(response);
+			exchange.close();
+		});
+		server.start();
+		try {
+			var backend = new OpenAiCompatibleLlmBackend(config(server.getAddress().getPort(), false));
+			var call = new PlannerToolCall("call_inv", "inspect_inventory", new JsonObject(), null, null);
+			var conversation = LlmConversation.of(List.of(
+				LlmChatMessage.system("Use the inventory result."),
+				LlmChatMessage.assistantToolCall("", call),
+				LlmChatMessage.tool("call_inv", "Empty inventory")
+			));
+
+			assertEquals(200, backend.generate(conversation).statusCode());
+			assertEquals(1, chatAttempts.get());
+			assertEquals(1, messageBodies.size());
+			JsonArray first = JsonParser.parseString(chatBodies.get(0)).getAsJsonObject().getAsJsonArray("messages");
+			assertEquals(3, first.size());
+			assertEquals("tool", first.get(2).getAsJsonObject().get("role").getAsString());
+			JsonObject fallback = JsonParser.parseString(messageBodies.get(0)).getAsJsonObject();
+			JsonArray typed = fallback.getAsJsonArray("messages");
+			assertEquals("user", typed.get(0).getAsJsonObject().get("role").getAsString());
+			assertEquals("tool_use", typed.get(1).getAsJsonObject().getAsJsonArray("content").get(0).getAsJsonObject().get("type").getAsString());
+			assertEquals("tool_result", typed.get(2).getAsJsonObject().getAsJsonArray("content").get(0).getAsJsonObject().get("type").getAsString());
+			assertEquals("call_inv", typed.get(2).getAsJsonObject().getAsJsonArray("content").get(0).getAsJsonObject().get("tool_use_id").getAsString());
+			assertTrue(fallback.getAsJsonArray("tools").toString().contains("\"name\":\"inspect_inventory\""));
+
+			assertEquals(200, backend.generate(conversation).statusCode());
+			assertEquals(1, chatAttempts.get());
+			assertEquals(2, messageBodies.size());
+			backend.resetBackend();
+			assertEquals(200, backend.generate(conversation).statusCode());
+			assertEquals(2, chatAttempts.get());
+			assertEquals(3, messageBodies.size());
+		} finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void anthropicToolUseReplyBecomesTheSamePlannerToolCall() {
+		String nativeResponse = """
+			{"id":"msg_2","type":"message","role":"assistant","model":"planner-model",
+			 "content":[{"type":"thinking","thinking":"private"},
+			            {"type":"tool_use","id":"toolu_next","name":"inspect_inventory","input":{"prompt":"check"}}],
+			 "stop_reason":"tool_use","usage":{"input_tokens":12,"output_tokens":4}}
+			""";
+		JsonObject normalized = JsonParser.parseString(AnthropicMessagesCodec.chatCompletionResponse(nativeResponse)).getAsJsonObject();
+		JsonObject message = normalized.getAsJsonArray("choices").get(0).getAsJsonObject().getAsJsonObject("message");
+		JsonObject call = message.getAsJsonArray("tool_calls").get(0).getAsJsonObject();
+		assertTrue(!message.has("content") || message.get("content").isJsonNull());
+		assertEquals("toolu_next", call.get("id").getAsString());
+		assertEquals("inspect_inventory", call.getAsJsonObject("function").get("name").getAsString());
+		assertEquals("check", JsonParser.parseString(call.getAsJsonObject("function").get("arguments").getAsString())
+			.getAsJsonObject().get("prompt").getAsString());
+		assertEquals(12, OpenAiCompatibleChatClient.parseUsage(normalized.toString()).promptTokens());
+		assertEquals(4, OpenAiCompatibleChatClient.parseUsage(normalized.toString()).completionTokens());
+		assertFalse(normalized.toString().contains("private"));
 	}
 
 	@Test
