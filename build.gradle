@@ -79,6 +79,14 @@ base {
 }
 
 configurations {
+	create('bundledLibraries') {
+		canBeConsumed = false
+		attributes {
+			attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+			attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+		}
+	}
+	implementation.extendsFrom(bundledLibraries)
 	create('hotswapAgent') {
 		canBeConsumed = false
 		canBeResolved = true
@@ -464,7 +472,7 @@ dependencies {
 	modImplementation files("libs/nether-pathfinder-1.4.1.jar")
 	implementation "ai.moeru:action-plan-advisor:0.1.0"
 	include "ai.moeru:action-plan-advisor:0.1.0"
-	implementation "org.yaml:snakeyaml:2.4"
+	bundledLibraries "org.yaml:snakeyaml:2.4"
 	// Use concrete JARs: the js-community aggregate adds POM files that Fabric cannot load.
 	// Keep language/provider descriptors in separate nested jars (include is non-transitive).
 	[
@@ -477,9 +485,13 @@ dependencies {
 		include("${coordinate}:25.0.4") { transitive = false }
 	}
 
-	implementation "io.opentelemetry:opentelemetry-api:1.60.1"
-	implementation "io.opentelemetry:opentelemetry-sdk:1.60.1"
-	implementation "io.opentelemetry:opentelemetry-exporter-otlp:1.60.1"
+	bundledLibraries "io.opentelemetry:opentelemetry-api:1.60.1"
+	bundledLibraries "io.opentelemetry:opentelemetry-sdk:1.60.1"
+	bundledLibraries "io.opentelemetry:opentelemetry-exporter-otlp:1.60.1"
+	// Loom include is non-transitive: resolve the complete library runtime first.
+	configurations.bundledLibraries.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+		include(artifact.moduleVersion.id.toString()) { transitive = false }
+	}
 
 	// Source: https://mvnrepository.com/artifact/org.hotswapagent/hotswap-agent
 	runtimeOnly('org.hotswapagent:hotswap-agent:2.0.3') { transitive = false }
@@ -519,6 +531,8 @@ jar {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	inputs.file(tasks.named('remapJar').flatMap { it.archiveFile }).withPropertyName('releaseJar')
+	systemProperty 'airicraft.releaseJar', tasks.named('remapJar').get().archiveFile.get().asFile.absolutePath
 }
 
 // configure the maven publication

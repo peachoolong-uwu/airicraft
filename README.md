@@ -81,6 +81,10 @@ in a Fabric 1.21.8 client's `mods` directory with Fabric API and Baritone 1.15.0
 or newer; add a compatibility jar only with its corresponding mod. Sources,
 development jars, and the wrapper CLI are excluded from release assets.
 
+The main jar bundles SnakeYAML and the OpenTelemetry API, SDK, OTLP exporter,
+and their runtime dependencies. The build tests YAML parsing and telemetry
+initialization against the packaged libraries in an isolated classloader.
+
 ### Planner world inspection contract
 
 The planner has a read-only `inspect_world` tool for exact local block state. It complements vision: use `take_a_look` for visual semantics, and `inspect_world` when the planner needs precise coordinates, block ids, block-state properties, or placement affordances.
