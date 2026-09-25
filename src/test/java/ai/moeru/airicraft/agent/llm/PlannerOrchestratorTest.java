@@ -344,6 +344,95 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void clearingExecutedObservationPreservesUndeliveredEvents() throws Exception {
+		var backend = new RecordingBackend();
+		var read = new CompletableFuture<String>();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "observation_cancellation_fixture"; }
+			public boolean handles(String name) { return name.equals("inspect_fixture"); }
+			public List<Map<String, Object>> openAiTools() {
+				return List.of(PlannerToolCatalog.toolForProvider("inspect_fixture", "Inspect", Map.of(), List.of()));
+			}
+			public CompletableFuture<String> execute(PlannerToolCall call) { return read; }
+		};
+		var registry = PlannerToolRegistry.of(provider,
+			new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("cleared")));
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		var tick = new java.util.concurrent.atomic.AtomicLong(10);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", tick.get(), tick.get(),
+			"controller", "idle", Map.of(), events.query(null)));
+		try {
+			orchestrator.submit(requestAt(10, 500, "Alice", "Inspect the area"));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("read", "inspect_fixture", new JsonObject(), null, null),
+				new PlannerToolCall("observe", PlannerToolCatalog.OBSERVE, new JsonObject(), null, null)), null));
+			backend.awaitCompletions(1, Duration.ofSeconds(1));
+			orchestrator.poll();
+			orchestrator.tickToolQueue();
+			tick.set(20);
+			orchestrator.submit(requestAt(20, 1000, "Alice", "Cancel the plan"));
+			backend.awaitCalls(2, Duration.ofSeconds(1));
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("clear", "clear_queue", new JsonObject(), null, null)), null));
+			backend.awaitCompletions(2, Duration.ofSeconds(1));
+			// The read finishes between DialogueRuntime's queue tick and PlannerOrchestrator.poll's queue tick.
+			orchestrator.tickToolQueue();
+			tick.set(30);
+			events.append(30, "task.failed", Map.of("workId", "wood-job", "failure", "search_exhausted"));
+			read.complete("Inspection complete");
+			orchestrator.poll(); // Dispatch observe, then accept clear_queue before collecting the observation.
+			tick.set(40);
+			orchestrator.recordEvents(events.query(null), 2000);
+			orchestrator.submit(requestAt(40, 2000, "Alice", "What happened?"));
+			backend.awaitCalls(3, Duration.ofSeconds(1));
+			var conversation = backend.conversation(2);
+			assertTrue(conversation.messages().stream().anyMatch(message -> "observe".equals(message.toolCallId())
+				&& message.content().contains("Cancelled by clear_queue")));
+			var observation = PlannerObservation.latestPayload(conversation.messages()).orElseThrow();
+			assertEquals(0, observation.get("afterEventSequence").getAsLong());
+			assertEquals(1, observation.getAsJsonArray("events").size());
+			assertEquals("search_exhausted", observation.getAsJsonArray("events").get(0).getAsJsonObject()
+				.getAsJsonObject("payload").get("failure").getAsString());
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void queuedObservationCommitsItsCursorOnlyWhenDelivered() throws Exception {
+		var backend = new RecordingBackend();
+		var registry = PlannerToolRegistry.of(new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("retained")));
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10,
+			"controller", "idle", Map.of(), events.query(null)));
+		try {
+			orchestrator.submit(requestAt(10, 500, "Alice", "Observe"));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("observe", PlannerToolCatalog.OBSERVE, new JsonObject(), null, null)), null));
+			backend.awaitCompletions(1, Duration.ofSeconds(1));
+			orchestrator.poll();
+			events.append(11, "task.failed", Map.of("failure", "search_exhausted"));
+			orchestrator.tickToolQueue();
+			assertFalse(orchestrator.hasIncorporatedDecisionEvent(1), "Executing observe does not deliver its evidence");
+			orchestrator.tickToolQueue();
+			assertFalse(orchestrator.hasIncorporatedDecisionEvent(1), "A buffered result is not yet in conversation history");
+			orchestrator.recordEvents(events.query(null), 1000);
+			orchestrator.submit(requestAt(20, 1000, "Alice", "What happened?"));
+			backend.awaitCalls(2, Duration.ofSeconds(1));
+			var conversation = backend.conversation(1);
+			assertTrue(orchestrator.hasIncorporatedDecisionEvent(1));
+			assertEquals(1, conversation.messages().stream().filter(message -> message.content().contains("search_exhausted")).count());
+			var latest = PlannerObservation.latestPayload(conversation.messages()).orElseThrow();
+			assertEquals(1, latest.get("afterEventSequence").getAsLong());
+			assertTrue(latest.getAsJsonArray("events").isEmpty(), "Delivered observe results must not be repeated");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
 	void clearQueueAbortsActiveCallAndWaitsForAbortBeforeReplacement() throws Exception {
 		var backend = new RecordingBackend();
 		var executed = new ArrayList<String>();

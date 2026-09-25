@@ -14,6 +14,7 @@ import ai.moeru.airicraft.agent.session.SessionMode;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 
@@ -378,7 +379,11 @@ public final class PlannerOrchestrator {
 		var notices = takeTrailingNotices(messages);
 		messages.addAll(PlannerObservation.exchange(observation(context, notices)));
 		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
-		return contextAggregator.retainConversation(LlmConversation.of(messages));
+		LlmConversation retained = contextAggregator.retainConversation(LlmConversation.of(messages));
+		decisionWorldSessionId = context.worldSessionId();
+		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
+		decisionRefreshPending = false;
+		return retained;
 	}
 
 	/** Keep actual goal intent in the conversation; runtime events remain observe results. */
@@ -406,18 +411,24 @@ public final class PlannerOrchestrator {
 		return conversation.withAppended(LlmChatMessage.user(text, LlmMessageKind.TASK, fields));
 	}
 
-	/** Advances the event cursor: every observation is committed to the role's history. */
+	/** Capture evidence without acknowledging delivery: a queued result can still be cancelled. */
 	private Map<String, Object> observation(PlannerDecisionContext context, List<String> notices) {
-		if (!context.worldSessionId().equals(decisionWorldSessionId)) {
-			decisionWorldSessionId = context.worldSessionId();
-			incorporatedDecisionEventSequence = 0;
-		}
-		var payload = new java.util.LinkedHashMap<>(context.observation(incorporatedDecisionEventSequence, decisionRefreshPending));
-		decisionRefreshPending = false;
-		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
+		long sinceSequence = context.worldSessionId().equals(decisionWorldSessionId) ? incorporatedDecisionEventSequence : 0;
+		var payload = new java.util.LinkedHashMap<>(context.observation(sinceSequence, decisionRefreshPending));
 		if (usesToolQueue()) payload.put("toolQueue", queueState());
 		if (!notices.isEmpty()) payload.put("notices", notices);
 		return payload;
+	}
+
+	/** Only completed observe payloads retained in a conversation can advance the shared cursor. */
+	private void incorporateObservationResult(ToolExecutionResult result) {
+		if (!PlannerObservation.TOOL_NAME.equals(normalizedToolName(result.toolCall()))
+			|| !result.toolResultText().startsWith("{")) return;
+		JsonObject payload = JsonParser.parseString(result.toolResultText()).getAsJsonObject();
+		if (payload.get("worldSessionId").getAsString().equals(decisionWorldSessionId)) {
+			incorporatedDecisionEventSequence = Math.max(incorporatedDecisionEventSequence,
+				payload.get("throughEventSequence").getAsLong());
+		}
 	}
 
 	private String observeToolResult() {
@@ -1098,9 +1109,12 @@ public final class PlannerOrchestrator {
 				: LlmChatMessage.userWithImage(text, LlmMessageKind.TOOL_RESULT, image));
 		}
 		if (plannerExecutor.managesConversationHistory()) backendHistoryImages += toolQueue.images.size();
+		LlmConversation retained = contextAggregator.retainConversation(LlmConversation.of(messages));
+		toolQueue.reports.values().forEach(this::incorporateObservationResult);
 		toolQueue.reports.clear(); toolQueue.images.clear();
-		if (decisionContextSource == null) messages.add(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(queueState()), LlmMessageKind.NOTICE));
-		return LlmConversation.of(messages);
+		return decisionContextSource == null
+			? retained.withAppended(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(queueState()), LlmMessageKind.NOTICE))
+			: retained;
 	}
 
 	private Map<String, Object> queueState() {
@@ -1552,6 +1566,7 @@ public final class PlannerOrchestrator {
 		}
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
 		completedToolConversation = contextAggregator.retainConversation(completedToolConversation);
+		toolResults.forEach(this::incorporateObservationResult);
 		if (plannerExecutor.managesConversationHistory() && toolOutcome.hasImageAttachment()) backendHistoryImages++;
 		// Completed effects remain evidence even when safety invalidates the next decision.
 		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
