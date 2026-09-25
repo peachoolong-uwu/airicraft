@@ -4815,6 +4815,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			+ (holdId == null
 				? ". Review the consolidated safety episode; no interrupted task requires resumption."
 				: ". Review the consolidated safety episode and use continue to retain and resume the plan, or clear_queue to abort and replace it.");
+		if (event.payload().get("combatSummary") instanceof Map<?, ?> combatSummary) {
+			message += " " + combatSummary.get("text") + " Resolution position=" + event.payload().get("position")
+				+ ". Use these recorded outcomes directly; re-observe only facts that remain unknown or may have changed.";
+		}
 		if ("combat_stalemate".equals(reason)) {
 			message += " Combat is still unresolved and made no target-health or closing progress for "
 				+ event.payload().get("noProgressTicks") + " ticks. Position=" + event.payload().get("position")
@@ -4838,7 +4842,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			message,
 			event.tick(),
 			event.timestampMs(),
-			"survival_reflex_resolved"
+			"survival_reflex_resolved",
+			new com.google.gson.Gson().toJsonTree(event.payload())
 		);
 	}
 

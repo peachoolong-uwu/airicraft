@@ -189,6 +189,28 @@ class EmbodiedAgentRuntimeTest {
 	}
 
 	@Test
+	void normalCombatResolutionDeliversOutcomeSummaryAndEvidence() {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var summary = Map.<String, Object>of("text", "Confirmed dead (1): Zombie. Still alive (0): none. Health 20 -> 16.",
+				"confirmedDead", List.of(Map.of("uuid", "zombie-1", "entityTypeId", "minecraft:zombie")),
+				"surviving", List.of(), "unconfirmed", List.of(), "healthAfter", 16);
+			var event = new SemanticEvent(1, 400, 20000, "reflex.resolved",
+				Map.of("reason", "no_eligible_threats", "cause", "MOB_ATTACK", "nextState", "IDLE",
+					"combatSummary", summary, "position", "3,64,7", "remainingThreats", List.of()));
+			var trigger = runtime.createPlannerTriggerForTests(event,
+				new EventRoutingProfile("reflex.resolved", true, PlannerTriggerType.SYSTEM, true));
+			assertTrue(trigger.text().contains("Confirmed dead (1): Zombie"));
+			assertTrue(trigger.text().contains("Still alive (0): none"));
+			assertTrue(trigger.text().contains("20 -> 16"));
+			assertTrue(trigger.text().contains("3,64,7"));
+			assertEquals("zombie-1", trigger.fields().getAsJsonObject().getAsJsonObject("combatSummary")
+				.getAsJsonArray("confirmedDead").get(0).getAsJsonObject().get("uuid").getAsString());
+		}
+		finally { runtime.shutdown(); }
+	}
+
+	@Test
 	void stalledCombatTriggerReportsUnresolvedThreatAndTacticalHold() {
 		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
 		try {
