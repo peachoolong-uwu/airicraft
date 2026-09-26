@@ -359,7 +359,8 @@ public final class ClientRuntimeController {
 			drawContext,
 			clientTickDebugRuntime.status(),
 			clientTickDebugRuntime.traceStatus(),
-			plannerEnabled
+			plannerEnabled,
+			automaticPlaytest.emptyHostPaused()
 		);
 	}
 

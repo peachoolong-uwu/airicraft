@@ -86,7 +86,8 @@ Hosted mode waits until the companion has reached the game screen before enablin
 the empty-host pause. This startup grace has no fixed timeout: loading-screen ticks
 continue until terrain loading finishes. After startup, hosted mode automatically
 pauses when no players other than the companion are connected. World simulation and client/Baritone/planner ticks stop; networking
-continues so testers can still join. The next tester connection resumes the
+continues so testers can still join. The HUD shows `PAUSED — WAITING FOR PLAYERS`;
+chat and command keys still open Minecraft chat, and open screens continue to update. The next tester connection resumes the
 retained work, and the last tester disconnect pauses it again. Bridge status
 reports `automaticPlaytest.pausedForNoTesters`. The host only releases a server
 freeze that it acquired itself. This does not change the launcher's time or
