@@ -24,6 +24,7 @@
 		"GameRendererMixin",
 		"GameRendererPauseMixin",
 		"IndigoTerrainRenderContextMixin",
+		"IntegratedServerOfflineMixin",
 		"LivingEntityRendererMixin",
 		"MessageHandlerMixin",
 		"MinecraftClientTickDebugMixin",

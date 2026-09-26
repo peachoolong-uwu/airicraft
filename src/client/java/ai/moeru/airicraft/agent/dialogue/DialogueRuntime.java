@@ -50,6 +50,15 @@ public final class DialogueRuntime {
 	private DialogueState state = DialogueCore.initialState();
 	private int queuedTimeoutInjections;
 	private boolean pendingTimeoutVisibleReply;
+	private boolean hostedAutoResetAttempted;
+	private DialogueMessages messages = DialogueMessages.DEFAULTS;
+
+	private DialogueCore.ResetGuidance resetGuidance() {
+		if (!Boolean.getBoolean("airicraft.hostedPlaytestAutoReset")) return DialogueCore.ResetGuidance.MANUAL;
+		return hostedAutoResetAttempted
+			? DialogueCore.ResetGuidance.HOSTED_AUTO_EXHAUSTED
+			: DialogueCore.ResetGuidance.HOSTED_AUTO_PENDING;
+	}
 	private long userGuidanceRevision;
 	private long safetyEpoch;
 	private String safetyHoldId;
@@ -127,6 +136,11 @@ public final class DialogueRuntime {
 		}
 		for (var event : policyContinuation.drainEvents()) events.append(tick, "policy.continuation." + event.get("state"), event);
 		return handled;
+	}
+
+	/** Lines sent without a planner reply, voiced by the character card. */
+	public void configureMessages(DialogueMessages nextMessages) {
+		messages = Objects.requireNonNull(nextMessages, "messages");
 	}
 
 	public void configureDelegation(PlannerOrchestrator thinker, ai.moeru.airicraft.agent.llm.delegation.PlannerDelegation handoff) {
@@ -239,14 +253,15 @@ public final class DialogueRuntime {
 		}
 		if (tick < nextGoalContinuationTick) return true;
 		nextGoalContinuationTick = tick + 20;
-		String continuation = delegated ? delegation.continuation() : "GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
+		var delegationPrompt = delegated ? delegation.continuationPrompt() : null;
+		String continuation = delegated ? delegationPrompt.text() : "GOAL CONTINUATION: No action is running. Review fresh evidence and advance the active planner goal, "
 			+ "change it if appropriate, or finish explicitly with success/give_up. A prior plaintext reply did not end it.\n"
 			+ plannerGoal.context();
 		if (awaitingSafetyDecision) continuation = "Safety hold " + safetyHoldId
 			+ " still awaits your decision. The previous job remains paused. Use continue to keep and resume the plan, or clear_queue to abort and replace it."
 			+ " Saying you will act does not release the hold.\n" + continuation;
 		onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "self",
-			continuation, tick, clock.millis(), "planner_goal"),
+			continuation, tick, clock.millis(), "planner_goal", delegationPrompt == null ? null : delegationPrompt.fields()),
 			session, primaryPlayer, actionGoal, task, mission, events);
 		return true;
 	}
@@ -438,7 +453,8 @@ public final class DialogueRuntime {
 		resetPlanners("runtime reset");
 		queuedTimeoutInjections = 0;
 		pendingVisibleReplies.clear();
-		applyTransition(DialogueCore.onReset(state, senderName, tick), tick, eventBuffer);
+		if (Boolean.getBoolean("airicraft.hostedPlaytestAutoReset") && state.degraded()) hostedAutoResetAttempted = true;
+		applyTransition(DialogueCore.onReset(state, senderName, tick, messages), tick, eventBuffer);
 		return true;
 	}
 
@@ -518,7 +534,7 @@ public final class DialogueRuntime {
 		}
 		// Accepted work already consumes these observations. Retain the evidence in the
 		// event buffer, but do not launch a competing turn for ordinary progress.
-		if (acceptedWork != null
+		if ((acceptedWork != null || activePlanner().hasQueuedToolWork())
 			&& !trigger.maySupersedeLaunchedTurn() && safetyHoldId == null && !reflexActive
 			&& List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK).contains(trigger.type())) return;
 		submitPlannerTrigger(
@@ -613,7 +629,8 @@ public final class DialogueRuntime {
 
 		if (queuedTimeoutInjections > 0 && !activePlanner().hasInFlight()) {
 			queuedTimeoutInjections--;
-			applyTransition(DialogueCore.onPlannerFailure(state, LlmFailureType.TIMEOUT, "Injected LLM timeout", pendingTimeoutVisibleReply, tick), tick, eventBuffer);
+			applyTransition(DialogueCore.onPlannerFailure(state, LlmFailureType.TIMEOUT, "Injected LLM timeout",
+				pendingTimeoutVisibleReply, tick, resetGuidance(), messages), tick, eventBuffer);
 			pendingTimeoutVisibleReply = false;
 			return null;
 		}
@@ -623,9 +640,9 @@ public final class DialogueRuntime {
 
 		if (delegation != null && delegation.starting()) {
 			delegationEventCursor = eventBuffer.latestSeqNo();
-			String message = delegation.start(delegationFacts(tick, activeTask, missionExecution), delegationEventCursor);
-			onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "controller", message,
-				tick, clock.millis(), "delegation"), sessionSnapshot, null, activeGoal, activeTask, missionExecution, eventBuffer);
+			var prompt = delegation.startPrompt(delegationFacts(tick, activeTask, missionExecution), delegationEventCursor);
+			onPlannerTrigger(PlannerTrigger.autonomous(PlannerTriggerType.SYSTEM, "controller", prompt.text(),
+				tick, clock.millis(), "delegation", prompt.fields()), sessionSnapshot, null, activeGoal, activeTask, missionExecution, eventBuffer);
 		}
 		if (delegation != null && delegation.active()) {
 			var events = eventBuffer.query(delegationEventCursor);
@@ -653,7 +670,9 @@ public final class DialogueRuntime {
 					result.failureType(),
 					result.failureMessage(),
 					timeoutVisibleReply,
-					tick
+					tick,
+					resetGuidance(),
+					messages
 				),
 				tick,
 				eventBuffer
@@ -753,7 +772,8 @@ public final class DialogueRuntime {
 		}
 		if (state.degraded() && activePlanner().isEnabled()) {
 			applyTransition(
-				DialogueCore.onPlannerDegradedBlocked(state, request.senderName(), directUserGuidance, request.tick()),
+				DialogueCore.onPlannerDegradedBlocked(state, request.senderName(), directUserGuidance,
+					request.tick(), resetGuidance(), messages),
 				request.tick(),
 				eventBuffer
 			);

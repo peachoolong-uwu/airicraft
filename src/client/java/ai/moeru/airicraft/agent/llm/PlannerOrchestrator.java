@@ -14,6 +14,7 @@ import ai.moeru.airicraft.agent.session.SessionMode;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 
@@ -371,27 +372,63 @@ public final class PlannerOrchestrator {
 			return contextAggregator.retainConversation(delivered);
 		}
 		PlannerDecisionContext context = decisionContextSource.get();
+		conversation = withGoalMessage(conversation, context);
 		conversation = deferredWorkReceipts.deliver(conversation, context.current());
 		if (endsWithObservation(conversation)) return contextAggregator.retainConversation(conversation);
 		var messages = new ArrayList<>(conversation.messages());
 		var notices = takeTrailingNotices(messages);
 		messages.addAll(PlannerObservation.exchange(observation(context, notices)));
 		// Commit to the role's history, not to a provider response. Retries reuse this conversation.
-		return contextAggregator.retainConversation(LlmConversation.of(messages));
+		LlmConversation retained = contextAggregator.retainConversation(LlmConversation.of(messages));
+		decisionWorldSessionId = context.worldSessionId();
+		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
+		decisionRefreshPending = false;
+		return retained;
 	}
 
-	/** Advances the event cursor: every observation is committed to the role's history. */
-	private Map<String, Object> observation(PlannerDecisionContext context, List<String> notices) {
-		if (!context.worldSessionId().equals(decisionWorldSessionId)) {
-			decisionWorldSessionId = context.worldSessionId();
-			incorporatedDecisionEventSequence = 0;
+	/** Keep actual goal intent in the conversation; runtime events remain observe results. */
+	private static LlmConversation withGoalMessage(LlmConversation conversation, PlannerDecisionContext context) {
+		JsonElement value = GSON.toJsonTree(context.current().get("objective"));
+		if (value == null || !value.isJsonObject()) return conversation;
+		JsonObject goal = value.getAsJsonObject();
+		if (!goal.has("objective") || goal.get("objective").getAsString().isBlank()) return conversation;
+		String text = "Goal: " + goal.get("objective").getAsString();
+		for (String field : List.of("constraints", "completionCriteria")) {
+			if (goal.has(field) && !goal.get(field).isJsonNull() && !goal.get(field).getAsString().isBlank()) {
+				text += "\n" + field + ": " + goal.get(field).getAsString();
+			}
 		}
-		var payload = new java.util.LinkedHashMap<>(context.observation(incorporatedDecisionEventSequence, decisionRefreshPending));
-		decisionRefreshPending = false;
-		incorporatedDecisionEventSequence = context.observations().latestSeqNo();
+		// Inspect retained history so resets and compaction naturally restore the goal.
+		for (var message : conversation.messages().reversed()) {
+			if (message.kind() == LlmMessageKind.TASK && message.fields() != null
+				&& message.fields().isJsonObject() && message.fields().getAsJsonObject().has("plannerGoal")) {
+				if (message.content().equals(text)) return conversation;
+				break;
+			}
+		}
+		JsonObject fields = new JsonObject();
+		fields.addProperty("plannerGoal", true);
+		return conversation.withAppended(LlmChatMessage.user(text, LlmMessageKind.TASK, fields));
+	}
+
+	/** Capture evidence without acknowledging delivery: a queued result can still be cancelled. */
+	private Map<String, Object> observation(PlannerDecisionContext context, List<String> notices) {
+		long sinceSequence = context.worldSessionId().equals(decisionWorldSessionId) ? incorporatedDecisionEventSequence : 0;
+		var payload = new java.util.LinkedHashMap<>(context.observation(sinceSequence, decisionRefreshPending));
 		if (usesToolQueue()) payload.put("toolQueue", queueState());
 		if (!notices.isEmpty()) payload.put("notices", notices);
 		return payload;
+	}
+
+	/** Only completed observe payloads retained in a conversation can advance the shared cursor. */
+	private void incorporateObservationResult(ToolExecutionResult result) {
+		if (!PlannerObservation.TOOL_NAME.equals(normalizedToolName(result.toolCall()))
+			|| !result.toolResultText().startsWith("{")) return;
+		JsonObject payload = JsonParser.parseString(result.toolResultText()).getAsJsonObject();
+		if (payload.get("worldSessionId").getAsString().equals(decisionWorldSessionId)) {
+			incorporatedDecisionEventSequence = Math.max(incorporatedDecisionEventSequence,
+				payload.get("throughEventSequence").getAsLong());
+		}
 	}
 
 	private String observeToolResult() {
@@ -904,11 +941,7 @@ public final class PlannerOrchestrator {
 		CompletableFuture<ToolExecutionOutcome> abort;
 		PlannerToolCall abortCall;
 		long observationTick;
-		long firstResultMs;
-		long lastResultMs;
-		PlannerToolCall loneCall;
-		PlannerToolCall reviewedLoneCall;
-		long loneSinceMs;
+		final List<PlannerToolCall> checkpoints = new ArrayList<>();
 	}
 	private final QueueState toolQueue = new QueueState();
 	private boolean queueReflexActive;
@@ -927,6 +960,7 @@ public final class PlannerOrchestrator {
 			var cancelled = new ArrayList<>(toolQueue.tools.pending());
 			if (toolQueue.tools.active() != null) cancelled.addFirst(toolQueue.tools.active());
 			toolQueue.tools.clear((call, work) -> {});
+			toolQueue.checkpoints.clear();
 			for (var call : cancelled) queueReport(call, new TextToolExecutionOutcome("Cancelled by clear_queue; completed effects are not undone."));
 			toolQueue.abortCall = clear.get();
 			toolQueue.abort = requestPlannerTools(List.of(clear.get()), snapshot.plannerConversation());
@@ -951,6 +985,7 @@ public final class PlannerOrchestrator {
 		}
 		var acceptedConversation = contextAggregator.buildPlannerFollowUpConversation(snapshot, calls, receipts);
 		contextAggregator.retainConversation(acceptedConversation);
+
 		commitRecordedToolExchanges(result.generation());
 		toolQueue.seed = result.request();
 		debugRecorder.recordPlannerCompletion(result);
@@ -970,7 +1005,7 @@ public final class PlannerOrchestrator {
 		if (context != null && decisionWorldSessionId != null
 			&& !decisionWorldSessionId.equals(context.worldSessionId())) {
 			toolQueue.tools.clear((call, id) -> {});
-			toolQueue.reports.clear(); toolQueue.images.clear();
+			toolQueue.reports.clear(); toolQueue.images.clear(); toolQueue.checkpoints.clear();
 			return;
 		}
 		if (toolQueue.abort != null) {
@@ -996,33 +1031,19 @@ public final class PlannerOrchestrator {
 			if (!outcome.toolResultText().startsWith("TOOL_ERROR:") && !outcome.toolResultText().startsWith("TOOL_UNAVAILABLE:"))
 				toolRegistry.afterResultCommitted(completion.call().name());
 		}
+		// Routine reviews are explicitly placed in the plan, with FIFO exhaustion as the fallback.
+		if (toolQueue.reports.isEmpty() || toolQueue.seed == null || sessionCoordinator.hasInFlight()
+			|| pendingToolExecution != null || awaitingAcceptedReplyRecord || compactionService.hasInFlight() || coalescePending) return;
+		if (!toolQueue.tools.isEmpty() && toolQueue.checkpoints.isEmpty()) return;
 		long now = clock.millis();
-		var active = toolQueue.tools.active();
-		var lone = toolQueue.tools.pending().isEmpty() ? active : null;
-		if (lone != toolQueue.loneCall) {
-			toolQueue.loneCall = lone;
-			toolQueue.loneSinceMs = now;
-		}
-		boolean refill = lone != null && lone != toolQueue.reviewedLoneCall
-			&& !toolRegistry.endsTurn(lone.name()) && now - toolQueue.loneSinceMs >= 1000;
-		if ((!refill && toolQueue.reports.isEmpty()) || toolQueue.seed == null || sessionCoordinator.hasInFlight()
-			|| pendingToolExecution != null || awaitingAcceptedReplyRecord || compactionService.hasInFlight()
-			|| coalescePending) return;
-		// Coalesce fast results even when a refill is due, but do not starve reports behind slow reads.
-		boolean nextReadRunning = active != null && toolRegistry.isReadTool(active.name());
-		if (!toolQueue.reports.isEmpty()
-			&& (now - toolQueue.lastResultMs < 250 || nextReadRunning) && now - toolQueue.firstResultMs < 1000) return;
 		PlannerRequest seed = toolQueue.seed;
 		submit(PlannerRequest.ofTrigger(toolQueue.observationTick, now, seed.sessionMode(), seed.primaryInteractionPlayer(), seed.activeGoal(),
-			PlannerTriggerType.SYSTEM, "tool_queue", toolQueue.reports.isEmpty()
-				? "Queued work is still running. Plan the next steps assuming it succeeds, without treating it as succeeded."
-				: "Queued tool results are ready for review.", null)
+			PlannerTriggerType.SYSTEM, "tool_queue", toolQueue.checkpoints.isEmpty() ? "FIFO empty. Review completed results and plan the next batch." : "report_to_me reached. Review the requested results; the remaining FIFO continues independently.", null)
 			.withSafetyContext(minimumSafetyEpoch, currentSafetyHoldId));
 	}
 
 	private void queueReport(PlannerToolCall call, ToolExecutionOutcome outcome) {
-		if (toolQueue.reports.isEmpty()) toolQueue.firstResultMs = clock.millis();
-		toolQueue.lastResultMs = clock.millis();
+		if (PlannerQueueToolProvider.REPORT.equals(call.name()) && !outcome.toolResultText().startsWith("Cancelled by clear_queue")) toolQueue.checkpoints.add(call);
 		toolQueue.reports.put(call.id(), new ToolExecutionResult(call, outcome.toolResultText(), outcome.hasImageAttachment()));
 		if (outcome instanceof ImageToolExecutionOutcome image) toolQueue.images.put(call.id(), image.imageAttachment());
 		debugRecorder.recordTerminalTool(toolQueue.observationTick, call, outcome.toolResultText(), outcome.hasImageAttachment());
@@ -1055,6 +1076,18 @@ public final class PlannerOrchestrator {
 	private LlmConversation appendQueueContext(LlmConversation conversation) {
 		if (!usesToolQueue()) return conversation;
 		var remaining = new java.util.LinkedHashMap<>(toolQueue.reports);
+		boolean allOutputs = toolQueue.checkpoints.isEmpty()
+			|| toolQueue.checkpoints.stream().anyMatch(c -> !c.arguments().has("includeTools"));
+		var included = new java.util.HashSet<String>();
+		for (var checkpoint : toolQueue.checkpoints) if (checkpoint.arguments().has("includeTools"))
+			checkpoint.arguments().getAsJsonArray("includeTools").forEach(value -> included.add(value.getAsString()));
+		if (!allOutputs) remaining.replaceAll((id, report) -> {
+			// Observations carry the shared evidence cursor and must be delivered before acknowledgement.
+			if (PlannerObservation.TOOL_NAME.equals(report.toolCall().name())
+				|| included.contains(report.toolCall().name()) || PlannerQueueToolProvider.REPORT.equals(report.toolCall().name())) return report;
+			toolQueue.images.remove(id);
+			return new ToolExecutionResult(report.toolCall(), "Output omitted by report_to_me: " + report.toolCall().name() + "; execution finished. Full output remains in the recording.", false);
+		});
 		var messages = new ArrayList<LlmChatMessage>();
 		for (var message : conversation.messages()) {
 			// Queue snapshots are current state, not growing historical narration.
@@ -1072,9 +1105,14 @@ public final class PlannerOrchestrator {
 				: LlmChatMessage.userWithImage(text, LlmMessageKind.TOOL_RESULT, image));
 		}
 		if (plannerExecutor.managesConversationHistory()) backendHistoryImages += toolQueue.images.size();
+		for (var checkpoint : toolQueue.checkpoints) messages.add(LlmChatMessage.user("REPORT REQUEST: " + checkpoint.arguments(), LlmMessageKind.NOTICE));
+		toolQueue.checkpoints.clear();
+		LlmConversation retained = contextAggregator.retainConversation(LlmConversation.of(messages));
+		toolQueue.reports.values().forEach(this::incorporateObservationResult);
 		toolQueue.reports.clear(); toolQueue.images.clear();
-		if (decisionContextSource == null) messages.add(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(queueState()), LlmMessageKind.NOTICE));
-		return LlmConversation.of(messages);
+		return decisionContextSource == null
+			? retained.withAppended(LlmChatMessage.user("TOOL QUEUE: " + GSON.toJson(queueState()), LlmMessageKind.NOTICE))
+			: retained;
 	}
 
 	private Map<String, Object> queueState() {
@@ -1083,7 +1121,6 @@ public final class PlannerOrchestrator {
 		state.put("workId", toolQueue.tools.activeWorkId());
 		state.put("pending", toolQueue.tools.pending().stream().map(PlannerOrchestrator::queuedCallView).toList());
 		state.put("aborting", toolQueue.abort != null);
-		if (toolQueue.tools.pending().isEmpty()) toolQueue.reviewedLoneCall = toolQueue.tools.active();
 		return state;
 	}
 
@@ -1526,6 +1563,7 @@ public final class PlannerOrchestrator {
 		}
 		LlmConversation completedToolConversation = toolOutcome.appendFollowUp(contextAggregator, followUpSnapshot, toolExecution.assistantRawContent(), toolExecution.toolCalls());
 		completedToolConversation = contextAggregator.retainConversation(completedToolConversation);
+		toolResults.forEach(this::incorporateObservationResult);
 		if (plannerExecutor.managesConversationHistory() && toolOutcome.hasImageAttachment()) backendHistoryImages++;
 		// Completed effects remain evidence even when safety invalidates the next decision.
 		boolean terminalTool = toolExecution.toolCalls().stream().anyMatch(call -> toolRegistry.endsTurn(call.name()))
@@ -1807,9 +1845,7 @@ public final class PlannerOrchestrator {
 
 	private void cancelPendingTool() {
 		toolQueue.tools.clear((call, workId) -> {});
-		toolQueue.loneCall = null;
-		toolQueue.reviewedLoneCall = null;
-		toolQueue.reports.clear(); toolQueue.images.clear();
+		toolQueue.reports.clear(); toolQueue.images.clear(); toolQueue.checkpoints.clear();
 		if (toolQueue.abort != null) toolQueue.abort.cancel(true);
 		toolQueue.abort = null;
 		if (pendingToolExecution != null) {

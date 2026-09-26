@@ -159,6 +159,30 @@ class DialogueRuntimeTest {
 	}
 
 	@Test
+	void stalledWorkAttentionWakesPlannerWhileWorkRemainsAccepted() {
+		BlockingLlmBackend backend = new BlockingLlmBackend();
+		DialogueRuntime runtime = newDialogueRuntime(backend);
+		SemanticEventBuffer events = new SemanticEventBuffer(32);
+		var work = new ai.moeru.airicraft.agent.work.WorkSnapshot(
+			ai.moeru.airicraft.agent.work.WorkHandle.of(ai.moeru.airicraft.agent.work.WorkHandle.Kind.JOB, "break"),
+			"", ai.moeru.airicraft.agent.work.WorkSnapshot.State.RUNNING, "BREAK_BLOCKS", "RUNNING", true, 10, java.util.Map.of());
+		runtime.observeAcceptedWork(work);
+		var watchdog = new ai.moeru.airicraft.agent.work.WorkProgressWatchdog(10);
+		var sample = new ai.moeru.airicraft.agent.work.WorkProgressWatchdog.Sample(0, 135, 0, java.util.Map.of(), false);
+		for (int tick = 0; tick <= 10; tick++) {
+			for (var notice : watchdog.observe(List.of(work), sample, true)) {
+				var event = events.append(tick, "task.notice", java.util.Map.of("reason", "work_stalled", "workId", notice.workId(),
+					"message", "Work is still running. Inspect and recover or continue trying."));
+				runtime.queueTaskAttention(tick, event.seqNo());
+			}
+		}
+		runtime.poll(11, events);
+		assertTrue(runtime.plannerDebugSnapshot().inFlight());
+		assertTrue(runtime.continuePlannerGoal(12, true, SessionSnapshot.initial(), null, Optional.empty(), null, null, events));
+		runtime.shutdown();
+	}
+
+	@Test
 	void slowMiningNoticeWakesPlannerDuringPolicy() {
 		BlockingLlmBackend backend = new BlockingLlmBackend();
 		DialogueRuntime runtime = newDialogueRuntime(backend);
@@ -779,6 +803,45 @@ class DialogueRuntimeTest {
 		assertTrue(runtime.lastResponse().orElseThrow().text().contains("@agent reset"));
 		assertEquals("planner_degraded_visible_reply", runtime.pendingReplyReason());
 		runtime.shutdown();
+	}
+
+	@Test
+	void hostedAutomaticResetExplainsTheAttemptWithoutAskingTestersToReset() {
+		String property = "airicraft.hostedPlaytestAutoReset";
+		String previous = System.getProperty(property);
+		System.setProperty(property, "true");
+		try {
+			OpenAiCompatibleLlmBackend backend = new OpenAiCompatibleLlmBackend(AgentConfig.LlmConfig.defaults());
+			DialogueRuntime runtime = newDialogueRuntime(backend);
+			SemanticEventBuffer eventBuffer = new SemanticEventBuffer(32);
+			try {
+				for (long tick = 1L; tick <= 3L; tick++) {
+					backend.injectTimeout();
+					runtime.onPlayerChat("Alice", "Hello?", tick, SessionSnapshot.initial(), "Alice", Optional.empty(), eventBuffer);
+					awaitFailureProcessed(runtime, eventBuffer, tick, Duration.ofSeconds(1));
+				}
+				assertTrue(runtime.isDegraded());
+				assertTrue(runtime.lastResponse().orElseThrow().text().contains("automatic reset"));
+				assertFalse(runtime.lastResponse().orElseThrow().text().contains("@agent reset"));
+
+				runtime.handleResetCommand("operator", "@agent reset", 50L, eventBuffer);
+				for (long tick = 51L; tick <= 53L; tick++) {
+					backend.injectTimeout();
+					runtime.onPlayerChat("Alice", "Hello again?", tick, SessionSnapshot.initial(), "Alice", Optional.empty(), eventBuffer);
+					awaitFailureProcessed(runtime, eventBuffer, tick - 50L, Duration.ofSeconds(1));
+				}
+				assertTrue(runtime.isDegraded());
+				assertTrue(runtime.lastResponse().orElseThrow().text().contains("won't reset again"));
+				assertFalse(runtime.lastResponse().orElseThrow().text().contains("@agent reset"));
+			}
+			finally {
+				runtime.shutdown();
+			}
+		}
+		finally {
+			if (previous == null) System.clearProperty(property);
+			else System.setProperty(property, previous);
+		}
 	}
 
 	@Test

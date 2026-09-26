@@ -6,6 +6,7 @@ import ai.moeru.airicraft.agent.observability.AgentObservability;
 import ai.moeru.airicraft.agent.observability.NoopObservability;
 import ai.moeru.airicraft.agent.observability.TraceSanitizer;
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
@@ -24,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class OpenAiCompatibleChatClient {
 	private static final Gson GSON = new Gson();
@@ -34,6 +36,7 @@ public final class OpenAiCompatibleChatClient {
 	private final PlannerToolRegistry toolRegistry;
 	private final String cacheKey;
 	private final String providerSessionId = java.util.UUID.randomUUID().toString();
+	private final AtomicReference<ProtocolState> protocolState = new AtomicReference<>(new ProtocolState(0, false));
 	private final HttpClient httpClient = HttpClient.newBuilder()
 		.version(HttpClient.Version.HTTP_1_1)
 		.build();
@@ -78,7 +81,7 @@ public final class OpenAiCompatibleChatClient {
 
 		URI uri;
 		try {
-			uri = buildUri();
+			uri = buildUri("chat/completions");
 		}
 		catch (LlmBackendException exception) {
 			observability.recordFailure(Context.current(), exception.failureType().name(), exception.getMessage(), exception);
@@ -86,18 +89,19 @@ public final class OpenAiCompatibleChatClient {
 		}
 
 		String requestBody = GSON.toJson(buildRequestPayload(conversation, options));
+		ProtocolState sessionProtocol = protocolState.get();
+		if (options.plannerTools() && sessionProtocol.anthropicMessages()) {
+			return completeAnthropic(conversation, requestBody, preview);
+		}
 		HttpResponse<String> response = sendHttpRequest(uri, conversation, requestBody, options.plannerTools(), preview);
+		if (options.plannerTools() && response.statusCode() == 400) {
+			Airicraft.LOGGER.info("Planner HTTP 400; trying Anthropic-compatible Messages for this session");
+			LlmCallResult<String> fallback = completeAnthropic(conversation, requestBody, preview);
+			protocolState.compareAndSet(sessionProtocol, new ProtocolState(sessionProtocol.epoch(), true));
+			return fallback;
+		}
 		if (response.statusCode() >= 400) {
-			String message = providerErrorMessage(response.statusCode(), response.body());
-			long retryAfter = response.statusCode() == 429
-				? retryAfterMillis(response.headers().firstValue("Retry-After").orElse(null), java.time.Instant.now()) : 0L;
-			observability.recordFailure(
-				Context.current(),
-				LlmFailureType.PROVIDER_ERROR.name(),
-				message,
-				null
-			);
-			throw new LlmBackendException(LlmFailureType.PROVIDER_ERROR, message, null, retryAfter);
+			throw providerError(response);
 		}
 		return LlmCallResult.of(
 			response.body(),
@@ -106,6 +110,43 @@ public final class OpenAiCompatibleChatClient {
 			responseModel(response.body()).orElse(config.model()),
 			requestBody
 		);
+	}
+
+	void resetProtocolMode() {
+		protocolState.updateAndGet(previous -> new ProtocolState(previous.epoch() + 1, false));
+	}
+
+	private record ProtocolState(long epoch, boolean anthropicMessages) {
+	}
+
+	private LlmCallResult<String> completeAnthropic(LlmConversation conversation, String chatRequestBody,
+		java.util.function.Consumer<String> preview) throws LlmBackendException {
+		String requestBody;
+		URI uri;
+		try {
+			requestBody = AnthropicMessagesCodec.requestBody(chatRequestBody);
+			uri = buildUri("messages");
+		} catch (JsonParseException | IllegalStateException exception) {
+			throw new LlmBackendException(LlmFailureType.PARSE_ERROR, "Cannot translate planner request to Messages", exception);
+		}
+		HttpResponse<String> response = sendHttpRequest(uri, conversation, requestBody, false, preview, true);
+		if (response.statusCode() >= 400) throw providerError(response);
+		String normalized;
+		try {
+			normalized = AnthropicMessagesCodec.chatCompletionResponse(response.body());
+		} catch (JsonParseException | IllegalStateException exception) {
+			throw new LlmBackendException(LlmFailureType.PARSE_ERROR, "Cannot translate Messages response", exception);
+		}
+		return LlmCallResult.of(normalized, parseUsage(normalized), response.statusCode(),
+			responseModel(normalized).orElse(config.model()), requestBody);
+	}
+
+	private LlmBackendException providerError(HttpResponse<String> response) {
+		String message = providerErrorMessage(response.statusCode(), response.body());
+		long retryAfter = response.statusCode() == 429
+			? retryAfterMillis(response.headers().firstValue("Retry-After").orElse(null), java.time.Instant.now()) : 0L;
+		observability.recordFailure(Context.current(), LlmFailureType.PROVIDER_ERROR.name(), message, null);
+		return new LlmBackendException(LlmFailureType.PROVIDER_ERROR, message, null, retryAfter);
 	}
 
 	static long retryAfterMillis(String header, java.time.Instant now) {
@@ -124,12 +165,12 @@ public final class OpenAiCompatibleChatClient {
 		}
 	}
 
-	private URI buildUri() throws LlmBackendException {
+	private URI buildUri(String path) throws LlmBackendException {
 		try {
 			String baseUrl = config.providerBaseUrl().endsWith("/")
 				? config.providerBaseUrl().substring(0, config.providerBaseUrl().length() - 1)
 				: config.providerBaseUrl();
-			return URI.create(baseUrl + "/chat/completions");
+			return URI.create(baseUrl + "/" + path);
 		}
 		catch (IllegalArgumentException exception) {
 			throw new LlmBackendException(LlmFailureType.PROVIDER_UNAVAILABLE, "Invalid LLM provider URL", exception);
@@ -137,6 +178,10 @@ public final class OpenAiCompatibleChatClient {
 	}
 
 	HttpRequest buildHttpRequest(URI uri, String requestBody) {
+		return buildHttpRequest(uri, requestBody, false);
+	}
+
+	private HttpRequest buildHttpRequest(URI uri, String requestBody, boolean anthropic) {
 		HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
 			.uri(uri)
 			.timeout(Duration.ofMillis(config.requestTimeoutMillis()))
@@ -145,8 +190,10 @@ public final class OpenAiCompatibleChatClient {
 		if ("opencode.ai".equalsIgnoreCase(uri.getHost())) {
 			requestBuilder.header("x-opencode-session", cacheKey == null || cacheKey.isBlank() ? providerSessionId : cacheKey);
 		}
+		if (anthropic) requestBuilder.header("anthropic-version", "2023-06-01");
 		if (config.apiKey() != null && !config.apiKey().isBlank()) {
-			requestBuilder.header("Authorization", "Bearer " + config.apiKey());
+			if (anthropic) requestBuilder.header("x-api-key", config.apiKey());
+			else requestBuilder.header("Authorization", "Bearer " + config.apiKey());
 		}
 		return requestBuilder
 			.POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
@@ -154,6 +201,11 @@ public final class OpenAiCompatibleChatClient {
 	}
 
 	private HttpResponse<String> sendHttpRequest(URI uri, LlmConversation conversation, String requestBody, boolean streaming, java.util.function.Consumer<String> preview) throws LlmBackendException {
+		return sendHttpRequest(uri, conversation, requestBody, streaming, preview, false);
+	}
+
+	private HttpResponse<String> sendHttpRequest(URI uri, LlmConversation conversation, String requestBody, boolean streaming,
+		java.util.function.Consumer<String> preview, boolean anthropic) throws LlmBackendException {
 		observability.recordLlmRequest(
 			Context.current(),
 			TraceSanitizer.inferProviderName(config.providerBaseUrl()),
@@ -170,7 +222,7 @@ public final class OpenAiCompatibleChatClient {
 			TraceSanitizer.summarizeForLog(TraceSanitizer.sanitizeRequestPayloadForTrace(requestBody))
 		);
 
-		HttpRequest httpRequest = buildHttpRequest(uri, requestBody);
+		HttpRequest httpRequest = buildHttpRequest(uri, requestBody, anthropic);
 
 		try {
 			HttpResponse<String> response;
@@ -266,7 +318,7 @@ public final class OpenAiCompatibleChatClient {
 			payload.put("tools", toolRegistry.openAiTools());
 			payload.put("tool_choice", "auto");
 		}
-		var messages = toolRegistry.references().presentMessages(canonicalRequestMessages(conversation));
+		var messages = toolRegistry.references().presentMessages(conversation);
 		if (options.equals(LlmRequestOptions.compaction())) {
 			// Bound the entire serialized history, including raw replay content. Work on a copy:
 			// the live transcript and tool-call/result pairs must survive compaction failure intact.
@@ -295,6 +347,13 @@ public final class OpenAiCompatibleChatClient {
 	}
 
 	public static List<Map<String, Object>> canonicalRequestMessages(LlmConversation conversation) {
+		Objects.requireNonNull(conversation, "conversation");
+		return canonicalRequestEntries(conversation).stream().map(RequestMessage::wire).toList();
+	}
+
+	static record RequestMessage(Map<String, Object> wire, JsonElement fields) {}
+
+	static List<RequestMessage> canonicalRequestEntries(LlmConversation conversation) {
 		Objects.requireNonNull(conversation, "conversation");
 		return compactRequestMessages(conversation.messages());
 	}
@@ -332,15 +391,17 @@ public final class OpenAiCompatibleChatClient {
 		return payload;
 	}
 
-	private static List<Map<String, Object>> compactRequestMessages(List<LlmChatMessage> messages) {
-		ArrayList<Map<String, Object>> compacted = new ArrayList<>();
+	private static List<RequestMessage> compactRequestMessages(List<LlmChatMessage> messages) {
+		ArrayList<RequestMessage> compacted = new ArrayList<>();
 		for (LlmChatMessage message : messages) {
 			Map<String, Object> requestMessage = toRequestMessage(message);
-			if (!compacted.isEmpty() && shouldMergeUserMessage(compacted.getLast(), requestMessage)) {
-				compacted.set(compacted.size() - 1, mergeUserMessages(compacted.getLast(), requestMessage));
+			if (!compacted.isEmpty() && compacted.getLast().fields() == null && message.fields() == null
+				&& shouldMergeUserMessage(compacted.getLast().wire(), requestMessage)) {
+				compacted.set(compacted.size() - 1, new RequestMessage(mergeUserMessages(compacted.getLast().wire(), requestMessage), null));
 				continue;
 			}
-			compacted.add(requestMessage);
+			compacted.add(new RequestMessage(requestMessage,
+				message.rawContentOverride() == null ? message.fields() : null));
 		}
 		return List.copyOf(compacted);
 	}

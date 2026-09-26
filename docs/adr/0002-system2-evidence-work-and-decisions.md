@@ -35,6 +35,16 @@ delegation and may return its outcome, not finish the overall objective. Objecti
 have an explicit blocked state distinct from failed attempts, yielded turns and terminal
 outcomes. Constraints and named decisions are stored separately from observations.
 
+The current goal and its constraints/completion criteria are carried in a user-role
+message when establishing planner context and when that intent changes. Runtime
+notifications, including death and respawn, remain observation tool results. Death
+cancels physical actions and gates new actuation until respawn, but preserves the
+planner conversation, pending replies, and delegation. Explicit reset and world
+changes still own conversation resets. Provider completions containing neither
+visible text nor tool calls are parse failures, subject to the existing bounded
+repair/failure policy; they must not count as successful goal-continuation turns.
+
+
 Decision ownership is separate from actuator ownership. Reflexes gate physical actions
 but allow bounded, event-driven inspection and policy changes by the active model role.
 Do not add a continuous position controller or change model/effort settings.
@@ -66,7 +76,7 @@ Work history retains128 terminal entries plus unresolved work. Ordinary decision
 
 ### Compact planner presentation (2026-09-14)
 
-The OpenAI-compatible request boundary presents UUID-bearing native identities as short opaque references such as @r12. Controller, thinker and compactor share one reference table while keeping separate histories/cache prefixes. Tool ID arguments resolve before existing parsing, ownership and exact work/hold validation. Native executor IDs, persisted goals, recorder events and protocol tool-call/result pairing remain unchanged. Known references in planning-note fields are restored before persistence. User narration is not rewritten on input.
+The OpenAI-compatible request boundary presents UUID-bearing native identity fields as short opaque references such as @r12. Controller, thinker and compactor share one reference table while keeping separate histories/cache prefixes. Tool ID arguments resolve before existing parsing, ownership and exact work/hold validation. Native executor IDs, persisted goals, recorder events and protocol tool-call/result pairing remain unchanged. Known references in planning-note fields are restored before persistence. Unstructured prose is not searched or rewritten; observations, JSON tool results and delegated system triggers retain typed fields in the canonical chronicle and receive field-specific presentation for the model.
 
 The table retains8192 mappings. Evicted/unknown references fail closed and require fresh inspection; numbers are never reassigned within the client process. They are session presentation, not durable world IDs. Existing response freshness checks and native work validation still gate actuation. Request text encoding does not alter images or role schema prefixes.
 

@@ -26,6 +26,7 @@ public final class PlannerContextAggregator {
 	private final PlannerVisionMode visionMode;
 	private final PlannerToolRegistry toolRegistry;
 	private final boolean backendManagedHistory;
+	private final String characterPrompt;
 	private final SemanticContextProjector semanticContextProjector = new SemanticContextProjector();
 
 	private String fixedSystemPrompt;
@@ -64,6 +65,19 @@ public final class PlannerContextAggregator {
 		PlannerToolRegistry toolRegistry,
 		boolean backendManagedHistory
 	) {
+		this(clock, compactionTriggerTokens, pendingSemanticEventCap, visionMode, toolRegistry, backendManagedHistory, null);
+	}
+
+	/** A null character prompt uses the built-in character without an in-game name. */
+	public PlannerContextAggregator(
+		Clock clock,
+		int compactionTriggerTokens,
+		int pendingSemanticEventCap,
+		PlannerVisionMode visionMode,
+		PlannerToolRegistry toolRegistry,
+		boolean backendManagedHistory,
+		String characterPrompt
+	) {
 		this.clock = Objects.requireNonNull(clock, "clock");
 		this.zoneId = clock.getZone();
 		this.compactionTriggerTokens = compactionTriggerTokens;
@@ -71,6 +85,7 @@ public final class PlannerContextAggregator {
 		this.visionMode = Objects.requireNonNull(visionMode, "visionMode");
 		this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
 		this.backendManagedHistory = backendManagedHistory;
+		this.characterPrompt = characterPrompt;
 	}
 
 	public boolean compactionPending() {
@@ -522,8 +537,8 @@ public final class PlannerContextAggregator {
 	}
 
 	private String systemPrompt() {
-		if (!toolRegistry.hasFixedPrefix()) return PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry);
-		if (fixedSystemPrompt == null) fixedSystemPrompt = PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry);
+		if (!toolRegistry.hasFixedPrefix()) return PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry, characterPrompt);
+		if (fixedSystemPrompt == null) fixedSystemPrompt = PlannerPromptPolicy.systemPrompt(visionMode, toolRegistry, characterPrompt);
 		return fixedSystemPrompt;
 	}
 
@@ -631,14 +646,14 @@ public final class PlannerContextAggregator {
 
 	private static LlmChatMessage renderAcceptedHistoryEntry(PlannerContextEntry entry, long anchorTimeMs) {
 		return switch (entry.type()) {
-			case USER_TURN -> LlmChatMessage.user(entry.text(), LlmMessageKind.USER_TURN);
+			case USER_TURN -> LlmChatMessage.user(entry.text(), LlmMessageKind.USER_TURN, entry.fields());
 			case ASSISTANT_TURN -> LlmChatMessage.assistant(entry.text(), entry.rawAssistantContent());
 				case TOOL_REQUEST -> entry.toolCalls().isEmpty()
 					? LlmChatMessage.assistant(entry.text(), entry.rawAssistantContent())
 					: LlmChatMessage.assistantToolCalls(entry.text(), entry.toolCalls(), entry.rawAssistantContent());
 				case TOOL_RESULT -> entry.toolCall() == null
-					? LlmChatMessage.user(entry.text(), LlmMessageKind.TOOL_RESULT)
-					: LlmChatMessage.tool(entry.toolCall().id(), toolResultContent(entry.text()));
+					? LlmChatMessage.user(entry.text(), LlmMessageKind.TOOL_RESULT, entry.fields())
+					: LlmChatMessage.tool(entry.toolCall().id(), toolResultContent(entry.text()), entry.fields());
 				case NOTICE -> ContextMessageRenderer.renderEntry(entry, anchorTimeMs);
 			};
 		}

@@ -52,6 +52,35 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlannerOrchestratorTest {
+	@Test void autonomousConversationCarriesGoalAsUserAndEventsAsToolResults() throws Exception {
+		var backend = new RecordingBackend();
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), PlannerVisionMode.EXTERNAL_SUMMARY, 3, Clock.systemUTC());
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		events.append(10, "player.died", Map.of("reason", "zombie"));
+		var objective = new AtomicReference<>("Gather wood");
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10,
+			"controller", "idle", Map.of("objective", Map.of("objective", objective.get(), "constraints", "Preserve camp")), events.query(null)));
+		try {
+			for (int turn = 0; turn < 4; turn++) {
+				if (turn == 2) objective.set("Craft a shield");
+				if (turn == 3) orchestrator.reset();
+				var request = requestAt(10L + turn, 1000L + turn * 1000, "self", "continue")
+					.withTriggerBatch(PlannerTriggerBatch.of(List.of(PlannerTrigger.autonomous(
+						PlannerTriggerType.SYSTEM, "self", "GOAL CONTINUATION", 10L + turn, 1000L + turn * 1000, "planner_goal"))));
+				orchestrator.submit(request);
+				backend.awaitCalls(turn + 1, Duration.ofSeconds(1));
+				var messages = backend.conversation(turn).messages();
+				assertEquals(1, messages.stream().filter(m -> "user".equals(m.role()) && m.content().contains(objective.get())).count());
+				assertTrue(messages.stream().anyMatch(m -> "user".equals(m.role()) && m.content().contains("Preserve camp")));
+				assertTrue(messages.stream().anyMatch(m -> "tool".equals(m.role()) && m.content().contains("player.died")));
+				assertFalse(messages.stream().anyMatch(m -> "user".equals(m.role()) && (m.content().contains("player.died") || m.content().contains("GOAL CONTINUATION"))));
+				backend.succeed(turn, replyOnly("Ready"));
+				awaitResult(orchestrator);
+				orchestrator.onAcceptedReplyRecorded();
+			}
+		} finally { orchestrator.shutdown(); }
+	}
+
 	@org.junit.jupiter.params.ParameterizedTest
 	@org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
 	void microCompactionDoesNotBlockPlanningAndReplacesFutureContext(boolean noFinding) {
@@ -206,7 +235,7 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
-	void fifoAdvancesAndCoalescesWhilePlannerIsStillThinking() throws Exception {
+	void fifoWaitsForCheckpointOrEmptyInsteadOfIntermediateCompletions() throws Exception {
 		var backend = new RecordingBackend();
 		var executed = new ArrayList<String>();
 		var futures = new java.util.HashMap<String, CompletableFuture<String>>();
@@ -234,6 +263,10 @@ class PlannerOrchestratorTest {
 			futures.get("B").complete("B done"); orchestrator.poll();
 			futures.get("C").complete("C done"); orchestrator.poll();
 			assertEquals(List.of("A", "B", "C", "D"), executed);
+			long quietDeadline = System.nanoTime() + Duration.ofMillis(1200).toNanos();
+			while (System.nanoTime() < quietDeadline) { orchestrator.poll(); Thread.sleep(5); }
+			assertEquals(1, backend.callCount(), "Intermediate results cannot wake the planner");
+			futures.get("D").complete("D done");
 			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
 			String review = conversationText(backend.conversation(1));
 			assertTrue(review.contains("B done")); assertTrue(review.contains("C done"));
@@ -249,7 +282,7 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
-	void loneSlowCallRequestsPlanningAheadOnlyOnce() throws Exception {
+	void loneSlowCallWaitsForCompletionWithoutCheckpoint() throws Exception {
 		var backend = new RecordingBackend();
 		var started = new java.util.concurrent.atomic.AtomicBoolean();
 		var future = new CompletableFuture<String>();
@@ -270,16 +303,13 @@ class PlannerOrchestratorTest {
 			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
 			assertTrue(started.get());
 			assertEquals(1, backend.callCount(), "Give quick calls time to finish");
-			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
-			assertFalse(future.isDone(), "Plan ahead while execution continues");
-			assertTrue(conversationText(backend.conversation(1)).contains("assuming it succeeds"));
-			backend.succeed(1, PlannerResponse.toolCalls(List.of(new PlannerToolCall("skip", "continue", new JsonObject(), null, null)), null));
 			deadline = System.nanoTime() + Duration.ofMillis(1200).toNanos();
 			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
-			assertEquals(2, backend.callCount(), "Do not repeatedly request planning for the same running call");
+			assertEquals(1, backend.callCount(), "No routine refill before a checkpoint or FIFO exhaustion");
+			assertFalse(future.isDone());
 			future.complete("finished mining");
-			awaitBackendCallCount(orchestrator, backend, 3, Duration.ofSeconds(2));
-			assertTrue(conversationText(backend.conversation(2)).contains("finished mining"));
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			assertTrue(conversationText(backend.conversation(1)).contains("finished mining"));
 		} finally { orchestrator.shutdown(); }
 	}
 
@@ -315,6 +345,134 @@ class PlannerOrchestratorTest {
 	}
 
 	@Test
+	void clearingExecutedObservationPreservesUndeliveredEvents() throws Exception {
+		var backend = new RecordingBackend();
+		var read = new CompletableFuture<String>();
+		var provider = new PlannerToolProvider() {
+			public String id() { return "observation_cancellation_fixture"; }
+			public boolean handles(String name) { return name.equals("inspect_fixture"); }
+			public List<Map<String, Object>> openAiTools() {
+				return List.of(PlannerToolCatalog.toolForProvider("inspect_fixture", "Inspect", Map.of(), List.of()));
+			}
+			public CompletableFuture<String> execute(PlannerToolCall call) { return read; }
+		};
+		var registry = PlannerToolRegistry.of(provider,
+			new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("cleared")));
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		var tick = new java.util.concurrent.atomic.AtomicLong(10);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", tick.get(), tick.get(),
+			"controller", "idle", Map.of(), events.query(null)));
+		try {
+			orchestrator.submit(requestAt(10, 500, "Alice", "Inspect the area"));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("read", "inspect_fixture", new JsonObject(), null, null),
+				new PlannerToolCall("observe", PlannerToolCatalog.OBSERVE, new JsonObject(), null, null)), null));
+			backend.awaitCompletions(1, Duration.ofSeconds(1));
+			orchestrator.poll();
+			orchestrator.tickToolQueue();
+			tick.set(20);
+			orchestrator.submit(requestAt(20, 1000, "Alice", "Cancel the plan"));
+			backend.awaitCalls(2, Duration.ofSeconds(1));
+			backend.succeed(1, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("clear", "clear_queue", new JsonObject(), null, null)), null));
+			backend.awaitCompletions(2, Duration.ofSeconds(1));
+			// The read finishes between DialogueRuntime's queue tick and PlannerOrchestrator.poll's queue tick.
+			orchestrator.tickToolQueue();
+			tick.set(30);
+			events.append(30, "task.failed", Map.of("workId", "wood-job", "failure", "search_exhausted"));
+			read.complete("Inspection complete");
+			orchestrator.poll(); // Dispatch observe, then accept clear_queue before collecting the observation.
+			tick.set(40);
+			orchestrator.recordEvents(events.query(null), 2000);
+			orchestrator.submit(requestAt(40, 2000, "Alice", "What happened?"));
+			backend.awaitCalls(3, Duration.ofSeconds(1));
+			var conversation = backend.conversation(2);
+			assertTrue(conversation.messages().stream().anyMatch(message -> "observe".equals(message.toolCallId())
+				&& message.content().contains("Cancelled by clear_queue")));
+			var observation = PlannerObservation.latestPayload(conversation.messages()).orElseThrow();
+			assertEquals(0, observation.get("afterEventSequence").getAsLong());
+			assertEquals(1, observation.getAsJsonArray("events").size());
+			assertEquals("search_exhausted", observation.getAsJsonArray("events").get(0).getAsJsonObject()
+				.getAsJsonObject("payload").get("failure").getAsString());
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void queuedObservationCommitsItsCursorOnlyWhenDelivered() throws Exception {
+		var backend = new RecordingBackend();
+		var slow = new PlannerToolProvider() {
+			public String id() { return "slow_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return new CompletableFuture<>(); }
+		};
+		var registry = PlannerToolRegistry.of(slow, new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("retained")));
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10,
+			"controller", "idle", Map.of(), events.query(null)));
+		try {
+			orchestrator.submit(requestAt(10, 500, "Alice", "Observe"));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("observe", PlannerToolCatalog.OBSERVE, new JsonObject(), null, null),
+				new PlannerToolCall("slow", "mine_blocks", new JsonObject(), null, null)), null));
+			backend.awaitCompletions(1, Duration.ofSeconds(1));
+			orchestrator.poll();
+			events.append(11, "task.failed", Map.of("failure", "search_exhausted"));
+			orchestrator.tickToolQueue();
+			assertFalse(orchestrator.hasIncorporatedDecisionEvent(1), "Executing observe does not deliver its evidence");
+			orchestrator.tickToolQueue();
+			assertFalse(orchestrator.hasIncorporatedDecisionEvent(1), "A buffered result is not yet in conversation history");
+			orchestrator.recordEvents(events.query(null), 1000);
+			orchestrator.submit(requestAt(20, 1000, "Alice", "What happened?"));
+			backend.awaitCalls(2, Duration.ofSeconds(1));
+			var conversation = backend.conversation(1);
+			assertTrue(orchestrator.hasIncorporatedDecisionEvent(1));
+			assertEquals(1, conversation.messages().stream().filter(message -> message.content().contains("search_exhausted")).count());
+			var latest = PlannerObservation.latestPayload(conversation.messages()).orElseThrow();
+			assertEquals(1, latest.get("afterEventSequence").getAsLong());
+			assertTrue(latest.getAsJsonArray("events").isEmpty(), "Delivered observe results must not be repeated");
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
+	void checkpointFilteringPreservesObservationEvidence() throws Exception {
+		var backend = new RecordingBackend();
+		var slow = new PlannerToolProvider() {
+			public String id() { return "slow_fixture"; }
+			public boolean handles(String name) { return name.equals("mine_blocks"); }
+			public List<Map<String, Object>> openAiTools() { return List.of(PlannerToolCatalog.toolForProvider("mine_blocks", "Mine", Map.of(), List.of())); }
+			public CompletableFuture<String> execute(PlannerToolCall call) { return new CompletableFuture<>(); }
+		};
+		var registry = PlannerToolRegistry.of(slow, new PlannerQueueToolProvider(call -> CompletableFuture.completedFuture("retained")));
+		var orchestrator = newOrchestrator(backend, CurrentViewVisionTool.disabled(), CurrentInventoryTool.disabled(),
+			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
+		var events = new ai.moeru.airicraft.agent.events.SemanticEventBuffer(8);
+		orchestrator.configureDecisionContext(() -> new PlannerDecisionContext("world", 10, 10,
+			"controller", "idle", Map.of(), events.query(null)));
+		try {
+			orchestrator.submit(requestAt(10, 500, "Alice", "Observe"));
+			backend.awaitCalls(1, Duration.ofSeconds(1));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(
+				new PlannerToolCall("observe", PlannerToolCatalog.OBSERVE, new JsonObject(), null, null),
+				new PlannerToolCall("checkpoint", "report_to_me", JsonParser.parseString("{\"includeTools\":[]}").getAsJsonObject(), null, null),
+				new PlannerToolCall("slow", "mine_blocks", new JsonObject(), null, null)), null));
+			backend.awaitCompletions(1, Duration.ofSeconds(1));
+			orchestrator.poll();
+			events.append(11, "task.failed", Map.of("failure", "search_exhausted"));
+			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
+			var conversation = backend.conversation(1);
+			assertTrue(conversationText(conversation).contains("search_exhausted"), "Filtering must not acknowledge unseen observation evidence");
+			assertTrue(orchestrator.hasIncorporatedDecisionEvent(1));
+		} finally { orchestrator.shutdown(); }
+	}
+
+	@Test
 	void clearQueueAbortsActiveCallAndWaitsForAbortBeforeReplacement() throws Exception {
 		var backend = new RecordingBackend();
 		var executed = new ArrayList<String>();
@@ -335,12 +493,16 @@ class PlannerOrchestratorTest {
 			PlannerVisionMode.EXTERNAL_SUMMARY, registry, PlannerActionToolExecutor.DISABLED);
 		try {
 			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
-			backend.succeed(0, PlannerResponse.toolCalls(List.of("A", "B", "C").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList(), null));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(new PlannerToolCall("A", "mine_blocks", new JsonObject(), null, null), new PlannerToolCall("checkpoint", "report_to_me", JsonParser.parseString("{\"question\":\"Should we replace this plan?\",\"includeTools\":[]}").getAsJsonObject(), null, null), new PlannerToolCall("B", "mine_blocks", new JsonObject(), null, null), new PlannerToolCall("C", "mine_blocks", new JsonObject(), null, null)), null));
 			long deadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
 			while (executed.isEmpty() && System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
-			futures.get("A").complete("done");
+			futures.get("A").complete("PRIVATE_A_OUTPUT");
 			awaitBackendCallCount(orchestrator, backend, 2, Duration.ofSeconds(2));
 			assertEquals(List.of("A", "B"), executed);
+			String report = conversationText(backend.conversation(1));
+			assertTrue(report.contains("Should we replace this plan?"));
+			assertTrue(report.contains("Output omitted by report_to_me"));
+			assertFalse(report.contains("PRIVATE_A_OUTPUT"));
 			backend.succeed(1, PlannerResponse.toolCalls(List.of(
 				new PlannerToolCall("clear", "clear_queue", new JsonObject(), null, null),
 				new PlannerToolCall("E", "mine_blocks", new JsonObject(), null, null)), null));
@@ -377,7 +539,7 @@ class PlannerOrchestratorTest {
 			Map.of("work", List.of(Map.of("workId", "JOB:A", "state", workState.get()))), events.query(null)));
 		try {
 			orchestrator.submit(baseRequest(null)); backend.awaitCalls(1, Duration.ofSeconds(1));
-			backend.succeed(0, PlannerResponse.toolCalls(List.of("A", "B").stream().map(id -> new PlannerToolCall(id, "mine_blocks", new JsonObject(), null, null)).toList(), null));
+			backend.succeed(0, PlannerResponse.toolCalls(List.of(new PlannerToolCall("A", "mine_blocks", new JsonObject(), null, null), new PlannerToolCall("checkpoint", "report_to_me", new JsonObject(), null, null), new PlannerToolCall("B", "mine_blocks", new JsonObject(), null, null)), null));
 			long deadline = System.nanoTime() + Duration.ofMillis(400).toNanos();
 			while (System.nanoTime() < deadline) { orchestrator.poll(); Thread.sleep(5); }
 			assertEquals(List.of("A"), executed); assertEquals(1, backend.callCount());
