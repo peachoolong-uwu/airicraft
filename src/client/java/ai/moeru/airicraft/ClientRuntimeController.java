@@ -183,7 +183,7 @@ public final class ClientRuntimeController {
 	}
 
 	public void onWorldLeave() {
-		screenshotService.failActiveCapture("capture_failed", "Screenshot capture was interrupted");
+		automaticPlaytest.worldLeft("world_left");
 		worldCameraService.clear();
 		ai.moeru.airicraft.agent.memory.WorldPlacePreservation.clear();
 		dashboardObservationCollector.worldLeft();

@@ -15,10 +15,10 @@ public class MinecraftClientTickDebugMixin {
 		value = "INVOKE", target = "Lnet/minecraft/client/MinecraftClient;tick()V"
 	))
 	private boolean airicraft$gateClientTick(MinecraftClient client) {
-		// During world join the interaction manager exists before the player
-		// entity; vanilla skips tick() in that window, so we must too.
+		// Tick debugging only applies in-world. Menus, the connect screen and
+		// Fabric tick events must keep running when there is no player.
 		if (client.player == null) {
-			return false;
+			return true;
 		}
 		return AiricraftClient.runtimeController().clientTickDebugRuntime().beginClientTick();
 	}

@@ -180,6 +180,7 @@ public final class ModBridgeServer {
 			httpServer.createContext("/v1/servers", this::handleServers);
 			httpServer.createContext("/v1/servers/join", this::handleJoinServer);
 			httpServer.createContext("/v1/focus", exchange -> handleJson(exchange, this::createFocusResponse));
+			httpServer.createContext("/v1/player/nearby-entities", exchange -> handleJson(exchange, this::createNearbyEntitiesResponse));
 			httpServer.createContext("/v1/camera/screenshot", this::handleCameraScreenshot);
 			httpServer.createContext("/v1/camera/tactical", this::handleCameraTactical);
 			httpServer.createContext("/v1/camera/inspect-region", this::handleCameraInspectRegion);
