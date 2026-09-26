@@ -38,17 +38,20 @@ public final class AutomaticPlaytestRuntime {
 	private final HostedEmptyPause emptyPause = new HostedEmptyPause();
 	private volatile String hostingCompanionUuid;
 	private volatile boolean emptyHostPaused;
+	private volatile boolean hostingStartupFinished;
 
 	/** Runs on the server thread; frozen simulation still processes joins and disconnects. */
 	public void onHostedServerTick(net.minecraft.server.MinecraftServer server) {
 		String companion = hostingCompanionUuid;
 		boolean empty = hosted() && companion != null && server.isRemote()
 			&& server.getPlayerManager().getPlayerList().stream().allMatch(p -> p.getUuidAsString().equals(companion));
-		switch (emptyPause.update(empty, server.getTickManager().isFrozen())) {
+		boolean startupFinished = hostingStartupFinished;
+		switch (emptyPause.update(empty, server.getTickManager().isFrozen(), startupFinished)) {
 			case FREEZE -> server.getTickManager().setFrozen(true);
 			case RESUME -> server.getTickManager().setFrozen(false);
 			case NONE -> { }
 		}
+		empty = empty && startupFinished;
 		if (emptyHostPaused != empty) Airicraft.LOGGER.info("Hosted empty-player pause: {}", empty);
 		emptyHostPaused = empty;
 	}
@@ -73,6 +76,9 @@ public final class AutomaticPlaytestRuntime {
 		if (!enabled()) return;
 		configurePresentation(client);
 		if (client.world == null || client.getServer() == null) return;
+		// World/player objects exist before DownloadingTerrainScreen finishes ticking.
+		// Latch readiness only once the client has actually reached the game screen.
+		if (hosted() && client.player != null && client.currentScreen == null) hostingStartupFinished = true;
 		try {
 			if (state == State.IDLE) {
 				if (client.player == null) return;
@@ -239,6 +245,7 @@ public final class AutomaticPlaytestRuntime {
 
 	public void worldLeft(String reason) {
 		hostingCompanionUuid = null;
+		hostingStartupFinished = false;
 		emptyHostPaused = false;
 		// This mode has one run per process. Keep its pause through disconnect/server save.
 		if (captureReady() || state == State.FINISHED || recording == null) return;

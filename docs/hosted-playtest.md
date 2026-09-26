@@ -82,8 +82,10 @@ The launcher, the tester presence and planner-recovery rules, multi-Play publica
 
 ## Empty-host pause
 
-Hosted mode automatically pauses when no players other than the companion are
-connected. World simulation and client/Baritone/planner ticks stop; networking
+Hosted mode waits until the companion has reached the game screen before enabling
+the empty-host pause. This startup grace has no fixed timeout: loading-screen ticks
+continue until terrain loading finishes. After startup, hosted mode automatically
+pauses when no players other than the companion are connected. World simulation and client/Baritone/planner ticks stop; networking
 continues so testers can still join. The next tester connection resumes the
 retained work, and the last tester disconnect pauses it again. Bridge status
 reports `automaticPlaytest.pausedForNoTesters`. The host only releases a server
