@@ -51,6 +51,8 @@ import ai.moeru.airicraft.agent.tasks.LedgerStepKind;
 import ai.moeru.airicraft.agent.tasks.LedgerStepPayload;
 import ai.moeru.airicraft.agent.tasks.LedgerStepStatus;
 import ai.moeru.airicraft.agent.tasks.MissionType;
+import ai.moeru.airicraft.agent.tasks.MiningOpportunityJournal;
+import ai.moeru.airicraft.agent.tasks.MiningOpportunityPolicyState;
 import ai.moeru.airicraft.agent.tasks.ReturnToSurfaceStepArgs;
 import ai.moeru.airicraft.agent.tasks.SmeltItemsStepArgs;
 import ai.moeru.airicraft.agent.tasks.SmeltingFuelMode;
@@ -79,6 +81,7 @@ import ai.moeru.airicraft.agent.tasks.StepExecutionResult;
 import ai.moeru.airicraft.agent.tasks.StepExecutionStatus;
 import ai.moeru.airicraft.agent.llm.PlannerToolCall;
 import ai.moeru.airicraft.agent.llm.PlannerToolCatalog;
+import ai.moeru.airicraft.agent.llm.PlannerInputText;
 import ai.moeru.airicraft.agent.llm.PlannerTrigger;
 import ai.moeru.airicraft.agent.llm.PlannerTriggerType;
 import com.google.gson.JsonParser;
@@ -104,6 +107,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EmbodiedAgentRuntimeTest {
+	@Test void optionalMiningObservationReachesNextPlannerDecisionContext() {
+		var config = AgentConfig.defaults();
+		var journal = new MiningOpportunityJournal();
+		var runtime = new EmbodiedAgentRuntime(AiricraftConfig.defaults(), config,
+			new FirstPersonScreenshotService(), new FakeWorldTaskExecutor(),
+			ai.moeru.airicraft.agent.observability.AgentObservability.create(config.observability()),
+			new ai.moeru.airicraft.agent.tasks.SmeltingProcessManager(),
+			new ai.moeru.airicraft.agent.control.CameraController(), null,
+			new MiningOpportunityPolicyState(), journal);
+		try {
+			runtime.overrideSessionSnapshotForTests(loadedRemoteSession());
+			journal.record(new MiningOpportunityJournal.Notice("iron-task", "iron-job",
+				List.of("minecraft:iron_ore"), "minecraft:coal_ore", List.of("minecraft:coal"), new GoalPosition(7, 62, 22, true),
+				false, MiningOpportunityJournal.Stage.BROKEN, 0, null));
+			runtime.onClientTick(null);
+			String context = ai.moeru.airicraft.agent.llm.PlannerObservation.render(runtime.currentPlannerDecisionContext().observation(0));
+			assertTrue(context.contains("task.mining_opportunity"), context);
+			assertTrue(context.contains("minecraft:coal_ore"), context);
+			assertTrue(context.contains("minecraft:coal"), context);
+			assertTrue(context.contains("iron-task"), context);
+			assertTrue(context.contains("side_ore_detour"), context);
+			assertTrue(context.contains("\"x\":7"), context);
+			String presented = PlannerInputText.message("user", context);
+			assertTrue(presented.contains("minecraft:coal_ore"), presented);
+			assertTrue(presented.contains("side_ore_detour"), presented);
+		} finally { runtime.shutdown(); }
+	}
+
 	private static void assertTaskEvidence(EmbodiedAgentRuntime runtime, String type, Map<String, String> expected) {
 		var matching = runtime.recentEvents(null).events().stream().filter(event -> type.equals(event.type()))
 			.filter(event -> expected.entrySet().stream().allMatch(entry -> entry.getValue().equals(String.valueOf(event.payload().get(entry.getKey())))))
@@ -262,6 +293,21 @@ class EmbodiedAgentRuntimeTest {
 			String reset = runtime.execute(PlannerToolCatalog.parseToolCall("configure_food", new com.google.gson.JsonObject(),
 				ai.moeru.airicraft.agent.llm.PlannerToolRegistry.empty())).join();
 			assertTrue(reset.contains("goal=MOVEMENT"), reset);
+		}
+		finally { runtime.shutdown(); }
+	}
+
+	@Test
+	void plannerCanBoundOpportunisticMining() {
+		var runtime = EmbodiedAgentRuntime.createForTests(new FakeWorldTaskExecutor());
+		try {
+			var settings = com.google.gson.JsonParser.parseString("""
+				{"enabled":false,"maxExtraBlocks":4,"maxExtraTicks":160}
+				""").getAsJsonObject();
+			String result = runtime.execute(PlannerToolCatalog.parseToolCall("configure_opportunistic_mining", settings,
+				ai.moeru.airicraft.agent.llm.PlannerToolRegistry.empty())).join();
+			assertTrue(result.contains("enabled=false"));
+			assertTrue(result.contains("maxExtraBlocks=4"));
 		}
 		finally { runtime.shutdown(); }
 	}

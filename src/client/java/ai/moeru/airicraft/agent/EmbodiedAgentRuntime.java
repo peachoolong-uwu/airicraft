@@ -141,6 +141,9 @@ import ai.moeru.airicraft.agent.tasks.LedgerStepKind;
 import ai.moeru.airicraft.agent.tasks.MissionExecutionSnapshot;
 import ai.moeru.airicraft.agent.tasks.NearbyEntityService;
 import ai.moeru.airicraft.agent.tasks.ResourceGatheringCatalog;
+import ai.moeru.airicraft.agent.tasks.MiningOpportunityPolicy;
+import ai.moeru.airicraft.agent.tasks.MiningOpportunityPolicyState;
+import ai.moeru.airicraft.agent.tasks.MiningOpportunityJournal;
 import ai.moeru.airicraft.agent.tasks.TaskResourceKind;
 import ai.moeru.airicraft.agent.tasks.TaskSnapshot;
 import ai.moeru.airicraft.agent.tasks.BlockBreakStepArgs;
@@ -266,6 +269,8 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 	private final ActionGraphCoordinator actionGraphCoordinator;
 	private final SurvivalReflexRuntime survivalReflexRuntime;
 	private final LightingRuntime lightingRuntime = new LightingRuntime();
+	private final MiningOpportunityPolicyState miningOpportunityPolicy;
+	private final MiningOpportunityJournal miningOpportunityJournal;
 	private final PlayerItemUseController playerItemUseController = new PlayerItemUseController();
 	private final FoodRuntime foodRuntime = new FoodRuntime();
 	private final SurvivalReflexRuntime.CombatEating combatEating = new SurvivalReflexRuntime.CombatEating() {
@@ -346,8 +351,41 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		CameraController cameraController,
 		BaritoneFacade baritoneFacade
 	) {
+		this(airicraftConfig, config, screenshotService, worldTaskExecutor, observability,
+			smeltingProcessManager, cameraController, baritoneFacade, new MiningOpportunityPolicyState(), new MiningOpportunityJournal());
+	}
+
+	public EmbodiedAgentRuntime(
+		AiricraftConfig airicraftConfig,
+		AgentConfig config,
+		FirstPersonScreenshotService screenshotService,
+		WorldTaskExecutor worldTaskExecutor,
+		AgentObservability observability,
+		SmeltingProcessManager smeltingProcessManager,
+		CameraController cameraController,
+		BaritoneFacade baritoneFacade,
+		MiningOpportunityPolicyState miningOpportunityPolicy
+	) {
+		this(airicraftConfig, config, screenshotService, worldTaskExecutor, observability,
+			smeltingProcessManager, cameraController, baritoneFacade, miningOpportunityPolicy, new MiningOpportunityJournal());
+	}
+
+	public EmbodiedAgentRuntime(
+		AiricraftConfig airicraftConfig,
+		AgentConfig config,
+		FirstPersonScreenshotService screenshotService,
+		WorldTaskExecutor worldTaskExecutor,
+		AgentObservability observability,
+		SmeltingProcessManager smeltingProcessManager,
+		CameraController cameraController,
+		BaritoneFacade baritoneFacade,
+		MiningOpportunityPolicyState miningOpportunityPolicy,
+		MiningOpportunityJournal miningOpportunityJournal
+	) {
 		this.airicraftConfig = Objects.requireNonNull(airicraftConfig, "airicraftConfig");
 		this.config = Objects.requireNonNull(config, "config");
+		this.miningOpportunityPolicy = Objects.requireNonNull(miningOpportunityPolicy, "miningOpportunityPolicy");
+		this.miningOpportunityJournal = Objects.requireNonNull(miningOpportunityJournal, "miningOpportunityJournal");
 		this.codexDriverActive = Boolean.getBoolean("airicraft.codexDriver");
 		this.survivalReflexRuntime = new SurvivalReflexRuntime(this.config.reflex(), baritoneFacade, cameraController);
 		this.worldTaskExecutor = Objects.requireNonNull(worldTaskExecutor, "worldTaskExecutor");
@@ -484,6 +522,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		playerItemUseController.reset(MinecraftClient.getInstance());
 		foodRuntime.reset();
 		lightingRuntime.reset();
+		miningOpportunityPolicy.reset();
 		seenPlayerNames.clear();
 	}
 
@@ -507,6 +546,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			? sessionSnapshotOverrideForTests.withTickCount(tickCount)
 			: sessionRuntime.poll(client, tickCount, eventBuffer);
 		blockAcquisitionKnowledgeService.tick(client);
+		miningOpportunityPolicy.updateAcquisitions(blockAcquisitions());
 		activeJobRuntime.updateBlockAcquisitions(blockAcquisitions());
 		enforcePlayerLifecycle(client);
 		if (!wasWorldLoaded && sessionSnapshot.worldLoaded()) {
@@ -629,6 +669,9 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		TaskExecutionSnapshot previousTaskExecutionSnapshot = taskExecutionSnapshot;
 		Optional<TaskTerminalEvent> terminalTaskEvent = worldTaskExecutor.tick(sessionSnapshot, activeTaskRequest);
 		taskExecutionSnapshot = worldTaskExecutor.snapshot();
+		for (MiningOpportunityJournal.Notice notice : miningOpportunityJournal.drain()) {
+			eventBuffer.append(tickCount, "task.mining_opportunity", notice.payload());
+		}
 		boolean semanticTaskContext = hasSemanticTaskContext(previousTaskSnapshot, taskSnapshot);
 		recordTaskStateTransition(previousTaskExecutionSnapshot, taskExecutionSnapshot, semanticTaskContext);
 		terminalTaskEvent.ifPresent(event -> {
@@ -1206,6 +1249,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		playerItemUseController.reset(MinecraftClient.getInstance());
 		foodRuntime.reset();
 		lightingRuntime.reset();
+		miningOpportunityPolicy.reset();
 		seenPlayerNames.clear();
 		sessionSnapshot = SessionSnapshot.initial();
 	}
@@ -2787,10 +2831,10 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		if (new ai.moeru.airicraft.agent.work.WorkToolProvider(this).handles(call.name())) return execute(call);
 		if (PlannerToolCatalog.isReadTool(call.name())) return execute(call);
 		if (survivalReflexRuntime.awaitingTacticalPlan() && workHistory.current().isEmpty()
-			&& !List.of("configure_reflex", "configure_food", "configure_pathfind", "configure_lighting", "update_event_policy").contains(call.name())) {
+			&& !List.of("configure_reflex", "configure_food", "configure_pathfind", "configure_lighting", "configure_opportunistic_mining", "update_event_policy").contains(call.name())) {
 			releaseSafetyHoldForReplacement("planner_tactical_replacement");
 		}
-		if (survivalReflexRuntime.snapshot().holdId() != null && !List.of("configure_reflex", "configure_food", "configure_pathfind", "configure_lighting", "update_event_policy").contains(call.name())) {
+		if (survivalReflexRuntime.snapshot().holdId() != null && !List.of("configure_reflex", "configure_food", "configure_pathfind", "configure_lighting", "configure_opportunistic_mining", "update_event_policy").contains(call.name())) {
 			if (call.name().equals("run_policy")) return CompletableFuture.completedFuture("TOOL_ERROR: run_policy work_in_safety_hold");
 			return CompletableFuture.completedFuture("Tool result for " + call.name() + ": " + new com.google.gson.Gson().toJson(Map.of(
 				"accepted",false,"reason","work_in_safety_hold","holdId",survivalReflexRuntime.snapshot().holdId(),
@@ -2808,7 +2852,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 			// A rejected policy did not install a waiter. Preserve the error prefix so its
 			// endsTurn provider cannot strand the planner waiting for nonexistent work.
 			if (rejected && call.name().equals("run_policy")) return text;
-			boolean immediate = List.of("equip_item", "configure_reflex", "configure_food", "configure_pathfind", "configure_lighting", "update_event_policy", "close_container", "transfer_container").contains(call.name());
+			boolean immediate = List.of("equip_item", "configure_reflex", "configure_food", "configure_pathfind", "configure_lighting", "configure_opportunistic_mining", "update_event_policy", "close_container", "transfer_container").contains(call.name());
 			boolean eating = call.name().equals("eat_food") && playerItemUseController.eating();
 			boolean accepted = admitted.isPresent() || !rejected && (immediate || eating);
 			receipt.put("accepted", accepted);
@@ -3312,6 +3356,16 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 					+ " maxLightLevel=" + lightingPolicy.maxLightLevel()
 					+ " minSpacingBlocks=" + lightingPolicy.minSpacingBlocks()
 					+ " policyRevision=" + lightingPolicy.revision();
+			}
+			case PlannerToolCatalog.CONFIGURE_OPPORTUNISTIC_MINING -> {
+				MiningOpportunityPolicy policy = miningOpportunityPolicy.configure(
+					args.get("enabled").getAsBoolean(),
+					args.get("maxExtraBlocks").getAsInt(),
+					args.get("maxExtraTicks").getAsInt());
+				yield "Tool result for configure_opportunistic_mining: applied enabled=" + policy.enabled()
+					+ " maxExtraBlocks=" + policy.maxExtraBlocks()
+					+ " maxExtraTicks=" + policy.maxExtraTicks()
+					+ " policyRevision=" + policy.revision();
 			}
 			case PlannerToolCatalog.CONFIGURE_REFLEX -> {
 				var policy = args.isEmpty() ? survivalReflexRuntime.policy() : survivalReflexRuntime.configure(
@@ -5053,6 +5107,7 @@ public final class EmbodiedAgentRuntime implements PlannerActionToolExecutor {
 		profiles.put("planner.degraded_cleared", new EventRoutingProfile("planner.degraded_cleared", true, null, false));
 		profiles.put("planner.reset_requested", new EventRoutingProfile("planner.reset_requested", true, null, true));
 		profiles.put("task.blocked", new EventRoutingProfile("task.blocked", true, PlannerTriggerType.SYSTEM, true));
+		profiles.put("task.mining_opportunity", new EventRoutingProfile("task.mining_opportunity", true, null, true));
 		profiles.put("action_graph.goal_suspended", new EventRoutingProfile("action_graph.goal_suspended", true, PlannerTriggerType.SYSTEM, true));
 		profiles.put("action_graph.goal_terminal", new EventRoutingProfile("action_graph.goal_terminal", true, PlannerTriggerType.SYSTEM, true));
 		profiles.put("policy.event_intervened", EventRoutingProfile.rawOnly("policy.event_intervened"));

@@ -534,7 +534,7 @@ public final class DialogueRuntime {
 		}
 		// Accepted work already consumes these observations. Retain the evidence in the
 		// event buffer, but do not launch a competing turn for ordinary progress.
-		if (acceptedWork != null
+		if ((acceptedWork != null || activePlanner().hasQueuedToolWork())
 			&& !trigger.maySupersedeLaunchedTurn() && safetyHoldId == null && !reflexActive
 			&& List.of(PlannerTriggerType.CRAFT, PlannerTriggerType.PICKUP, PlannerTriggerType.IDLE_THINK).contains(trigger.type())) return;
 		submitPlannerTrigger(

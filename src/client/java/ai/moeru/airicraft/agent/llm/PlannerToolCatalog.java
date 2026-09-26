@@ -68,6 +68,7 @@ public final class PlannerToolCatalog {
 	public static final String CONFIGURE_PATHFIND = "configure_pathfind";
 	public static final String CONFIGURE_LIGHTING = "configure_lighting";
 	public static final String CONFIGURE_FOOD = "configure_food";
+	public static final String CONFIGURE_OPPORTUNISTIC_MINING = "configure_opportunistic_mining";
 	public static final String CONFIGURE_REFLEX = "configure_reflex";
 
 	private static final Consumer<JsonObject> NO_ARGUMENT_VALIDATION = arguments -> {
@@ -229,21 +230,21 @@ public final class PlannerToolCatalog {
 				prop("useTowering", bool("Whether the executor may build a pillar underfoot while jumping if path navigation cannot return to the surface. Defaults to true when omitted.")),
 				prop("fillerBlockIds", stringArray("Optional namespaced block/item ids to use for towering. Omit to use defaults: " + String.join(", ", ReturnToSurfaceStepArgs.DEFAULT_FILLER_BLOCK_IDS) + "."))
 			), List.of()), PlannerToolCatalog::validateReturnToSurfaceArguments),
-		builtInTool(MINE_BLOCKS, false, tool(MINE_BLOCKS, "Acquire matching blocks inside a fixed loaded area, using System 1 target selection and bounded excavation approaches, including fully buried sources. Use when observed block resources and this supported mining capability serve the objective. Do not pass item ids from inventory itemCounts. Likely underground work requires at least one torch unless explicitly overridden.", properties(
+		builtInTool(MINE_BLOCKS, false, tool(MINE_BLOCKS, "Acquire at least the requested number of matching blocks inside a fixed loaded area, using System 1 target selection and bounded excavation approaches, including fully buried sources. The default opportunistic mining policy may also break nearby exposed ore and a few more blocks of the requested ore after the count is reached; disable it for an exact quota. Review task.mining_opportunity observations in the next DECISION CONTEXT for extra breaks and matching item gains; a break alone does not confirm pickup. Do not pass item ids from inventory itemCounts. Likely underground work requires at least one torch unless explicitly overridden.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
 				prop("blockIds", stringArray("Namespaced block ids to mine, for example minecraft:iron_ore. These must be block ids, not item ids such as minecraft:raw_iron.")),
-				prop("quantity", integer("Number of blocks to mine.")),
+				prop("quantity", integer("Minimum number of matching blocks to mine when opportunistic mining is enabled.")),
 				prop("constraints", acquisitionConstraintsSchema()),
 				prop("allowUnilluminated", bool("Explicitly allow predicted underground or unilluminated mining with no torches. Default false."))
 			), List.of("blockIds", "quantity")), PlannerToolCatalog::validateMineBlocksArguments),
-		builtInTool(ENSURE_BLOCKS_IN_INVENTORY, false, tool(ENSURE_BLOCKS_IN_INVENTORY, "Ensure the inventory contains at least a target count from mined block drops. Do not pass inventory item ids.", properties(
+		builtInTool(ENSURE_BLOCKS_IN_INVENTORY, false, tool(ENSURE_BLOCKS_IN_INVENTORY, "Ensure the inventory contains at least a target count from mined block drops. While mining ore, nearby optional ore breaks appear as task.mining_opportunity observations in the next DECISION CONTEXT. Do not pass inventory item ids.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
 				prop("blockIds", stringArray("Namespaced block ids whose drops count toward the target, for example minecraft:iron_ore. These must be block ids, not item ids such as minecraft:raw_iron.")),
 				prop("quantity", integer("Minimum matching item count required in inventory. Existing inventory and pickups count.")),
 				prop("constraints", acquisitionConstraintsSchema()),
 				prop("allowUnilluminated", bool("Explicitly allow predicted underground or unilluminated mining with no torches. Default false."))
 			), List.of("blockIds", "quantity")), PlannerToolCatalog::validateMineBlocksArguments),
-		builtInTool(COLLECT_RESOURCE, false, tool(COLLECT_RESOURCE, "Collect a supported resource kind within a fixed loaded area. System 1 selects targets, approaches, breaks and collects drops. Optional constraints restrict the search; no speculative mining or distant exploration. Use break_blocks for exact coordinates.", properties(
+		builtInTool(COLLECT_RESOURCE, false, tool(COLLECT_RESOURCE, "Collect a supported resource kind within a fixed loaded area. System 1 selects targets, approaches, breaks and collects drops. While collecting ore, nearby optional ore breaks appear as task.mining_opportunity observations in the next DECISION CONTEXT. Optional constraints restrict the search; no speculative mining or distant exploration. Use break_blocks for exact coordinates.", properties(
 				prop("narration", optionalString("Optional pre-action narration.")),
 					prop("resourceKind", enumString("Resource kind.", ResourceGatheringCatalog.supportedKindNames())),
 				prop("quantity", integer("Additional items to collect; completion requires inventory gain.")),
@@ -380,7 +381,14 @@ public final class PlannerToolCatalog {
 				prop("mode", enumString("Lighting rule. darkness averages combined light; spawn_proof averages block light.", List.of("darkness", "spawn_proof"))),
 				prop("maxLightLevel", integer("Place when the selected 5x5 foot-level average is strictly below this threshold, from 0 to 15; default 4.")),
 				prop("minSpacingBlocks", integer("Minimum search radius around the player without an existing torch, from 1 to 16."))
-			), List.of("enabled", "mode", "maxLightLevel", "minSpacingBlocks")), PlannerToolCatalog::validateConfigureLightingArguments)
+			), List.of("enabled", "mode", "maxLightLevel", "minSpacingBlocks")), PlannerToolCatalog::validateConfigureLightingArguments),
+		builtInTool(CONFIGURE_OPPORTUNISTIC_MINING, false, tool(CONFIGURE_OPPORTUNISTIC_MINING,
+			"Configure automatic nearby ore breaks during an active mining task. Enabled by default. Stops for exposed ore within interaction reach, then resumes the original target. After the requested count, it may mine a few more exposed blocks of the requested ore. It never excavates a detour or starts while navigating for another purpose. Disable when exact block edits or strict quotas matter.", properties(
+				prop("narration", optionalString("Optional pre-action narration.")),
+				prop("enabled", bool("Whether nearby ore opportunities are enabled.")),
+				prop("maxExtraBlocks", integer("Maximum extra ore blocks per mining task, from 0 to 32; default 6.")),
+				prop("maxExtraTicks", integer("Maximum active ticks spent breaking extra ore per mining task, from 0 to 1200; default 200."))
+			), List.of("enabled", "maxExtraBlocks", "maxExtraTicks")), PlannerToolCatalog::validateConfigureOpportunisticMiningArguments)
 	);
 	}
 	private static final Map<String, BuiltInTool> BUILT_IN_TOOLS_BY_NAME = builtInToolsByName();
@@ -1074,6 +1082,16 @@ public final class PlannerToolCatalog {
 			|| !List.of("any", "cooked_only").contains(foodChoice)) {
 			throw new JsonParseException("Expected goal=off|movement|heal and foodChoice=any|cooked_only");
 		}
+	}
+
+	private static void validateConfigureOpportunisticMiningArguments(JsonObject arguments) {
+		requireBoolean(arguments, "enabled");
+		int maxExtraBlocks = requireInt(arguments, "maxExtraBlocks");
+		int maxExtraTicks = requireInt(arguments, "maxExtraTicks");
+		if (maxExtraBlocks < 0 || maxExtraBlocks > 32)
+			throw new JsonParseException("maxExtraBlocks must be between 0 and 32");
+		if (maxExtraTicks < 0 || maxExtraTicks > 1200)
+			throw new JsonParseException("maxExtraTicks must be between 0 and 1200");
 	}
 
 	private static void validateConfigureReflexArguments(JsonObject arguments) {

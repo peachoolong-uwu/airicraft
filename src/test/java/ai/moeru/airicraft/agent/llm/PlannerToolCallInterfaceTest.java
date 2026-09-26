@@ -208,6 +208,18 @@ class PlannerToolCallInterfaceTest {
 	}
 
 	@Test
+	void exposesBoundedOpportunisticMiningPolicy() {
+		JsonArray tools = JsonParser.parseString(gson().toJson(PlannerToolCatalog.openAiTools())).getAsJsonArray();
+		JsonObject parameters = toolSchema(tools, "configure_opportunistic_mining");
+		assertTrue(toolNames(tools).contains("configure_opportunistic_mining"));
+		assertEquals(3, parameters.getAsJsonArray("required").size());
+		assertEquals("configure_opportunistic_mining", PlannerToolCatalog.parseToolCall(toolCall(
+			"configure_opportunistic_mining", "{\"enabled\":true,\"maxExtraBlocks\":4,\"maxExtraTicks\":160}")).name());
+		assertThrows(com.google.gson.JsonParseException.class, () -> PlannerToolCatalog.parseToolCall(toolCall(
+			"configure_opportunistic_mining", "{\"enabled\":true,\"maxExtraBlocks\":33,\"maxExtraTicks\":160}")));
+	}
+
+	@Test
 	void exposesResumeTaskWithRequiredSafetyHoldId() {
 		JsonArray tools = JsonParser.parseString(gson().toJson(PlannerToolCatalog.openAiTools())).getAsJsonArray();
 		JsonObject parameters = toolSchema(tools, "resume_task");

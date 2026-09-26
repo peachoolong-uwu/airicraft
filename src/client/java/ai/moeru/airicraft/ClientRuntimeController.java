@@ -443,6 +443,8 @@ public final class ClientRuntimeController {
 	}
 
 	private EmbodiedAgentRuntime createRuntime(AiricraftConfig airicraftConfig, AgentConfig agentConfig) {
+		var miningOpportunityPolicy = new ai.moeru.airicraft.agent.tasks.MiningOpportunityPolicyState();
+		var miningOpportunityJournal = new ai.moeru.airicraft.agent.tasks.MiningOpportunityJournal();
 		SmeltingProcessManager smeltingProcessManager = new SmeltingProcessManager();
 		BaritoneTaskExecutor baritoneTaskExecutor = new BaritoneTaskExecutor(baritoneFacade);
 		UnderwaterHarvestTaskExecutor underwaterHarvestTaskExecutor = new UnderwaterHarvestTaskExecutor(
@@ -458,7 +460,7 @@ public final class ClientRuntimeController {
 			new ReturnToSurfaceTaskExecutor(baritoneFacade, cameraController),
 			new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade),
 			new BlockBreakTaskExecutor(cameraController),
-			new TargetAcquisitionTaskExecutor(baritoneFacade, cameraController),
+			new TargetAcquisitionTaskExecutor(baritoneFacade, cameraController, miningOpportunityPolicy, miningOpportunityJournal),
 			underwaterHarvestTaskExecutor,
 			new ai.moeru.airicraft.agent.tasks.CropTendingTaskExecutor(baritoneFacade, cameraController,
 				new BlockInteractionTaskExecutor(airicraftConfig.blockInteractionDelayTicks(), cameraController, baritoneFacade)),
@@ -474,7 +476,9 @@ public final class ClientRuntimeController {
 			AgentObservability.create(agentConfig.observability()),
 			smeltingProcessManager,
 			cameraController,
-			baritoneFacade
+			baritoneFacade,
+			miningOpportunityPolicy,
+			miningOpportunityJournal
 		);
 		runtime.setPlannerEnabled(plannerEnabled);
 		return runtime;
